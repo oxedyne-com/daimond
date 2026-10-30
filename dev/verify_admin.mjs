@@ -20,7 +20,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { signInFresh } from './session.mjs';
-import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
+import { devNetTag, requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
 import { CLIENT_API } from './clientapi.mjs';
 
@@ -103,7 +103,7 @@ async function creditTopup(accountId, minor, country, n) {
 			payment_status: 'paid',
 			amount_total: minor,
 			customer_details: { address: { country } },
-			metadata: { account_id: accountId, product: 'credits', credits_minor: String(minor) },
+			metadata: { account_id: accountId, product: 'credits', credits_minor: String(minor), ...devNetTag() },
 		} },
 	});
 	const t = Math.floor(Date.now() / 1000);

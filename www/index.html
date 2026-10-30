@@ -70,6 +70,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Daimond">
+<!-- policy.js: which net this page is on (/api/policy's `network`). Here, after the
+     identity tags it swaps on the testnet and before the first paint, so a cached
+     "test" names the home-screen icon before the browser reads the live one. -->
+<script src="js/policy.js"></script>
 <link rel="stylesheet" href="css/variables.css">
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/secret.css"><!-- js/secret.js — the eye every secret field wears -->
@@ -1845,6 +1849,8 @@
      one secret scrubber, which debugshare.js reads and dev/lens.mjs loads too. -->
 <script src="js/scrub.js"></script>
 <script src="js/debugshare.js"></script>
+<!-- testnet.js: the TEST chip and its sheet, drawn only when policy.js says "test". -->
+<script src="js/testnet.js"></script>
 <!-- safe.js next, and it must be next: it reads the trail breadcrumb.js has
      just written to decide whether this app is looping, and sync.js consults
      its answer from the first moment a session exists. -->

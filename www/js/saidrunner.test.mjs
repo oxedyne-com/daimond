@@ -1,3 +1,4 @@
+const TLV = await import('./page/turnlog.js');
 /* ============================================================
    Test -- his words said into a running daimon turn reach it once (UNBLOCK-27 R7).
 
@@ -413,14 +414,15 @@ if (typeof L.say === 'function') {
 // A word said into a native runner's turn that its report does not name heard goes out as turn 2
 // under the id it was said as (`resendUnheard`). Turn 2 ran and settled done, its report reached the
 // page, and nothing drew: no frame folded and the placeholder went with no answer. Drives the page's
-// REAL say, re-send, watch, last read, fold, adoption, merge and placeholder drop, on peer.js's rules.
+// REAL say, re-send, watch, log read, end fold, merge and placeholder drop, on peer.js's rules. The
+// log's draw itself (page/turnlog.js) is turnlog.test's; here a read lands the turn's rows as it would.
 await (async () => {
 	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const { liftSource } = await import('../../dev/syncprobe.mjs');
 	const FNS = ['touchMsg', 'sayToRunner', 'requeueUnheard', 'resendUnheard', 'pushUserRecord', 'tsPast', 'markTurnDispatched',
 		'refreshHandoffWatch', 'dispatchedPlaceholderIn', 'dispatchedTurnFinished', 'dispatchedTurnSettled',
-		'handoffLeaseSettled', 'handoffDone', 'dispatchedAnswerPresent', 'updateExpedite', 'updateProgressWatch',
-		'onLastFrame', 'applyProvisional', 'adoptFinalFrame', 'finalFrameChat', 'dropOtherRunRows', 'isNotRunRow',
+		'handoffLeaseSettled', 'turnLogState', 'dispatchedAnswerPresent', 'updateExpedite', 'readWatchedLogs',
+		'onLogEnd', 'dropOtherRunRows', 'isNotRunRow',
 		'isLostRow', 'dropDispatchedPlaceholder', 'dispatchedChat', 'chatHoldingTurn', 'chatHoldsTurn'];
 	const lifted = FNS.map((n) => extractFn(src, n));
 	check('HATE-3: the page functions exist', lifted.every(Boolean), FNS.filter((n, i) => !lifted[i]).join(','));
@@ -436,7 +438,7 @@ await (async () => {
 	const D = { now: () => clock };
 	let seq = 0;
 	const mid = () => clock.toString(36) + '-' + (++seq).toString(36) + '-hate3';
-	const leases = {}, watched = [], lastReads = {}, tombs = {}, events = [];
+	const leases = {}, watched = [], logs = {}, tombs = {}, events = [];
 	const W = {};
 	W.DaimondPeer = P;
 	W.DaimondLease = {
@@ -444,27 +446,33 @@ await (async () => {
 		record: (t) => leases[t] || null,
 		holder: (t) => (leases[t] && leases[t].holder) || '',
 	};
-	W.DaimondSync = {
-		watchProgress: (k) => { watched.push(k); },
-		unwatchProgress: (k, last) => { lastReads[k] = last || null; },		// a read started before the frame finds none
-	};
 	W.DaimondPresence = { snapshot: () => ({}) };
 	let gate = null;
 	const S = {
 		chats: [], current: null, peerReports: {}, _saidThere: {}, _peerStopping: {}, _progressView: {},
-		_dispatchedIx: {}, _watchIx: {}, _progressWatched: {}, _progressSent: {}, _frameWorkers: {}, _finalMids: {},
-		_finalRun: {}, _abiRefused: {}, _handoffStart: {}, _watchTick: 1, msgFpSeen: new WeakMap(), _expediting: false, _renderedSigs: null,
+		_dispatchedIx: {}, _watchIx: {}, _abiRefused: {}, _handoffStart: {}, _watchTick: 1, msgFpSeen: new WeakMap(), _expediting: false, _renderedSigs: null,
 		WATCH_RECHECK_MS: 1000, ARRIVE_FRESH_MS: 60000, REASON_DISPATCHED_STR: 'dispatched',
+		turnView: TLV.turnView,	// P2.3a4: the end-of-turn checks read the folded log
 		honoursModelSet: () => true, commitRatings: () => {}, ratingPre: () => '', giveUpSent: () => {},
 		appendInterjected: () => {}, syncSendMode: () => {}, diag: () => {}, persistChats: () => {}, touchChat: () => {},
 		ownsChat: () => false, renderHistory: () => {}, renderQueue: () => {}, updateQueueBadges: () => {},
-		journalQueue: () => {}, drainAfterHeld: () => {}, renderDispatchedBadges: () => {}, growProvisionalTiles: () => {},
+		journalQueue: () => {}, drainAfterHeld: () => {}, renderDispatchedBadges: () => {},
 		sigsOf: () => null, selfDeviceId: () => 'PAGE', deviceLabelFor: () => 'runner', handoffTargetLabel: () => 'runner',
 		autoLogHandoffLatency: () => {}, clearDispatchFallback: () => {}, ChatStore: { compact: () => {} },
-		frameAbiOk: () => true, refuseAbiFrame: () => {}, applyFrameUi: () => {}, setFrameWorkers: () => {},
-		fetchFinalRef: () => {}, foldRunnerTotals: () => {}, onProgressFrame: () => {}, frameUi: () => [],
-		// `parseFrameRef` for a frame with no chunks (its `'{'` test defeats the brace lift).
-		parseFrameRef: (t) => { try { const o = JSON.parse(t); return { msgs: o.msgs, ref: null, n: 0, ui: [], workers: [] }; } catch (e) { return null; } },
+		foldRunnerTotals: () => {},
+		// The log seam: a read draws what the log holds for each turn the chat holds open and folds its
+		// end, as page/turnlog.js does (each row once, by mid; the end last).
+		readChatLog: async (c) => {
+			watched.push(c.id);
+			for (const t of Object.keys(logs)) {
+				const l = logs[t];
+				if (l.drawn || !c.messages.some((m) => String(m.iturn) === t)) continue;
+				l.drawn = true;
+				l.rows.forEach((r) => { if (!c.messages.some((m) => m.mid === r.mid)) { c.messages.push(r); events.push(['arrive', r.mid, t]); } });
+				api.onLogEnd(c, t, { rows: l.rows });
+			}
+			return null;
+		},
 		noteArrive: (k, o) => { events.push(['arrive', k, o && o.tid]); },
 		newMid: mid, peerSyncShim: () => ({}),
 		msgTombstone: (ids) => { ids.forEach((i) => { tombs[i] = 1; events.push(['tomb', i]); }); },
@@ -489,15 +497,16 @@ await (async () => {
 		+ liftSource(['mergeMessages'], ['loadMsgTombs', 'window', 'DaimondStamp']).src + '\n'
 		+ lifted.join('\n') + '\n' + reconcile
 		+ 'return { ' + FNS.map((n) => n + ': ' + n).join(', ') + ', mergeMessages: mergeMessages,'
-		+ ' reconcileMerged: reconcileMerged, chats: chats };')(S, W, D);
+		+ ' reconcileMerged: reconcileMerged, watchIx: function () { return _watchIx; }, chats: chats };')(S, W, D);
 
 	const chat = { id: 'hc3', _loaded: true, messages: [] };
 	S.chats.push(chat);
 	const live = (t) => { leases[t] = { holder: 'RUNNER', mode: 'running', expiry: clock + 10 * MIN, renewedAt: clock }; api.updateExpedite(); };
 	const settle = (t) => { leases[t] = { holder: 'RUNNER', mode: 'released', settled: 1, expiry: 0, renewedAt: clock }; api.updateExpedite(); };
-	const frame = (t, run, text, ts) => ({ turn: t, seq: 1, final: true, tail: JSON.stringify({ v: 1, msgs: [
-		{ mid: run + '-final', role: 'assistant', content: text, ts, run, ranOn: 'RUNNER', whole: 1 },
-		{ mid: run + '-end', role: 'end_log', content: '', ts, run, whole: 1 }] }) });
+	// The runner writes the turn's answer and its end to the log; the next read draws them.
+	const logged = (t, run, text, ts) => { logs[t] = { rows: [
+		{ mid: run + '-final', role: 'assistant', content: text, ts, run, ranOn: 'RUNNER', iturn: t },
+		{ mid: run + '-end', role: 'end_log', content: '', ts, run, iturn: t }] }; };
 	// A parcel pull: the store's copy unioned in, then the merge's reconcile of placeholders.
 	const pull = () => {
 		chat.messages = api.mergeMessages(JSON.parse(JSON.stringify(chat.messages)), chat.messages, chat.id, tombs);
@@ -507,12 +516,11 @@ await (async () => {
 	const report = (t, heard) => {
 		const rep = { t: 'report', turnId: t, chatId: chat.id, status: 'done', heard: heard || [] };
 		S.peerReports[t] = rep;
-		delete lastReads[t];		// only a read the report starts finds the final frame
 		api.requeueUnheard(rep);
 		api.updateExpedite();
-		api.adoptFinalFrame(t);
 	};
-	const lastRead = (t, f) => { const fn = lastReads[t]; if (fn) fn(f); return !!fn; };
+	// The log's wake for the chat (`c<chat>:<head>`): a read, as onLogTap starts it.
+	const wake = async () => { await S.readChatLog(chat); await flush(); };
 	const answerOf = (t) => chat.messages.filter((m) => m.role === 'assistant' && String(m.iturn) === t
 		&& !m.provisional && m.content && m.content.trim());
 	const phOf = (t) => api.dispatchedPlaceholderIn(chat, t);
@@ -522,8 +530,8 @@ await (async () => {
 		clock += 50; gate(); await p; await flush();
 		const t = chat.messages.filter((m) => m.role === 'user').slice(-1)[0].mid;
 		clock += 1000; live(t);
-		clock += 5000; report(t, []); settle(t);
-		lastRead(t, frame(t, run, ans, clock - 10)); pull();
+		clock += 5000; logged(t, run, ans, clock - 10); report(t, []); settle(t);
+		await wake(); pull();
 		return t;
 	};
 
@@ -538,14 +546,15 @@ await (async () => {
 	check('HATE-3: the cut-in is said into turn 1', said2 === true, String(said2));
 	const T2 = chat.messages[chat.messages.length - 1].mid;
 	// Turn 1 ends without hearing it: the report re-sends it as turn 2 under the said id, and the
-	// watch's last read of turn 1 lands while that hand-off's presence read is out. The runner
-	// stamped turn 1's rows at its settle, a moment after the page's clock read for turn 2.
+	// log's wake for turn 1 lands while that hand-off's presence read is out. The runner stamped
+	// turn 1's rows at its settle, a moment after the page's clock read for turn 2.
 	clock += 60000;
 	report(T1, []);
 	settle(T1);
 	clock += 300;
+	logged(T1, 'R1', 'answer one', clock + 400);
+	await wake();
 	gate(); await flush();
-	lastRead(T1, frame(T1, 'R1', 'answer one', clock + 400));
 	pull();
 	check('HATE-3: turn 1 answered and its placeholder gone', answerOf(T1).length === 1 && !phOf(T1), JSON.stringify(chat.messages));
 	check('HATE-3: the cut-in went out as turn 2, under its said id, with its placeholder', !!phOf(T2)
@@ -553,16 +562,17 @@ await (async () => {
 	// Turn 2 is claimed, runs and settles done; a pull lands meanwhile.
 	clock += 1000; live(T2);
 	clock += 1000; pull();
-	check('HATE-3 (a): turn 2 is watched while its runner holds it', watched.indexOf(T2) !== -1 && !!S._progressWatched[T2],
+	check('HATE-3 (a): turn 2 is watched while its runner holds it, and its chat\'s log read', !!api.watchIx()[T2]
+		&& watched.indexOf(chat.id) !== -1,
 		JSON.stringify({ watched, ph: !!phOf(T2), fin: api.dispatchedAnswerPresent(chat, phOf(T2) || {}) }));
 	check('HATE-3 (c): no pull drops turn 2\'s placeholder before its answer', !!phOf(T2), JSON.stringify(chat.messages));
 	clock += 120000;
+	logged(T2, 'R2', 'answer two', clock - 50);
 	report(T2, []);
-	const read2 = lastRead(T2, frame(T2, 'R2', 'answer two', clock - 50));
-	check('HATE-3 (a): its report ends the watch with a last read', read2, JSON.stringify(Object.keys(lastReads)));
+	await wake();
 	settle(T2); pull();
 	const a2 = answerOf(T2);
-	check('HATE-3 (b): turn 2\'s final frame is folded and adopted as its answer', a2.length === 1 && a2[0].content === 'answer two',
+	check('HATE-3 (b): turn 2\'s logged answer is drawn and its end folded', a2.length === 1 && a2[0].content === 'answer two',
 		JSON.stringify(chat.messages));
 	const phTomb = events.findIndex((e) => e[0] === 'tomb' && !chat.messages.some((m) => m.mid === e[1]) && e[1] !== T2);
 	check('HATE-3: and its placeholder goes only with the answer drawn', !phOf(T2) && events.some((e) => e[0] === 'arrive' && e[2] === T2),
@@ -580,14 +590,14 @@ await (async () => {
 // way a second device learns a native runner is answering. Live, that parcel landed only after the
 // run settled (sync.js `ownDispatch`, synckey F), so argonaut drew nothing until the answer. Here the
 // rows arrive by the merge while the runner's lease is `running`: the page's REAL index, watch
-// decision, watch, frame fold and provisional draw must follow the turn from that moment.
+// decision and log read must follow the turn from that moment (P2.3a3: the turn's streaming rows
+// are the chat log's, drawn provisional while open by page/turnlog.js; turnlog.test proves that).
 await (async () => {
 	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const { liftSource } = await import('../../dev/syncprobe.mjs');
 	const FNS = ['rebuildDispatchedIndex', 'refreshHandoffWatch', 'dispatchedPlaceholderIn', 'dispatchedTurnFinished',
-		'dispatchedTurnSettled', 'handoffLeaseSettled', 'handoffDone', 'dispatchedAnswerPresent', 'updateExpedite',
-		'updateProgressWatch', 'onProgressFrame', 'onLastFrame', 'applyProvisional', 'adoptFinalFrame', 'finalFrameChat',
-		'dropOtherRunRows', 'isNotRunRow', 'isLostRow', 'dropDispatchedPlaceholder', 'dispatchedChat', 'chatHoldingTurn',
+		'dispatchedTurnSettled', 'handoffLeaseSettled', 'turnLogState', 'dispatchedAnswerPresent', 'updateExpedite',
+		'readWatchedLogs', 'dropOtherRunRows', 'isNotRunRow', 'isLostRow', 'dropDispatchedPlaceholder', 'dispatchedChat', 'chatHoldingTurn',
 		'chatHoldsTurn'];
 	const lifted = FNS.map((n) => extractFn(src, n));
 	check('UNBLOCK-44: the page functions exist', lifted.every(Boolean), FNS.filter((n, i) => !lifted[i]).join(','));
@@ -595,26 +605,23 @@ await (async () => {
 	const stampSrc = readPage(join(HERE, 'stamp.js'), 'utf8');
 	let clock = Date.now();
 	const D = { now: () => clock };
-	const leases = {}, watched = {}, events = [];
+	const leases = {}, reads = [];
 	const W = {};
 	W.DaimondPeer = P;
 	W.DaimondLease = { record: (t) => leases[t] || null, holder: (t) => (leases[t] && leases[t].holder) || '' };
-	W.DaimondSync = { watchProgress: (k, cb) => { watched[k] = cb; }, unwatchProgress: () => {} };
 	W.DaimondPresence = { snapshot: () => ({}) };
 	const S = {
-		chats: [], current: null, peerReports: {}, _progressView: {}, _dispatchedIx: {}, _watchIx: {},
-		_progressWatched: {}, _progressSent: {}, _frameWorkers: {}, _finalMids: {}, _finalRun: {}, _abiRefused: {},
+		chats: [], current: null, peerReports: {}, _progressView: {}, _dispatchedIx: {}, _watchIx: {}, _abiRefused: {},
 		_handoffStart: {}, _watchTick: 1, _expediting: false, _renderedSigs: null,
 		WATCH_RECHECK_MS: 1000, ARRIVE_FRESH_MS: 60000, REASON_DISPATCHED_STR: 'dispatched',
+		turnView: TLV.turnView,	// P2.3a4: the end-of-turn checks read the folded log
 		ChatStore: { stored: () => [], compact: () => {} },
 		diag: () => {}, persistChats: () => {}, touchChat: () => {}, ownsChat: () => false, renderHistory: () => {},
-		renderDispatchedBadges: () => {}, growProvisionalTiles: () => {}, sigsOf: () => null,
+		renderDispatchedBadges: () => {}, sigsOf: () => null,
 		selfDeviceId: () => 'DEVICE-B', deviceLabelFor: () => 'runner', handoffTargetLabel: () => 'runner',
 		autoLogHandoffLatency: () => {}, clearDispatchFallback: () => {}, drainHeldQueues: () => {},
-		frameAbiOk: () => true, refuseAbiFrame: () => {}, applyFrameUi: () => {}, setFrameWorkers: () => {},
-		fetchFinalRef: () => {}, foldRunnerTotals: () => {}, frameUi: () => [], msgTombstone: () => {},
-		parseFrameRef: (t) => { try { const o = JSON.parse(t); return { msgs: o.msgs, ref: null, n: 0, ui: [], workers: [] }; } catch (e) { return null; } },
-		noteArrive: (k, o) => { events.push(['arrive', k, o && o.mid]); },
+		foldRunnerTotals: () => {}, msgTombstone: () => {}, noteArrive: () => {},
+		readChatLog: async (c) => { reads.push(c.id); return null; },		// the log seam: turnlog.test draws
 		loadMsgTombs: () => ({}),
 	};
 	const keys = Object.keys(S);
@@ -635,7 +642,9 @@ await (async () => {
 	S.chats.push(chat);
 	api.rebuildDispatchedIndex();
 	leases[T] = { turnId: T, holder: 'NATIVE-RUNNER', mode: 'running', expiry: clock + 10 * MIN, renewedAt: clock };
-	check('UNBLOCK-44 [ctl]: B follows nothing before the waiting row arrives', !watched[T], JSON.stringify(Object.keys(watched)));
+	api.updateExpedite();
+	check('UNBLOCK-44 [ctl]: B follows nothing before the waiting row arrives', !api.watchIx()[T] && reads.length === 0,
+		JSON.stringify({ ix: api.watchIx(), reads }));
 	// A's dispatch parcel lands on B, as `onChatsChangedElsewhere` takes it: merged, then indexed.
 	clock += 2000;
 	const incoming = [chat.messages[0],
@@ -644,17 +653,11 @@ await (async () => {
 			dispatchedBy: 'DEVICE-A', toDevice: 'NATIVE-RUNNER', toNative: 1, ts: clock - 1400 }];
 	chat.messages = api.mergeMessages(incoming, chat.messages, chat.id, {});
 	api.rebuildDispatchedIndex();
+	api.updateExpedite();
 	check('UNBLOCK-44 (a): B starts following the turn the moment the waiting row arrives',
-		typeof watched[T] === 'function' && !!S._progressWatched[T], JSON.stringify({ watched: Object.keys(watched), ix: api.watchIx() }));
-	// The runner's first streaming frame: B draws it, provisional, before any final frame.
-	clock += 3000;
-	const rows = [{ mid: RUN + '-t0', role: 'assistant', content: 'Writing part one.', ts: clock - 500, run: RUN, ranOn: 'NATIVE-RUNNER' },
-		{ mid: RUN + '-t1', role: 'tool_log', name: 'file_write', content: '', ts: clock - 400, run: RUN, ranOn: 'NATIVE-RUNNER' }];
-	if (watched[T]) watched[T]({ turn: T, seq: 1, final: false, tail: JSON.stringify({ v: 1, msgs: rows }) });
-	const prov = chat.messages.filter((m) => m && m.provisional && String(m.iturn) === T);
-	check('UNBLOCK-44 (b): B draws the streaming rows provisionally, before the final frame',
-		prov.length === 2 && prov[0].mid === RUN + '-t0', JSON.stringify(chat.messages.map((m) => [m.mid, m.role, !!m.provisional])));
-	check('UNBLOCK-44 (b): each row is an arrival by frame', events.filter((e) => e[0] === 'arrive').length === 2, JSON.stringify(events));
+		!!api.watchIx()[T], JSON.stringify({ ix: api.watchIx() }));
+	check('UNBLOCK-44 (b): and reads the chat\'s log for its streaming rows, before any end',
+		reads.indexOf(chat.id) !== -1, JSON.stringify(reads));
 })();
 
 console.log('\n' + (checks - failures) + '/' + checks + ' passed');

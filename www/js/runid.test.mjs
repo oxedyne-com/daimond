@@ -66,26 +66,8 @@ console.log('\notherRunRows -- what a final frame leaves standing');
 	}
 }
 
-console.log('\nThe frame carries the run, and the lost run\'s ending');
-{
-	const intr = { role: 'assistant', mid: 'ai', content: 'part', interrupted: true, why: 'runner', iturn: T, itext: 'do ten rounds', run: 'r1', ts: 5 };
-	const row = P.turnRows([{ role: 'user', mid: T, content: 'q' }, intr], T)[0] || {};
-	check('progressRow keeps run, why and itext on an interrupted row', row.run === 'r1' && row.why === 'runner' && row.itext === 'do ten rounds', JSON.stringify(row));
-	const plain = P.turnRows([{ role: 'user', mid: T, content: 'q' }, { role: 'assistant', mid: 'ph', content: '', why: 'dispatched' }], T)[0] || {};
-	check('a row not interrupted carries no why', plain.why === undefined, JSON.stringify(plain));
-	const folded = P.foldProvisional([{ role: 'user', mid: T, content: 'q' }], T, [row]) || [];
-	const pr = folded[1] || {};
-	check('the provisional copy keeps run, why and itext', pr.run === 'r1' && pr.why === 'runner' && pr.itext === 'do ten rounds' && pr.interrupted === 1, JSON.stringify(pr));
-	check('frameRun names the frame\'s run', typeof P.frameRun === 'function' && P.frameRun([{ mid: 'a' }, row]) === 'r1' && P.frameRun([{ mid: 'a' }]) === '');
-}
-
 console.log('\nThe lost run names the device it was lost on (check_f234 fix 6, I9)');
 {
-	const intr = { role: 'assistant', mid: 'ai', content: 'part', interrupted: true, why: 'runner', iturn: T, itext: 'q', run: 'r1', lostOn: 'devB', ts: 5 };
-	const row = P.turnRows([{ role: 'user', mid: T, content: 'q' }, intr], T)[0] || {};
-	check('progressRow carries lostOn', row.lostOn === 'devB', JSON.stringify(row));
-	const pr = (P.foldProvisional([{ role: 'user', mid: T, content: 'q' }], T, [row]) || [])[1] || {};
-	check('the provisional copy carries lostOn', pr.lostOn === 'devB', JSON.stringify(pr));
 	const ds = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const at = ds.indexOf('\n\tfunction runnerLostLabel(');
 	check('daimond.js has runnerLostLabel', at >= 0);
@@ -113,10 +95,10 @@ console.log('\nA turn queued behind a running one: its prompt lands before the a
 	const msgs = [q5, q6, a5, a6];
 	const out = P.otherRunRows(msgs, 'u6', 'r6');
 	check('another turn\'s answer standing in this turn\'s span is not this turn\'s other run', out.length === 0, JSON.stringify(out));
-	const rows = P.turnRows(msgs, 'u6').map((r) => r.mid);
-	check('nor is it in this turn\'s final frame', JSON.stringify(rows) === '["a6"]', JSON.stringify(rows));
+	const rows = P.turnSpan(msgs, 'u6').map((r) => r.mid);
+	check('nor is it in this turn\'s span', JSON.stringify(rows) === '["a6"]', JSON.stringify(rows));
 	const q7 = { role: 'user', mid: 'u7', content: 'q7' };
-	const late = P.turnRows([q5, q6, q7, a5, a6], 'u6').map((r) => r.mid);
+	const late = P.turnSpan([q5, q6, q7, a5, a6], 'u6').map((r) => r.mid);
 	check('and a row tagged with this turn past the next prompt is', JSON.stringify(late) === '["a6"]', JSON.stringify(late));
 	const stale = { role: 'assistant', mid: 'a6x', iturn: 'u6', content: 'old', run: 'r0', ts: 2 };
 	const kept = P.otherRunRows([q5, q6, a5, stale, a6], 'u6', 'r6').map((g) => g.mid);

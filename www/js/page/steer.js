@@ -12,6 +12,7 @@ import { _threadScope, canRemint, captureSession, chatDraftKey, confirmHold, dis
 	ensureApp, fitComposer, giveUpSent, heldNote, heldRun, holdSend, keyRefused, peerHeldTurnOf,
 	rebuildAppWithout, scopeTurnApp, syncComposer, threadScopeKey, turnPhase } from './send.js';
 import { Workers, governorClearsDispatch, notStartedWords } from './workers.js';
+import { logTurn, turnLogEnded, turnMessages } from './turnwrite.js';
 import { Files } from './files_view.js';
 import { DaimondAdmin } from './admin.js';
 import { WakeLock, failureClass, tel, telOrd, turnKill, turnsIn } from './layout.js';
@@ -997,7 +998,112 @@ function tagPrompt(chat, umid) {
 function pushRunRow(chat, turnId, row) {
 	if (turnId && row && !row.iturn) row.iturn = String(turnId);
 	chat.messages.push(row);
+	logTurnRows(chat, turnId);
 	return row;
+}
+
+/// Take the Here lease of turn `umid` and hold it while the turn runs; off the turn's path, so a
+/// door that cannot be read leaves the turn unleased and its own end stands. Answers the stop the
+/// turn's end calls: it completes the lease, which no detector then reads dead.
+///
+/// The lease is taken to the dispatch deadline and held past it as a running hand-off's is
+/// (UNBLOCK-25): one renew per half `RUN_HOLD_MS`, once within half a hold of lapsing, so a
+/// turn longer than its start window is not ended `interrupted` by another device while it runs.
+/// A turn the lease view already holds (a retry's own lease) is left to its holder.
+///
+/// A REVOKE IS HEARD AND ENDS THE RUN (UNBLOCK-28 (d)). Another device's Stop revokes the lease
+/// settled (handoff.js `peerStopTurn`), and the lease watch reads it the moment the view moves:
+/// the run here ends as a Stop pressed here does, so its one end is `stopped`. A revoke not
+/// settled, or another holder, cuts it `lease_revoked`. Left unheard, the turn ran on to `done`.
+function takeHereLease(chat, umid) {
+	var L = window.DaimondLease, timer = 0, won = false, ended = false, inFlight = false, unwatch = null;
+	function stop() {
+		if (ended) return;
+		ended = true;
+		if (timer) { clearInterval(timer); timer = 0; }
+		if (unwatch) { unwatch(); unwatch = null; }
+		if (won && L.complete) {
+			try { L.complete(umid, selfDeviceId(), cas, leaseClockNow).catch(function () { /* it lapses */ }); }
+			catch (e) { /* it lapses, and the log's end stands */ }
+		}
+	}
+	if (!L || !L.takeHere || !window.DaimondPeer) return stop;
+	var cas = null, hold = +L.RUN_HOLD_MS || 0;
+	try {
+		if (L.record && L.record(umid)) { ended = true; return stop; }
+		cas = DaimondPeer.syncCas(peerSyncShim());
+		L.takeHere(umid, chat.id, selfDeviceId(), cas, leaseClockNow).then(function (res) {
+			if (!res || !res.won || ended) return;
+			won = true;
+			if (L.watch) unwatch = L.watch(umid, heard);
+			if (hold > 0 && L.renew) timer = setInterval(holdOn, Math.max(1, Math.round(hold / 2)));
+		}, function (e) { diag('here lease', 'turn=' + umid + ' ' + String((e && e.message) || e)); });
+	} catch (e) { /* the turn runs unleased */ }
+	// What the record says now. A missing record is unknown, never a revoke (`leaseVerdict`).
+	function heard() {
+		if (ended || !won || !L.verdict) return false;
+		var r = L.record ? L.record(umid) : null;
+		var v = r ? L.verdict(r, selfDeviceId(), leaseClockNow(), 0) : 'ours';
+		if (v === 'ours') return false;
+		won = false;				// no longer this device's to complete
+		stop();
+		diag('here lease', 'turn=' + umid + ' ' + v + ': the run here ends');
+		// ONLY ITS OWN RUN: a later turn of the chat is not this one.
+		if (!chat._generating || String(chat._turnTag || '') !== String(umid)) return true;
+		chat._aborted = true;
+		chat._stopWhy = v === 'stopped' ? 'user' : 'lease_revoked';
+		syncSendMode();
+		try { Workers.cancelAwaits(chat.id); } catch (e) { /* no gather waits */ }
+		abortTurn(chat);
+		return true;
+	}
+	async function holdOn() {
+		if (ended || inFlight) return;
+		if (turnLogEnded(umid)) { stop(); return; }	// ended in the log: by Stop, or by a detector
+		if (heard()) return;				// revoked: a wake the view missed is read here
+		var r = L.record ? L.record(umid) : null, n = leaseClockNow();
+		if (!r || !(+r.expiry > 0) || n > +r.expiry || +r.expiry - n > hold / 2) return;	// a lapsed lease is never revived
+		inFlight = true;
+		try { await L.renew(umid, selfDeviceId(), cas, leaseClockNow, { holdMs: hold }); }
+		catch (e) { /* the next beat holds again */ }
+		finally { inFlight = false; }
+	}
+	return stop;
+}
+
+var _liveAns = {};	// turn id -> its answer's {ts, extra}: ts stamped once at the first token
+
+/// Turn `u`'s answer row, the live one and the finished message alike: ONE SHAPE AND ONE TS
+/// (lead ruling, P2.3c1), so the log grows it with `more` rows and its end, and never re-sends
+/// the whole text as an `edit` because a field the live row lacked arrived at the end. `ans`
+/// is the turn's `_liveAns` entry: its ts is stamped here, once, at the answer's first token.
+function answerRow(u, amid, text, prod, ans) {
+	if (ans && !ans.ts) ans.ts = Date.now();
+	var row = { role: 'assistant', content: text, mid: amid, ranOn: selfDeviceId(), ts: (ans && ans.ts) || Date.now() };
+	if (prod) row.prod = [prod];
+	row.iturn = String(u);
+	var x = (ans && ans.extra) || {};
+	for (var k in x) { if (x[k]) row[k] = String(x[k]); }
+	return row;
+}
+
+/// Turn `umid`'s rows so far to its chat's log (P2.3b, design §2): its messages, the answer
+/// while it streams, and its `end` when given. The writer looks once per `flush_ms`, so this is
+/// called on every row and every delta; the outbox keeps what the gateway did not take.
+///
+/// THE STREAMING ANSWER IS A ROW OF ITS OWN, under the mid the finished answer will carry
+/// (`_liveMid`), so the log grows it with `more` rows and the finished message is the same row.
+/// Prose a tool call turns into thinking leaves `_liveTurn` empty, and its row is tombed.
+function logTurnRows(chat, umid, end) {
+	if (!chat || !umid) return;
+	var u = String(umid);
+	var msgs = turnMessages(chat.messages, u);
+	var amid = _liveMid[u], live = _liveTurn[u];
+	if (amid && live && !msgs.some(function (m) { return String(m.mid) === String(amid); })) {
+		msgs.push(answerRow(u, amid, live, _liveProd[u], _liveAns[u]));
+	}
+	logTurn(chat.id, u, msgs, end || null, chat._turnSet && chat._turnSet.daimon || '')
+		.catch(function (e) { diag('turnlog', String(e && e.message || e)); });
 }
 
 export async function runTurn(chat, text, opts) {
@@ -1211,6 +1317,10 @@ export async function runTurn(chat, text, opts) {
 	// back — so a crash in the next moment can never eat what the user just typed.
 	touchChat(chat);
 	persistChats();
+	logTurnRows(chat, umid);		// the prompt reaches the chat's log on send
+	// A Here turn holds a lease, so if this tab dies before its end the one dead-writer detector
+	// ends it `interrupted` on every other device (design §2 [F3]). A hand-off run holds its own.
+	var hereLease = opts.turnId ? null : takeHereLease(chat, umid);
 
 	// Open the turn in the write-ahead log. From here every delta, tool call and tool result
 	// is journalled; if the tab dies, recovery reads this back as an interrupted turn.
@@ -1227,6 +1337,12 @@ export async function runTurn(chat, text, opts) {
 		k: 'answer', m: aprov.m, pv: aprov.pv, role: aprov.role, sp: aprov.sp,
 		d: chat.diamondId || '', c: chat.id, t: umid, dev: selfDeviceId(), at: Date.now() });
 	if (umid && aprod) _liveProd[String(umid)] = aprod;
+	// What the answer carries besides its text, on the live row as on the finished one.
+	if (umid) _liveAns[String(umid)] = { ts: 0, extra: {
+		handoffFellBack: opts.handoffFellBack || '',	// ran here after a hand-off ([Run here])
+		handoffBusy:     opts.handoffBusy || '',		// the seat was busy (Q19)
+		handoffThread:   opts.handoffThread || '',		// it lacked the thread (D2)
+	} };
 	var J = window.DaimondJournal;
 	// The note and the app mark ride in the opening entry, so a recovered turn is the same turn.
 	var jmeta = { model: tp.model, provider: tp.provider, amid: amid, prod: aprod };
@@ -1327,6 +1443,7 @@ export async function runTurn(chat, text, opts) {
 			// accumulator that is always right, so it is published here under the
 			// turn's own id and dropped when the turn ends.
 			if (umid) _liveTurn[String(umid)] = turnText;
+			logTurnRows(chat, umid);
 			if (J) J.delta(umid, chat.id, ev.content || '');
 			// Said once per run of prose, not once per token: the words are
 			// arriving where the user can see them, and the caption is only
@@ -1350,7 +1467,7 @@ export async function runTurn(chat, text, opts) {
 			// door" the comment on `demoteToWorking` already draws — so the
 			// segment survives a reload instead of vanishing, and `turnText` (and
 			// the `_liveTurn` progress frame it feeds) starts the next round clean.
-			if (turnText) { logThinking(chat, turnText, umid); turnText = ''; if (umid) _liveTurn[String(umid)] = turnText; }
+			if (turnText) { logThinking(chat, turnText, umid); turnText = ''; if (umid) { _liveTurn[String(umid)] = turnText; if (_liveAns[String(umid)]) _liveAns[String(umid)].ts = 0; } logTurnRows(chat, umid); }
 			pendingCallId = 't' + (++toolSeq);
 			// A tool call's arguments ARE a JSON string, so a reply that stops at
 			// the length limit part-way through one arrives as a MALFORMED CALL,
@@ -1875,7 +1992,8 @@ export async function runTurn(chat, text, opts) {
 			// ran (the answer syncs back onto this record) shows "ran on <that device>"
 			// rather than looking as if this device produced it. The runner writes it
 			// here from its own id; it travels on the message in the parcel.
-			if (umid) { delete _liveTurn[String(umid)]; delete _liveMid[String(umid)]; delete _liveProd[String(umid)]; }	// the answer is in `messages` now
+			var liveAns = umid ? _liveAns[String(umid)] : null;	// the answer's ts and extras, for its message
+			if (umid) { delete _liveTurn[String(umid)]; delete _liveMid[String(umid)]; delete _liveProd[String(umid)]; delete _liveAns[String(umid)]; }	// the answer is in `messages` now
 			var ansMsg = null;		// the answer, kept so a hand-off turn can be enriched below
 			if (chat._pausedMid) {
 				// PAUSED PART WAY, and said as that rather than as an answer or an error
@@ -1890,21 +2008,16 @@ export async function runTurn(chat, text, opts) {
 					interrupted: true, why: 'paused', iturn: umid, itext: text,
 					ranOn: selfDeviceId(), ts: Date.now() });
 			} else if (turnText) {
-			var amsg = { role: 'assistant', content: turnText, mid: amid, ranOn: selfDeviceId(), ts: Date.now() };
-			if (aprod) amsg.prod = [aprod];
+			var amsg = answerRow(String(umid), amid, turnText, aprod, liveAns);
 			ansMsg = amsg;
 			// Grouped with its turn by the prompt's id, an errand's (`turnId`) or a local one's. Without it a
 			// locally-recovered errand answer had no `iturn`: the finished-guards (peerRunErrandDeps.finished,
 			// dispatchedTurnFinished) that match on iturn could not see it, risking a re-run, and the "handed off
 			// then ran here" provenance had nothing to hang on (see dropDispatchedPlaceholder). A local answer
 			// with none was put in the turn of a prompt queued above it (check_fix5 H1).
-			amsg.iturn = String(umid);
-			// A hand-off run HERE after the fact ([Run here] on a dispatched turn):
-			// carry where it was sent, so the answer draws "Ran here — hand-off to X
-			// didn't finish" instead of reading as a plain local turn (appendAssistantText).
-			if (opts.handoffFellBack) amsg.handoffFellBack = String(opts.handoffFellBack);
-			if (opts.handoffBusy) amsg.handoffBusy = String(opts.handoffBusy);	// the seat was busy (Q19)
-			if (opts.handoffThread) amsg.handoffThread = String(opts.handoffThread);	// it lacked the thread (D2)
+			// `answerRow` sets `iturn`. A hand-off run HERE after the fact ([Run here] on a dispatched
+			// turn) carries where it was sent (`_liveAns` extras), so the answer draws "Ran here --
+			// hand-off to X didn't finish" instead of reading as a plain local turn (appendAssistantText).
 			pushRunRow(chat, umid, amsg);
 			heldNote(chat, app, amid);		// the engine wrote this answer into its own session
 		}
@@ -2172,6 +2285,14 @@ export async function runTurn(chat, text, opts) {
 				if (owns()) appendEnding(pendingEnd, true, chat);
 			}
 			pendingEnd = null;
+			// THE TURN'S END, LAST IN ITS LOG: a Stop is `stopped`, a turn cut, paused or handed
+			// back is `interrupted`, and one that ran to an answer or a failure is `done`.
+			logTurnRows(chat, umid, {
+				status: (chat._aborted && chat._stopWhy === 'user') ? 'stopped'
+					: turnOutcome === 'interrupted' ? 'interrupted' : 'done',
+				totals: { p: turnP || 0, c: turnC || 0, ca: turnCa || 0, usd: turnCost || 0 },
+			});
+			if (hereLease) hereLease();
 			chat._generating = false;
 			chat._runApp = null;
 			chat._turnSet = null;
@@ -2809,3 +2930,24 @@ export function stopGeneration() {
 	try { Workers.cancelAwaits(pg.current.id); } catch (e) { /* best effort */ }
 	abortTurn(pg.current);
 }
+
+/// ANOTHER DEVICE ENDED THIS TURN IN ITS LOG (a 409 `ended`, usually the dead-writer detector's
+/// `interrupted`). First end wins, so the run here stops rather than spend on a turn the log has
+/// closed; its rows still queued are dropped by the writer.
+function stopEndedTurn(ev) {
+	var d = (ev && ev.detail) || {};
+	for (var i = 0; i < pg.chats.length; i++) {
+		var c = pg.chats[i];
+		if (!c || String(c.id) !== String(d.chat) || !c._generating || String(c._turnTag) !== String(d.turn)) continue;
+		c._aborted = true;
+		c._stopWhy = 'ended';
+		try { Workers.cancelAwaits(c.id); } catch (e) { /* no gather waits */ }
+		abortTurn(c);
+	}
+}
+// page-split: install 134
+
+export function install() { // page-split: install
+	// page-split: install 134
+	window.addEventListener('daimond:turnlog-ended', stopEndedTurn);
+} // page-split: end install

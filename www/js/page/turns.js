@@ -4659,9 +4659,9 @@ function appendDispatchedTile(m) {
 	tile._body.appendChild(foot);
 	// CHROME ONLY (owner standing rule 2026-09-18). The hand-off tile is now the
 	// header, spinner and footer -- transient chrome. The turn's answer is not drawn
-	// here: it STREAMS into its own real transcript tiles as provisional messages
-	// (`onProgressFrame` -> `applyProvisional`), which grow like a live local turn and
-	// are never discarded. The flattened `.handoff-stream` text view this once held
+	// here: its rows arrive on the chat log and are drawn into its own real transcript
+	// tiles through the turn's view (handoff.js `onLogRows` -> turnlog.js `drawTurn`),
+	// which grow like a live local turn and are never discarded. The flattened `.handoff-stream` text view this once held
 	// was exactly the interim view that filled and was then lost.
 	// WHAT HAPPENED TO THE SEAT, under the status, which the footer cannot say: a
 	// refused hand-off, and a turn that found nobody and is running on this phone,
@@ -4718,6 +4718,9 @@ function seatTileNote(m, st) {
 }
 
 export function install() { // page-split: install
+	// The one copy control, for the classic scripts that draw a value to copy
+	// (testnet.js's sandbox card), so theirs is drawn as every other is.
+	window.DaimondCopyBtn = idCopyBtn;
 	// page-split: install 79
 
 	// ── Chat rendering ─────────────────────────────────────────

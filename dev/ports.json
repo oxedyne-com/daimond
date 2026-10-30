@@ -81,6 +81,8 @@
 		{"name": "rating_note_mock", "base": 28300, "stride": 1, "owner": "verify_rating_note", "files": [ "dev/verify_rating_note.mjs" ], "why": "section M's own mock"},
 		{"name": "handmeterless", "base": 28400, "stride": 1, "owner": "verify_handmeterless", "files": [ "dev/run_all.sh" ], "why": "its own throwaway dev server; never the ambient DAIMOND_PORT"},
 		{"name": "rig_shaper", "base": 28500, "stride": 3, "span": 3, "owner": "daimond-rig", "files": [ "dev/rig/net/shaper.mjs" ], "why": "one shaping proxy per rig device: argonaut, gilgamesh, iphone"},
-		{"name": "handbfcache", "base": 28800, "stride": 1, "owner": "verify_handbfcache", "files": [ "dev/verify_handbfcache.mjs" ], "env": "HANDBFCACHE_PORT", "why": "its own page server, which the dev extension is built to reach"}
+		{"name": "handbfcache", "base": 28800, "stride": 1, "owner": "verify_handbfcache", "files": [ "dev/verify_handbfcache.mjs" ], "env": "HANDBFCACHE_PORT", "why": "its own page server, which the dev extension is built to reach"},
+		{"name": "steel_tls", "base": 28900, "stride": 1, "owner": "daimond-rig", "files": [ "dev/steel_render.mjs" ], "why": "a world's own Steel, TLS (RIG-PROD P3: the world render of jarrah's config)"},
+		{"name": "steel_plain", "base": 29000, "stride": 1, "owner": "daimond-rig", "files": [ "dev/steel_render.mjs" ], "why": "a world's own Steel, plaintext (the ACME redirect port, unused with ACME off)"}
 	]
 }

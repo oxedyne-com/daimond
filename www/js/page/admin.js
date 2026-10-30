@@ -1723,6 +1723,12 @@ export function install() { // page-split: install
 		// it rather than wiping it mid-copy: { line, until } or null.
 		var _runnerMinted = null;
 		function runnerMintRow(view) {
+			// Off for this account (capabilities.runner, design §R7): a short label
+			// in place of the offer, so nobody pairs a runner the gateway would refuse.
+			if (window.DaimondNet && !window.DaimondNet.can('runner')) {
+				view.appendChild(el('div', 'admin-note', t('devices.runner_off')));
+				return;
+			}
 			var go = document.createElement('button');
 			go.type = 'button';
 			go.className = 'admin-item';

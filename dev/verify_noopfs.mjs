@@ -44,6 +44,7 @@ import { fileURLToPath } from 'node:url';
 import { CHROME, SCRATCH, signInAs, connectMock, newChat } from './harness.mjs';
 import { cleanDisplayEnv } from './display.mjs';
 import { makePagePro } from './pro.mjs';
+import { gatewayEnv } from './gwbin.mjs';
 
 const { chromium, webkit } = await import('./pw.mjs');
 process.env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = '1';
@@ -96,7 +97,7 @@ async function startGateway() {
 	if (!fs.readFileSync(path.join(cwd, 'app.jdat'), 'utf8').includes(`(u16|${GW_PORT})`)) throw new Error('gateway config is not on ' + GW_PORT);
 	fs.symlinkSync(fs.realpathSync(path.join(TREE, 'gateway/keys')), path.join(cwd, 'keys'));
 	const out = fs.openSync(path.join(ROOT, 'gateway.out'), 'a');
-	gwProc = spawn(GW_BIN, [], { cwd, stdio: ['ignore', out, out], env: Object.assign({}, process.env, { APP_MODE: 'sandbox' }) });
+	gwProc = spawn(GW_BIN, [], { cwd, stdio: ['ignore', out, out], env: gatewayEnv({ APP_MODE: 'sandbox' }) });
 	for (let i = 0; i < 60; i++) {
 		try { const r = await fetch(`http://127.0.0.1:${GW_PORT}/api/health`); if (r.ok) return; } catch (e) { /* not yet */ }
 		await sleep(500);

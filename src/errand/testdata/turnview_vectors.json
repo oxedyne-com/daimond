@@ -1,0 +1,783 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "name": "msg, more, end done",
+   "turn": "t1",
+   "rows": [
+    {
+     "head": {
+      "seq": 1,
+      "turn": "t1",
+      "n": 1,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1001,
+      "len": 0
+     },
+     "body": {
+      "mid": "m1",
+      "role": "user",
+      "text": "Hi"
+     }
+    },
+    {
+     "head": {
+      "seq": 2,
+      "turn": "t1",
+      "n": 2,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "d1",
+      "at": 1002,
+      "len": 0
+     },
+     "body": {
+      "mid": "m2",
+      "role": "assistant",
+      "text": "Hel"
+     }
+    },
+    {
+     "head": {
+      "seq": 3,
+      "turn": "t1",
+      "n": 3,
+      "kind": "more",
+      "member": "acct",
+      "daimon": "",
+      "at": 1003,
+      "len": 0
+     },
+     "body": {
+      "mid": "m2",
+      "text": "lo"
+     }
+    },
+    {
+     "head": {
+      "seq": 4,
+      "turn": "t1",
+      "n": 4,
+      "kind": "end",
+      "member": "acct",
+      "daimon": "",
+      "at": 1004,
+      "len": 0
+     },
+     "body": {
+      "status": "done",
+      "totals": {
+       "in": 10,
+       "out": 20
+      },
+      "alerts": [],
+      "undo": null,
+      "tried": [
+       "r1"
+      ]
+     }
+    }
+   ],
+   "applied": [
+    "taken",
+    "taken",
+    "taken",
+    "taken"
+   ],
+   "view": {
+    "turn": "t1",
+    "last": 4,
+    "state": "ended",
+    "status": "done",
+    "rows": [
+     {
+      "mid": "m1",
+      "role": "user",
+      "text": "Hi",
+      "seq": 1,
+      "at": 1001,
+      "member": "acct",
+      "daimon": ""
+     },
+     {
+      "mid": "m2",
+      "role": "assistant",
+      "text": "Hello",
+      "seq": 2,
+      "at": 1002,
+      "member": "acct",
+      "daimon": "d1"
+     }
+    ],
+    "end": {
+     "status": "done",
+     "totals": {
+      "in": 10,
+      "out": 20
+     },
+     "alerts": [],
+     "undo": null,
+     "tried": [
+      "r1"
+     ]
+    }
+   }
+  },
+  {
+   "name": "repeat, stale and no target",
+   "turn": "t1",
+   "rows": [
+    {
+     "head": {
+      "seq": 5,
+      "turn": "t1",
+      "n": 1,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1005,
+      "len": 0
+     },
+     "body": {
+      "mid": "m1",
+      "role": "user",
+      "text": "Hi"
+     }
+    },
+    {
+     "head": {
+      "seq": 6,
+      "turn": "t1",
+      "n": 2,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1006,
+      "len": 0
+     },
+     "body": {
+      "mid": "m1",
+      "role": "user",
+      "text": "Hi"
+     }
+    },
+    {
+     "head": {
+      "seq": 6,
+      "turn": "t1",
+      "n": 2,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1006,
+      "len": 0
+     },
+     "body": {
+      "mid": "m3",
+      "role": "user",
+      "text": "late"
+     }
+    },
+    {
+     "head": {
+      "seq": 7,
+      "turn": "t1",
+      "n": 3,
+      "kind": "more",
+      "member": "acct",
+      "daimon": "",
+      "at": 1007,
+      "len": 0
+     },
+     "body": {
+      "mid": "m9",
+      "text": "x"
+     }
+    }
+   ],
+   "applied": [
+    "taken",
+    "repeat",
+    "stale",
+    "no_target"
+   ],
+   "view": {
+    "turn": "t1",
+    "last": 7,
+    "state": "open",
+    "rows": [
+     {
+      "mid": "m1",
+      "role": "user",
+      "text": "Hi",
+      "seq": 5,
+      "at": 1005,
+      "member": "acct",
+      "daimon": ""
+     }
+    ]
+   }
+  },
+  {
+   "name": "first end wins",
+   "turn": "t1",
+   "rows": [
+    {
+     "head": {
+      "seq": 1,
+      "turn": "t1",
+      "n": 1,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1001,
+      "len": 0
+     },
+     "body": {
+      "mid": "m1",
+      "role": "user",
+      "text": "Hi"
+     }
+    },
+    {
+     "head": {
+      "seq": 2,
+      "turn": "t1",
+      "n": 2,
+      "kind": "end",
+      "member": "acct",
+      "daimon": "",
+      "at": 1002,
+      "len": 0
+     },
+     "body": {
+      "status": "interrupted",
+      "totals": {
+       "in": 10,
+       "out": 20
+      },
+      "alerts": [],
+      "undo": null,
+      "tried": [
+       "r1"
+      ]
+     }
+    },
+    {
+     "head": {
+      "seq": 3,
+      "turn": "t1",
+      "n": 3,
+      "kind": "end",
+      "member": "acct",
+      "daimon": "",
+      "at": 1003,
+      "len": 0
+     },
+     "body": {
+      "status": "done",
+      "totals": {
+       "in": 10,
+       "out": 20
+      },
+      "alerts": [],
+      "undo": null,
+      "tried": [
+       "r1"
+      ]
+     }
+    },
+    {
+     "head": {
+      "seq": 4,
+      "turn": "t1",
+      "n": 4,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1004,
+      "len": 0
+     },
+     "body": {
+      "mid": "m2",
+      "role": "assistant",
+      "text": "no"
+     }
+    }
+   ],
+   "applied": [
+    "taken",
+    "taken",
+    "after_end",
+    "after_end"
+   ],
+   "view": {
+    "turn": "t1",
+    "last": 2,
+    "state": "ended",
+    "status": "interrupted",
+    "rows": [
+     {
+      "mid": "m1",
+      "role": "user",
+      "text": "Hi",
+      "seq": 1,
+      "at": 1001,
+      "member": "acct",
+      "daimon": ""
+     }
+    ],
+    "end": {
+     "status": "interrupted",
+     "totals": {
+      "in": 10,
+      "out": 20
+     },
+     "alerts": [],
+     "undo": null,
+     "tried": [
+      "r1"
+     ]
+    }
+   }
+  },
+  {
+   "name": "interleaved turns, edit and tomb",
+   "turn": "t2",
+   "rows": [
+    {
+     "head": {
+      "seq": 1,
+      "turn": "t1",
+      "n": 1,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1001,
+      "len": 0
+     },
+     "body": {
+      "mid": "m1",
+      "role": "user",
+      "text": "other"
+     }
+    },
+    {
+     "head": {
+      "seq": 2,
+      "turn": "t2",
+      "n": 1,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1002,
+      "len": 0
+     },
+     "body": {
+      "mid": "a1",
+      "role": "user",
+      "text": "Ask"
+     }
+    },
+    {
+     "head": {
+      "seq": 3,
+      "turn": "t2",
+      "n": 2,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1003,
+      "len": 0
+     },
+     "body": {
+      "mid": "a2",
+      "role": "assistant",
+      "text": "draft"
+     }
+    },
+    {
+     "head": {
+      "seq": 4,
+      "turn": "t1",
+      "n": 2,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1004,
+      "len": 0
+     },
+     "body": {
+      "mid": "m2",
+      "role": "assistant",
+      "text": "x"
+     }
+    },
+    {
+     "head": {
+      "seq": 5,
+      "turn": "t2",
+      "n": 3,
+      "kind": "edit",
+      "member": "acct",
+      "daimon": "",
+      "at": 1005,
+      "len": 0
+     },
+     "body": {
+      "mid": "a2",
+      "role": "",
+      "text": "final"
+     }
+    },
+    {
+     "head": {
+      "seq": 6,
+      "turn": "t2",
+      "n": 4,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1006,
+      "len": 0
+     },
+     "body": {
+      "mid": "a3",
+      "role": "assistant",
+      "text": "gone"
+     }
+    },
+    {
+     "head": {
+      "seq": 7,
+      "turn": "t2",
+      "n": 5,
+      "kind": "tomb",
+      "member": "acct",
+      "daimon": "",
+      "at": 1007,
+      "len": 0
+     },
+     "body": {
+      "mid": "a3"
+     }
+    },
+    {
+     "head": {
+      "seq": 8,
+      "turn": "t2",
+      "n": 6,
+      "kind": "end",
+      "member": "acct",
+      "daimon": "",
+      "at": 1008,
+      "len": 0
+     },
+     "body": {
+      "status": "not_run",
+      "totals": {
+       "in": 10,
+       "out": 20
+      },
+      "alerts": [],
+      "undo": null,
+      "tried": [
+       "r1"
+      ]
+     }
+    }
+   ],
+   "applied": [
+    "other_turn",
+    "taken",
+    "taken",
+    "other_turn",
+    "taken",
+    "taken",
+    "taken",
+    "taken"
+   ],
+   "view": {
+    "turn": "t2",
+    "last": 8,
+    "state": "ended",
+    "status": "not_run",
+    "rows": [
+     {
+      "mid": "a1",
+      "role": "user",
+      "text": "Ask",
+      "seq": 2,
+      "at": 1002,
+      "member": "acct",
+      "daimon": ""
+     },
+     {
+      "mid": "a2",
+      "role": "assistant",
+      "text": "final",
+      "seq": 3,
+      "at": 1003,
+      "member": "acct",
+      "daimon": ""
+     }
+    ],
+    "end": {
+     "status": "not_run",
+     "totals": {
+      "in": 10,
+      "out": 20
+     },
+     "alerts": [],
+     "undo": null,
+     "tried": [
+      "r1"
+     ]
+    }
+   }
+  },
+  {
+   "name": "a body whole in pieces, another writer between them, pieces never finished",
+   "turn": "t5",
+   "rows": [
+    {
+     "head": {
+      "seq": 1,
+      "turn": "t5",
+      "n": 1,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1001,
+      "len": 0
+     },
+     "body": {
+      "mid": "m1",
+      "role": "user",
+      "text": "Write it"
+     }
+    },
+    {
+     "head": {
+      "seq": 2,
+      "turn": "t5",
+      "n": 1,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "d1",
+      "at": 1002,
+      "len": 0
+     },
+     "body": {
+      "piece": "{\"mid\":\"m2\",\"role\":\"tool_log\",\"text\":\"file_w",
+      "first": true
+     }
+    },
+    {
+     "head": {
+      "seq": 3,
+      "turn": "t5",
+      "n": 2,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "",
+      "at": 1003,
+      "len": 0
+     },
+     "body": {
+      "mid": "m3",
+      "role": "user",
+      "text": "and?"
+     }
+    },
+    {
+     "head": {
+      "seq": 4,
+      "turn": "t5",
+      "n": 2,
+      "kind": "more",
+      "member": "acct",
+      "daimon": "d1",
+      "at": 1004,
+      "len": 0
+     },
+     "body": {
+      "piece": "rite\",\"meta\":{\"name\":\"file_write\",\"args\":\"{\\"
+     }
+    },
+    {
+     "head": {
+      "seq": 5,
+      "turn": "t5",
+      "n": 3,
+      "kind": "more",
+      "member": "acct",
+      "daimon": "d1",
+      "at": 1005,
+      "len": 0
+     },
+     "body": {
+      "piece": "\"path\\\":\\\"rw/a.txt\\\",\\\"content\\\":\\\"é€😀\\\"}\"}}",
+      "last": true
+     }
+    },
+    {
+     "head": {
+      "seq": 6,
+      "turn": "t5",
+      "n": 4,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "d1",
+      "at": 1006,
+      "len": 0
+     },
+     "body": {
+      "piece": "{\"mid\":\"m4\",",
+      "first": true
+     }
+    },
+    {
+     "head": {
+      "seq": 7,
+      "turn": "t5",
+      "n": 5,
+      "kind": "msg",
+      "member": "acct",
+      "daimon": "d1",
+      "at": 1007,
+      "len": 0
+     },
+     "body": {
+      "mid": "m5",
+      "role": "assistant",
+      "text": "Done"
+     }
+    },
+    {
+     "head": {
+      "seq": 8,
+      "turn": "t5",
+      "n": 6,
+      "kind": "more",
+      "member": "acct",
+      "daimon": "d1",
+      "at": 1008,
+      "len": 0
+     },
+     "body": {
+      "piece": "\"role\":\"x\"}",
+      "last": true
+     }
+    },
+    {
+     "head": {
+      "seq": 9,
+      "turn": "t5",
+      "n": 7,
+      "kind": "end",
+      "member": "acct",
+      "daimon": "d1",
+      "at": 1009,
+      "len": 0
+     },
+     "body": {
+      "piece": "{\"status\":\"done\",\"to",
+      "first": true
+     }
+    },
+    {
+     "head": {
+      "seq": 10,
+      "turn": "t5",
+      "n": 8,
+      "kind": "more",
+      "member": "acct",
+      "daimon": "d1",
+      "at": 1010,
+      "len": 0
+     },
+     "body": {
+      "piece": "tals\":{},\"alerts\":[],\"undo\":{\"files\":[\"rw/a.txt\"]},\"tried\":[\"r1\"]}",
+      "last": true
+     }
+    }
+   ],
+   "applied": [
+    "taken",
+    "taken",
+    "taken",
+    "taken",
+    "taken",
+    "taken",
+    "taken",
+    "no_target",
+    "taken",
+    "taken"
+   ],
+   "view": {
+    "turn": "t5",
+    "last": 10,
+    "state": "ended",
+    "status": "done",
+    "rows": [
+     {
+      "mid": "m1",
+      "role": "user",
+      "text": "Write it",
+      "seq": 1,
+      "at": 1001,
+      "member": "acct",
+      "daimon": ""
+     },
+     {
+      "mid": "m3",
+      "role": "user",
+      "text": "and?",
+      "seq": 3,
+      "at": 1003,
+      "member": "acct",
+      "daimon": ""
+     },
+     {
+      "mid": "m2",
+      "role": "tool_log",
+      "text": "file_write",
+      "seq": 2,
+      "at": 1002,
+      "member": "acct",
+      "daimon": "d1",
+      "meta": {
+       "name": "file_write",
+       "args": "{\"path\":\"rw/a.txt\",\"content\":\"é€😀\"}"
+      }
+     },
+     {
+      "mid": "m5",
+      "role": "assistant",
+      "text": "Done",
+      "seq": 7,
+      "at": 1007,
+      "member": "acct",
+      "daimon": "d1"
+     }
+    ],
+    "end": {
+     "status": "done",
+     "totals": {},
+     "alerts": [],
+     "undo": {
+      "files": [
+       "rw/a.txt"
+      ]
+     },
+     "tried": [
+      "r1"
+     ]
+    }
+   }
+  }
+ ]
+}

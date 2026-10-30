@@ -1,0 +1,17 @@
+{
+	"name": "Daimond TEST",
+	"short_name": "Daimond TEST",
+	"id": "/?net=test",
+	"start_url": "./",
+	"scope": "./",
+	"display": "standalone",
+	"orientation": "any",
+	"lang": "en",
+	"dir": "ltr",
+	"theme_color": "#15120F",
+	"background_color": "#15120F",
+	"icons": [
+		{ "src": "assets/icons/test-180.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+		{ "src": "assets/icons/test-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+	]
+}

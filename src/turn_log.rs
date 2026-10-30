@@ -18,7 +18,7 @@ use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_jdat::prelude::*;
 
 /// The most bytes of one tool row's output or argument string a turn over its whole ceiling keeps
-/// (D2): the page's `PROGRESS_MSG_CHARS`.
+/// (D2).
 pub const TURN_TOOL_MAX: usize = 16 * 1024;
 /// The least a cut row keeps, however large the turn.
 const TURN_CUT_FLOOR: usize = 256;

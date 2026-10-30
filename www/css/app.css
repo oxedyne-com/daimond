@@ -773,6 +773,23 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    `.imp-chip.on` marks the active chip (improve.css), so "Send this report"
    reads as the main verb beside "Not now". */
 .report-send   { background: var(--accent-soft); color: var(--accent-text); }
+/* The testnet's report box (support.js, test only): a field drawn as the ✎ form's,
+   filled, with no line round it. */
+.report-text { width: 100%; background: var(--bg-tertiary); border: 1px solid transparent; border-radius: var(--radius-sm);
+	color: var(--text-primary); padding: 8px 10px; font-size: var(--fs-sm); line-height: 1.6; resize: vertical; margin: 4px 0 0; }
+
+/* The TEST chip beside the wordmark (testnet.js, drawn on the testnet only) and
+   its sheet. Filled like `.report-send`, no outline; the hit area is grown to the
+   44px floor without growing the drawing, so the bar keeps its height. */
+.net-chip { position: relative; flex: none; display: inline-flex; align-items: center; height: 20px; padding: 0 7px;
+	margin-inline-start: 10px; border: 0; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent-text);
+	font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); font-weight: 600; letter-spacing: .06em; line-height: 1; cursor: pointer; }
+.net-chip::after { content: ''; position: absolute; inset: -12px -6px; }
+.net-chip:hover { color: var(--text-primary); }
+.tn-row  { display: flex; align-items: center; gap: 10px; }
+.tn-label { font-size: var(--fs-sm); color: var(--text-secondary); }
+.tn-card-num { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-primary); white-space: nowrap; }
+.tn-note { font-size: var(--fs-xs); color: var(--text-muted); margin: 4px 0 12px; }
 .chat-msg-error > .chat-err-why { cursor: pointer; }
 .chat-msg-error > .chat-err-report { display: block; margin-top: 6px; margin-inline-start: -10px; font-size: var(--fs-xs); border: 0; }
 /* The pill's 1px border would stand its words 1px off the note's foot, so here the hover ring is

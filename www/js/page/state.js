@@ -58,6 +58,7 @@ export const pg = {
 	linkPaint: undefined,
 	liveThink: undefined,
 	locked: undefined,
+	member: '',		// the signed-in account, as the gateway names it: who wrote a log row (M0 seam)
 	openMs: undefined,
 	openSaid: undefined,
 	packingParcel: undefined,

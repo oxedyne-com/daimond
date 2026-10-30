@@ -1,0 +1,53 @@
+{
+	"allow": [],
+	"entries": [
+		{
+			"class": "named",
+			"count": (u64|1),
+			"file": "codec.rs",
+			"text": "ALERTS_MAX",
+		},
+		{
+			"class": "named",
+			"count": (u64|1),
+			"file": "codec.rs",
+			"text": "ASK_LABEL_CAP",
+		},
+		{
+			"class": "named",
+			"count": (u64|1),
+			"file": "codec.rs",
+			"text": "ASK_MEANS_CAP",
+		},
+		{
+			"class": "named",
+			"count": (u64|1),
+			"file": "codec.rs",
+			"text": "ASK_OPTIONS_MAX",
+		},
+		{
+			"class": "named",
+			"count": (u64|1),
+			"file": "codec.rs",
+			"text": "CAUSE_LIMITS",
+		},
+		{
+			"class": "named",
+			"count": (u64|1),
+			"file": "codec.rs",
+			"text": "LEASE_TTL_MS",
+		},
+		{
+			"class": "named",
+			"count": (u64|1),
+			"file": "codec.rs",
+			"text": "NOTE_HOLD_MS",
+		},
+		{
+			"class": "named",
+			"count": (u64|1),
+			"file": "json.rs",
+			"text": "MAX_DEPTH",
+		},
+	],
+}

@@ -208,16 +208,6 @@
 	// A standing (`quiet`) watch is read on every 15th of those ticks, once a minute.
 	var PROGRESS_QUIET_TICKS = 15;
 	var progQuietN = 0;
-	// ── The streaming progress push ────────────────────────────
-	// The minimum spacing between the OLD-gateway whole-parcel progress pushes. On a
-	// current gateway a hand-off streams through the lightweight frame door
-	// (pushProgressFrame) and this whole-parcel `pushProgress` is NOT taken at all --
-	// the runner's frame dep falls back to it only when the door is absent (a pre-door
-	// gateway). So this floor now bounds only that fallback, and it is raised to 10 s:
-	// a whole-account `collectSync` every 1.8 s is the ~40 MB-per-frame cost the S1
-	// collect fix exists to avoid, and on a pre-door gateway a slower stream is the
-	// right trade against it. The runner's own timer lives in peer.js runErrand.
-	var PROGRESS_PUSH_MIN_MS = 10000;
 	// The most a single frame may carry, in characters of PLAINTEXT tail. The
 	// gateway's own ceiling is 64 KiB of ciphertext and it refuses a frame over it
 	// (413, naming the ceiling); this keeps the ordinary frame comfortably under,
@@ -226,7 +216,7 @@
 	// watching device already has from the frame before.
 	var PROGRESS_TAIL_MAX = 48 * 1024;
 	// And the gateway's ceiling as a frame meets it: 64 KiB of sealed bytes (gateway
-	// `PROGRESS_MAX_BYTES`), less a kilobyte for the envelope the tail rides in, the IV and
+	// knob `progress_max_bytes` on /api/sync), less a kilobyte for the envelope the tail rides in, the IV and
 	// tag, and base64's rounding. A structured frame is fitted to both (`progressWeight`),
 	// because this door's slice and its halving on a 413 cut the JSON (r52d Open 1).
 	var PROGRESS_SEAL_MAX = 64 * 1024 - 1024;
@@ -472,8 +462,6 @@
 	// ms the tab last went hidden (0 = visible, or never hidden this page). Used by
 	// onResume to tell a genuine re-open from an alt-tab glance.
 	var hiddenAt      = 0;
-	// ms of the last progress push, to throttle the runner's streaming trickle.
-	var lastProgressAt = 0;
 	// Whether a hand-off is in flight and this device is watching for its answer: the
 	// dispatcher, and any paired device holding the dispatched placeholder. Set by
 	// daimond.js through the `expedite` verb; drives the short in-flight poll.
@@ -489,7 +477,7 @@
 	var pulledOk      = false;
 	// This page has had an answer from the mailbox: a pull that came back >= 0, which a
 	// parcel it cannot open (carried over) counts as, as well as one it merged. Nothing is
-	// published before it (push, pushProgress): `carried` lives in memory only, so a page
+	// published before it (push): `carried` lives in memory only, so a page
 	// that pushed before it had read once would send a parcel without the sections a
 	// newer build put there, and the CAS would take it (QA r569qa1 #1).
 	var heardOk       = false;
@@ -3064,94 +3052,6 @@
 		return { ok: false, version: 0, why: 'not_confirmed' };
 	}
 
-	// ── The streaming progress push ────────────────────────────
-	//
-	// A hand-off used to be invisible until it FINISHED: the runner captured and
-	// pushed the parcel once, at completion, so a peer watching the turn saw a blank
-	// placeholder for the whole run and then the finished turn all at once. This is
-	// the push that fills that gap. The runner calls it on a throttled timer through
-	// the length of a dispatched turn (peer.js runErrand), and each call sends the
-	// transcript AS IT STANDS -- the thinking and the tool calls already in the
-	// chat's messages -- so a peer pulling mid-turn watches it unfold.
-	//
-	// IT IS THE SAME PUSH, MINUS FOUR THINGS. Same account parcel, same mailbox, same
-	// compare-and-set, same wake of the OTHER devices. What it is NOT is a new turn or
-	// a new lease -- the runner already holds the one lease, the turn is billed once
-	// where it runs, and this moves no money. And it deliberately does the LESS of the
-	// final push: it does not write the carried fixed point (`saveSig`), advance the
-	// file-merge baseline, or commit a live chunk set -- those settle the FINISHED
-	// state, and committing a live set mid-turn could sweep a chunk the turn is about
-	// to reference. The final `pushResult` does all four; this is only a frame.
-	//
-	// UNLIKE push(), IT DOES NOT STAND DOWN OVER A LIVE TURN -- streaming the live
-	// turn is the whole point. It still shares the one-round gate, so it never
-	// overlaps the final push (the runner stops the progress timer BEFORE completing),
-	// and it is a no-op when the parcel has not moved, so a quiet stretch of a turn is
-	// quiet on the wire. A conflict or a refusal simply drops the frame: the next
-	// frame, and failing that the final pushResult (which DOES pull-merge-retry),
-	// reconciles. Nothing here ever waits, so it cannot stall the turn it is watching.
-	async function pushProgress() {
-		if (!ready() || !entitled) return;
-		if (rekeyBehind) return;			// behind the epoch chain: never overwrite the account (see push())
-		if (tooLarge || sessionGone) return;
-		if (failedVersion > serverVersion) return;	// a sure 409 over a version that would not merge (see push())
-		if (Date.now() - lastProgressAt < PROGRESS_PUSH_MIN_MS) return;	// throttle the trickle
-		if (inFlight) return;			// a round is running; the next tick tries again
-		if (!heardOk) { schedule(); return; }	// not before this page has read the mailbox (see `heardOk`)
-		var progLoc = await fileLoc();
-		if (serverVersion > 0 && !locMerged(progLoc)) { schedule(); return; }	// merges first (QFB4-1)
-		if (inFlight) return;
-		lastProgressAt = Date.now();
-		inFlight = true;
-		pushing  = true;
-		try {
-			var state = await collectParcel();
-			if ((await fileLoc()) !== progLoc) return;			// moved while collecting
-			var plain = JSON.stringify(state);
-			var cmp   = compareKey(state);
-			// Nothing new since the last send (progress OR ordinary): quiet frame.
-			if (cmp === lastPushed && serverVersion > 0) return;
-			var blob;
-			try { blob = await DaimondIdentity.wrap(plain); }
-			catch (e) { log('progress encrypt failed', e); return; }
-			// Carry the rekey record, exactly as the ordinary push does (D3). A progress
-			// frame is a full parcel write to the SAME mailbox, so at epoch >= 1 a bare
-			// blob would reach a watcher on an older epoch as an unreadable parcel it
-			// could neither open nor adopt -- and it would then clobber the account
-			// mid-turn. A no-op at epoch 0, byte-identical to today. See wrapEnvelope.
-			blob = wrapEnvelope(blob);		// D3: carry the record on the progress path too
-			var res;
-			// `w` names this tab's wake channel, so the gateway taps the OTHER devices --
-			// the ones watching the hand-off -- and not this runner. Bounded by its
-			// size's deadline, like every write: a frame that hangs must not hold the
-			// gate the final push needs.
-			try { res = await call('POST', { base_version: serverVersion, device: deviceLabel(), blob: blob, w: WAKE_ID }); }
-			catch (e) { log('progress push network error', e); return; }
-			if (res.status === 200 && res.json && res.json.ok) {
-				serverVersion = res.json.version | 0;
-				lastPushed    = cmp;
-				sentKeys      = presentKeys(state);
-				saveVersion();
-				// The frame is the mailbox now: the same mark as a push (see push()).
-				try { if (DaimondCore.syncIndexAt) DaimondCore.syncIndexAt(serverVersion, 'pushed', state); }
-				catch (e) { log('index mark failed', e); }
-				noteMergedAt(progLoc, serverVersion);
-				noteSynced();
-				diag('progress push', 'v' + serverVersion);
-				return;
-			}
-			// A 409 (someone moved the mailbox on) or any refusal: drop this frame. NOT
-			// a pull-merge-retry -- that would churn the runner's live chat and could
-			// stall the turn; the final pushResult reconciles. A stale cursor after a
-			// 409 simply means later frames 409 too and the stream pauses until the
-			// final push, which is the safe direction to fail.
-			diag('progress push skipped', 'status=' + res.status);
-		} finally {
-			pushing = false;
-			endRound();
-		}
-	}
-
 	// ── Presence ───────────────────────────────────────────────
 	// A separate, lightweight door from push/pull. A beat WRITES this device's
 	// last_seen and READS the account's whole fresh map back in one round; it bumps
@@ -3863,7 +3763,7 @@
 	async function leaseCommit(base, proposed) {
 		// Behind the epoch chain: never overwrite a shared door (see push()) (D8). This
 		// device's wrap key is stale, so a lease blob it sealed would be unreadable to
-		// the devices on the current epoch -- the same reason push/flush/pushProgress
+		// the devices on the current epoch -- the same reason push/flush
 		// all stand down. Reported as a no-op CAS the take loop drops.
 		if (rekeyBehind) return { ok: false, why: 'rekey', version: base | 0, leases: proposed };
 		var blob = await leaseSeal(proposed);
@@ -3922,7 +3822,7 @@
 	//
 	// WHAT IT REPLACED, and why the replacement is not the same push made smaller.
 	// The runner used to stream a handed-off turn by pushing the WHOLE content parcel
-	// every two seconds (pushProgress, below), and the watching device pulled the
+	// every two seconds, and the watching device pulled the
 	// whole parcel back: megabytes each way for a few hundred new characters. Worse,
 	// the push was a compare-and-set on the parcel, so a 409 from ANY other device
 	// DROPPED the frame, and one refusal for size (`tooLarge`) stopped the stream for
@@ -3968,12 +3868,22 @@
 	/// What `text` adds to a progress frame, the two ways the road weighs it: its characters
 	/// (this door's guard) and its UTF-8 bytes once JSON-escaped into the sealed envelope
 	/// (the gateway's ceiling). Additive over a concatenation of whole strings, so a frame's
-	/// parts are weighed once each and summed (`DaimondPeer.frameJson`).
+	/// parts are weighed once each and summed (`DaimondPeer.agentsFrame`).
 	function progressWeight(text) {
 		var s = String(text == null ? '' : text);
 		var esc = JSON.stringify(s);
 		if (!_progEnc && typeof TextEncoder !== 'undefined') _progEnc = new TextEncoder();
 		return { chars: s.length, bytes: _progEnc ? _progEnc.encode(esc).length - 2 : 3 * esc.length };
+	}
+
+	/// Append wire rows to a chat's log (P2.3, design §2): `{status, json}`, or `{status: 0}`
+	/// when the gateway could not be reached or the session cannot write, so the writer keeps
+	/// its rows and sends them again. 200 `{first, head, row_max, batch_max, flush_ms}`, 409
+	/// `ended`, 413 over a ceiling (the writer halves).
+	async function appendLog(chat, rows) {
+		if (!ready() || !entitled || sessionGone || rekeyBehind) return { status: 0 };
+		try { return await call('POST', { rows: rows, w: WAKE_ID }, '?log=' + encodeURIComponent(String(chat))); }
+		catch (e) { return { status: 0 }; }
 	}
 
 	/// PUT one frame of `turnId`'s transcript tail. Answers
@@ -4054,6 +3964,40 @@
 		return { seq: res.json.seq | 0, tail: String(frame.tail || ''), final: !!frame.final, abi: +frame.abi | 0 };
 	}
 
+	// ── The chat log, read (P2.3a, design §2) ──────────────────
+	//
+	// Transport only: the rows come back sealed, and page/turnlog.js opens and folds them
+	// through the engine's TurnView. The read never parks; the gateway taps the wake
+	// channel with `c<chat>:<head>` when a chat's log moves, and `onLog` listeners hear it.
+	var logListeners = [];
+
+	/// GET the rows of `chat` above `since`: the door's answer (`{rows, head, low, more}` or
+	/// `{gap, low}`), or null when the read failed. Never throws.
+	async function readLog(chat, since) {
+		if (!ready() || !entitled || sessionGone || !chat) return null;
+		var q = '?log=' + encodeURIComponent(String(chat)) + '&since=' + Math.max(0, +since || 0);
+		var res;
+		try { res = await call('GET', undefined, q, { timeoutMs: PULL_TIMEOUT_MS }); }
+		catch (e) { return null; }
+		if (!res || res.status !== 200 || !res.json || !res.json.ok) return null;
+		return res.json;
+	}
+
+	/// `c<chat>:<head>`: the chat's log moved to `head`. Each listener decides whether
+	/// it is behind.
+	function logTapped(d) {
+		var at = d.lastIndexOf(':');
+		if (at < 2) return;
+		var chat = d.slice(1, at), head = parseInt(d.slice(at + 1), 10);
+		if (!isFinite(head)) return;
+		logListeners.forEach(function (fn) { try { fn(chat, head); } catch (e) { /* one listener */ } });
+	}
+
+	/// Hear every chat log tap: `fn(chat, head)`.
+	function onLog(fn) {
+		if (typeof fn === 'function' && logListeners.indexOf(fn) < 0) logListeners.push(fn);
+	}
+
 	/// Follow `key`'s progress frames: `onFrame(frame)` is called with each frame newer
 	/// than the last one seen, until `unwatchProgress(key)`. Watching again replaces the
 	/// callback and keeps the place.
@@ -4079,27 +4023,14 @@
 		}
 	}
 
-	/// Stop following `key`. With `onLast`, the door is read once more first and
-	/// `onLast(frame)` is called with anything newer than the last frame seen.
-	///
-	/// A WATCH ENDS ON NEWS THAT COMES AFTER ITS LAST FRAME (2026-09-25). A runner
-	/// stores its final frame, then posts its report, then releases the lease, and
-	/// either of the last two ends the watch. Where no tap comes, the frame is read
-	/// on a 4 s tick, so the watch usually ended before the tick read it, and the
-	/// finished answer on the door was never read: with the runner's parcel held
-	/// up, the sender was left with no answer at all (slowparcel CASE 2).
-	function unwatchProgress(key, onLast) {
+	/// Stop following `key`. A turn's last word is its log's end row now (P2.3a2), so the
+	/// door is not read once more on the way out.
+	function unwatchProgress(key) {
 		key = String(key || '');
-		var w = progWatch[key];
-		if (!w) return;
+		if (!progWatch[key]) return;
 		delete progWatch[key];
 		setProgressWanted();
-		if (typeof onLast !== 'function') return;
-		getProgressFrame(key, w.since).then(function (frame) {
-			if (frame) { try { onLast(frame); } catch (e) { /* a watcher's fault stays its own */ } }
-		}, function () { /* the parcel still carries the answer */ });
 	}
-
 	/// The keys being followed, for the verifier and for debugging.
 	function progressWatched() { return Object.keys(progWatch); }
 
@@ -4421,6 +4352,8 @@
 			// that is not parcel news is read as lease news (wakeHeard).
 			var d = String(ev.data);
 			if (d.charAt(0) === 'p') { progressTapped(); return; }
+			// `c<chat>:<head>`: a chat's log moved (P2.3a).
+			if (d.charAt(0) === 'c') { logTapped(d); return; }
 			if (d.charAt(0) === 'l') { leaseWake(parseInt(d.slice(1), 10) | 0); return; }
 			// `r<ver>`: presence moved (HT1). A millisecond-scale version: never `| 0`.
 			if (d.charAt(0) === 'r') { presenceHeard(parseInt(d.slice(1), 10)); return; }
@@ -5310,12 +5243,6 @@
 		/// committed at -- `{ ok, version, why? }`. Used by the hand-off dispatcher so
 		/// the errand's parcelVersion genuinely contains the chat it just added.
 		flush:   flush,
-		/// Stream one frame of a running turn to the mailbox. The runner of a
-		/// dispatched turn calls this on a throttled timer (peer.js runErrand) so peers
-		/// watching the hand-off see the transcript grow rather than a blank wait. The
-		/// SAME account parcel under compare-and-set -- no new turn, no new lease, no
-		/// second charge. See pushProgress.
-		pushProgress: pushProgress,
 		/// The streaming progress door, off the content parcel: `pushProgressFrame(turnId,
 		/// tail, final)` PUTs one small sealed frame of a running turn's rendered tail,
 		/// and `watchProgress(key, onFrame)` follows a turn's frames as the wake channel
@@ -5324,9 +5251,12 @@
 		/// and this tail is the whole of it, so a watcher can show the finished answer
 		/// without the account parcel.
 		pushProgressFrame: pushProgressFrame,
+		/// The chat log's append door (`appendLog(chat, rows)`), the writing side of P2.3.
+		appendLog:         appendLog,
 		progressWeight:    progressWeight,
 		progressBudget:    { chars: PROGRESS_TAIL_MAX, bytes: PROGRESS_SEAL_MAX },
-		getProgressFrame:  getProgressFrame,
+		readLog:           readLog,
+		onLog:             onLog,
 		watchProgress:     watchProgress,
 		unwatchProgress:   unwatchProgress,
 		progressWatched:   progressWatched,

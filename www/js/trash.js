@@ -264,24 +264,22 @@
 		return true;
 	}
 
-	/// Ask the gateway what the operator has set. Fire and forget: a failure
+	/// Take the operator's figures from `/api/policy`'s answer. A failure
 	/// leaves the cached answer in place, which is the right answer to have.
 	///
-	/// Unauthenticated, deliberately. It returns two integers the interface
-	/// states in plain words anyway, and a device has to be able to learn the
-	/// policy before it has an account -- otherwise a fresh install would apply
-	/// the shipped figures until somebody signed in, and the one moment the
-	/// operator most wants their policy in force is the first boot.
-	async function refresh() {
-		var j;
-		try {
-			var res = await fetch('/api/policy', { headers: { 'accept': 'application/json',
-				'x-daimond-api': String(DaimondGateway.clientApi()) } });
-			if (!res.ok) return false;
-			j = await res.json();
-		} catch (e) { return false; }		// offline, or no gateway in this build
+	/// The answer is unauthenticated where it matters: it returns two integers
+	/// the interface states in plain words anyway, and a device has to be able to
+	/// learn the policy before it has an account -- otherwise a fresh install
+	/// would apply the shipped figures until somebody signed in, and the one
+	/// moment the operator most wants their policy in force is the first boot.
+	/// policy.js asks once per boot and every reader shares that answer.
+	function adopt(j) {
 		if (!j || j.ok !== true) return false;
 		return set(j.chat_expire_days, j.trash_retain_days);
+	}
+	async function refresh() {
+		if (!window.DaimondNet) return false;		// no policy.js in this build
+		return adopt(await DaimondNet.refresh());
 	}
 
 	window.DaimondPolicy = {
@@ -305,17 +303,9 @@
 		reset:         function () { _cache = null; },
 	};
 
-	// Ask once per boot. Nothing waits on it: the cached or shipped figures are
-	// already in force, and this only replaces them. Asked once every script has
-	// run, because index.html loads this file before gateway.js, whose
-	// clientApi() the request carries; asked at load, it went with no version.
-	try {
-		if (typeof document !== 'undefined' && document.readyState === 'loading') {
-			document.addEventListener('DOMContentLoaded', function () { refresh(); });
-		} else {
-			refresh();
-		}
-	} catch (e) { /* no fetch in this environment */ }
+	// This boot's answer, shared with policy.js. Nothing waits on it: the cached
+	// or shipped figures are already in force, and this only replaces them.
+	try { if (window.DaimondNet) DaimondNet.read().then(adopt); } catch (e) { /* no policy.js here */ }
 })();
 (function () {
 	'use strict';

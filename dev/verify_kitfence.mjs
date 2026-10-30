@@ -140,8 +140,8 @@ if (built.status !== 0) { console.log('\n0 ok, 1 failed'); process.exit(1); }
 // moved in `fence.rs` would not have registered at all. Cargo already writes
 // down what it linked, so the list is not picked: `daimond-hand.d` names every
 // source that went into the binary, and one of them being newer is the refusal.
-// The same oracle as `shipping_hand` in `kimberlite/src/exec.rs` and
-// `dev/verify_ptyedge.mjs`.
+// The same oracle as `dev/verify_ptyedge.mjs`, and as `shipping_hand` in
+// `kimberlite/src/exec.rs` was until LIBBIN moved its tests to `tests/shipping_launcher.rs`.
 refuse(whyStaleBinary(HAND, {
 	subject: 'The toolchain clamp',
 	what:    'hand',

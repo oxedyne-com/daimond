@@ -355,7 +355,24 @@ function msgCmp(a, b) {
 /// The one copy of a message that two copies of it make. A NEW object where neither
 /// input is the answer (a badge taken from the other copy, or two cores equal but for
 /// key order); otherwise one of the inputs, untouched.
-function msgJoin(prev, m) {
+export function msgJoin(prev, m) {
+	return logOrdered(msgJoinCopy(prev, m), prev, m);
+}
+/// The log orders the chat (P2.3a, design §2 [F1][F2]): a copy folded from the chat log
+/// carries its row's `seq`, the gateway's `at` as `ts`, and the `member` who wrote it, and
+/// the joined copy keeps them whichever copy the law preferred, so a message that came by
+/// log and by parcel is one message in the log's place.
+function logOrdered(j, prev, m) {
+	var lg = prev.seq ? prev : (m.seq ? m : null);
+	if (!lg || (j.seq === lg.seq && j.ts === lg.ts && (!lg.member || j.member === lg.member))) return j;
+	var out = {};
+	for (var k in j) out[k] = j[k];
+	out.seq = lg.seq;
+	out.ts  = lg.ts;
+	if (lg.member) out.member = lg.member;
+	return out;
+}
+function msgJoinCopy(prev, m) {
 	if (sameCopy(prev, m)) return prev;
 	var c = msgCmp(prev, m), w = c >= 0 ? prev : m;
 	var bp = msgBadge(prev), bm = msgBadge(m);

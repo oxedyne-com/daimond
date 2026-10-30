@@ -16,6 +16,10 @@
    `msgSig`/`isAppendOf`/`mergeMessages` are faithful ports of daimond.js
    (18672-18700, 1078-1127), exactly as peer.test.mjs ports the merge.
 
+   P2.3a: the watcher's frame fold (`foldProvisional`, `applyProvisional`)
+   is gone; a handed-off turn draws from the chat log (turnlog.test.mjs).
+   What stays here: the frame's shape, the control table and the merge laws.
+
    Run:  node www/js/immutable.test.mjs
    ============================================================ */
 import { readPage } from '../../dev/pagesrc.mjs';
@@ -118,7 +122,7 @@ function baseTranscript() {
 }
 // The runner's transcript once the turn has settled: the same user turn and the
 // finished answer it will push in the parcel (mid AMID, `ranOn` the runner, `ts`
-// at turn end). This is what `progressTail` reads for the FINAL frame.
+// at turn end).
 function runnerSettled(amid) {
 	return [
 		{ role: 'user', content: 'do the thing', mid: 'U', iturn: 'U', ts: 100 },
@@ -137,127 +141,7 @@ function visibleAnswer(msgs) {
 
 async function main() {
 	const P = loadPeer().DaimondPeer;
-	check('peer.js exposes the streaming + control functions',
-		P && typeof P.progressTail === 'function' && typeof P.foldProgress === 'function'
-		&& typeof P.foldProvisional === 'function' && typeof P.dispatchControl === 'function');
-
-	// ── (a) + (b) The stream folds in, grows in place, and the parcel merge
-	//    replaces by mid with NO rebuild -- and the answer is NEVER blank. ──
-	console.log('\n(a)+(b) — provisional stream folds in, converges by mid, never blanks, never rebuilds');
-	{
-		let t = baseTranscript();
-		const AMID = 'ans-1';
-		// Frame 1: the answer begins. The row carries the mid the runner WILL push
-		// (progressTail on the runner reads its own message; the live-answer row shares
-		// that mid via `_liveMid`). It lands as provisional AFTER the placeholder.
-		let n1 = P.foldProvisional(t, 'U', [{ mid: AMID, role: 'assistant', content: 'Here is ' }]);
-		check('(a1) the first frame folds a provisional answer row into the transcript', !!n1);
-		t = n1;
-		check('(a2) it sits AFTER the placeholder, so the add is an append (no middle insertion)',
-			t.map((m) => m.mid).join(',') === 'U,PH,' + AMID);
-		check('(a3) the provisional row is flagged, so the drop/merge rules can tell it apart',
-			t[2].provisional === 1);
-		check('(b1) the answer is visible from the first frame', visibleAnswer(t) === 'Here is ');
-
-		const sigsAfterFirst = sigsOf(t);
-
-		// Frame 2: the answer GROWS. Same mid, longer content -> updated IN PLACE, the
-		// array order unchanged, so a store-driven redraw is an append/nothing-changed.
-		let n2 = P.foldProvisional(t, 'U', [{ mid: AMID, role: 'assistant', content: 'Here is the whole ans' }]);
-		check('(a4) a growing frame updates the row IN PLACE (no new row, order unchanged)',
-			!!n2 && n2.length === t.length && n2.map((m) => m.mid).join(',') === 'U,PH,' + AMID);
-		t = n2;
-		check('(b2) the growing answer never goes blank', visibleAnswer(t) === 'Here is the whole ans');
-		check('(a5) an UNCHANGED frame folds to null (no redraw owed)',
-			P.foldProvisional(t, 'U', [{ mid: AMID, role: 'assistant', content: 'Here is the whole ans' }]) === null);
-
-		// The FINAL frame: the runner reads its settled transcript and sends the finished
-		// rows in FULL, with their real mids, `ranOn` and ts. progressTail is the real fn.
-		const finalRows = P.progressTail(runnerSettled(AMID), 'U', 36 * 1024);
-		check('(a6) the final frame carries the finished answer row with ranOn and full content',
-			finalRows.some((r) => r.mid === AMID && r.ranOn === 'dev-runner' && r.content === 'Here is the whole answer.'));
-		// It also carries the think and tool rows; fold them all in.
-		let n3 = P.foldProvisional(t, 'U', finalRows);
-		check('(a7) the final frame folds in the finished rows', !!n3);
-		t = n3;
-		check('(b3) the answer is present and final after the final frame',
-			visibleAnswer(t).indexOf('Here is the whole answer.') >= 0);
-		// The provisional answer row now byte-matches the copy the parcel will carry.
-		const provAnswer = t.filter((m) => m.mid === AMID)[0];
-		check('(a8) the provisional answer now carries the runner\'s ranOn (matches the parcel copy)',
-			provAnswer.ranOn === 'dev-runner' && provAnswer.content === 'Here is the whole answer.');
-
-		const sigsBeforeMerge = sigsOf(t);
-
-		// THE PARCEL ARRIVES. mergeMessages unions the runner's settled transcript (the
-		// parcel) with this device's transcript (provisional rows included). The real
-		// copies win their mids; the provisional rows converge away.
-		const merged = mergeMessages(runnerSettled(AMID), t);
-		check('(b4) the answer is STILL present across the parcel merge -- never a blank window',
-			visibleAnswer(merged).indexOf('Here is the whole answer.') >= 0);
-		check('(a9) after the merge the answer row is the runner\'s REAL copy (provisional gone)',
-			merged.filter((m) => m.mid === AMID).length === 1
-			&& !merged.filter((m) => m.mid === AMID)[0].provisional);
-		// The load-bearing property: the drawn prefix did not change, so the render takes
-		// the NO-REBUILD path. The placeholder still sits in `merged` (the parcel does not
-		// carry it -- it is dropped separately, after this, by dispatchedAnswerPresent).
-		const sigsAfterMerge = sigsOf(merged.filter((m) => m.mid !== 'PH'));
-		const sigsBeforeNoPh = sigsOf(t.filter((m) => m.mid !== 'PH'));
-		check('(a10) the parcel merge is a NO-OP redraw for the answer rows -- no clearChat/rebuild',
-			noRebuild(sigsBeforeNoPh, sigsAfterMerge), sigsBeforeNoPh.join(' | ') + '  vs  ' + sigsAfterMerge.join(' | '));
-		check('(a11) and the order is preserved, so it is not a middle-insertion rebuild',
-			merged.filter((m) => m.mid !== 'PH').map((m) => m.mid).join(',') === 'U,K,T,' + AMID);
-
-		// Continuity across the WHOLE done->parcel sequence: at every step the answer was
-		// on screen (never '').
-		check('(b5) the answer text was present at every step of the sequence',
-			['Here is ', 'Here is the whole ans'].every(() => true)
-			&& visibleAnswer(merged) && sigsAfterFirst.length === 3 && sigsBeforeMerge.length >= 3);
-	}
-
-	// ── A row arriving in a LATER frame lands after the earlier rows of its turn. ──
-	console.log('\n(o) — rows that arrive across frames are drawn in the frame\'s order');
-	{
-		// A reasoning turn: frame 1 carries the thinking alone, frame 2 the grown
-		// thinking and the answer that follows it.
-		let t = baseTranscript();
-		t = P.foldProvisional(t, 'U', [{ mid: 'K', role: 'think_log', content: 'weighing' }]) || t;
-		t = P.foldProvisional(t, 'U', [{ mid: 'K', role: 'think_log', content: 'weighing it up' },
-			{ mid: 'A', role: 'assistant', content: 'Here ' }]) || t;
-		check('(o1) an answer that follows the thinking in a later frame is drawn AFTER it',
-			t.map((m) => m.mid).join(',') === 'U,PH,K,A', t.map((m) => m.mid).join(','));
-		// A multi-tool turn: tool 2 arrives one frame after tool 1.
-		let u = baseTranscript();
-		u = P.foldProvisional(u, 'U', [{ mid: 'T1', role: 'tool_log', name: 'file_read', content: 'ok' }]) || u;
-		u = P.foldProvisional(u, 'U', [{ mid: 'T1', role: 'tool_log', name: 'file_read', content: 'ok' },
-			{ mid: 'T2', role: 'tool_log', name: 'file_read', content: 'ok' }]) || u;
-		check('(o2) a later tool tile is drawn after the earlier one',
-			u.map((m) => m.mid).join(',') === 'U,PH,T1,T2', u.map((m) => m.mid).join(','));
-		// Rows new in one frame keep its order, and a row that belongs BEFORE one
-		// already held still lands before it.
-		let v = baseTranscript();
-		v = P.foldProvisional(v, 'U', [{ mid: 'A', role: 'assistant', content: 'Here ' }]) || v;
-		v = P.foldProvisional(v, 'U', [{ mid: 'K', role: 'think_log', content: 'w' },
-			{ mid: 'T', role: 'tool_log', name: 'file_read', content: 'ok' },
-			{ mid: 'A', role: 'assistant', content: 'Here is' },
-			{ mid: 'E', role: 'assistant', content: 'after' }]) || v;
-		check('(o3) earlier rows go before the held answer and a later one after it',
-			v.map((m) => m.mid).join(',') === 'U,PH,K,T,A,E', v.map((m) => m.mid).join(','));
-	}
-
-	// ── A stale streaming frame must never overdraw the REAL merged answer. ──
-	console.log('\n(a) — once the real answer has merged, a late frame does not overdraw it');
-	{
-		const AMID = 'ans-2';
-		// The transcript AFTER the parcel merged the real answer (non-provisional).
-		let t = [
-			{ role: 'user', content: 'q', mid: 'U', iturn: 'U', ts: 100 },
-			{ role: 'assistant', content: 'FINAL merged answer', mid: AMID, iturn: 'U', ranOn: 'dev-runner', ts: 210 },
-		];
-		const late = P.foldProvisional(t, 'U', [{ mid: AMID, role: 'assistant', content: 'stale earlier text' }]);
-		check('(a12) a late frame for a mid the REAL answer already holds changes nothing',
-			late === null);
-	}
+	check('peer.js exposes the control functions', P && typeof P.dispatchControl === 'function');
 
 	// ── (e) No take-back at all (D-20261009-23); [Run here] on failure. ──
 	console.log('\n(e) — the footer control table (owner, D-20261009-23: no take back)');
@@ -282,19 +166,6 @@ async function main() {
 	// ── (d) Per-device request/pull rate does not rise vs baseline. ──
 	console.log('\n(d) — the streamed fix adds no per-device request, and expedite stays bounded');
 	{
-		// The streaming path is PURE + DOM: folding a frame into the transcript issues no
-		// network request. The watcher's ONE request per frame is a short door read made
-		// when the wake channel taps a stored frame; nothing is parked per turn (the
-		// connection-starvation fix of 2026-09-23).
-		let requests = 0;
-		const fakeFetch = () => { requests += 1; };
-		let t = baseTranscript();
-		for (let i = 0; i < 10; i++) {
-			t = P.foldProvisional(t, 'U', [{ mid: 'ans-3', role: 'assistant', content: 'x'.repeat(i + 1) }]) || t;
-		}
-		check('(d1) folding ten streamed frames issues ZERO network requests (pure fold)', requests === 0);
-		check('(d2) fakeFetch was never reached by the fold path', requests === 0 && typeof fakeFetch === 'function');
-
 		// The AddressGuard storm fix must stand: expedite is stood down after
 		// EXPEDITE_MAX_MS, and the value is unchanged (memory reference_daimond_addrguard).
 		const syncSrc = readPage(join(HERE, 'sync.js'), 'utf8');
@@ -303,37 +174,13 @@ async function main() {
 		check('(d4) sync.js still stands the full pull down past EXPEDITE_MAX_MS',
 			/Date\.now\(\)\s*-\s*expediteSince\s*>\s*EXPEDITE_MAX_MS/.test(syncSrc));
 
-		// The daimond.js watcher follows frames through the sync engine's tap-driven
-		// watch, not a parked read per turn and not a heavier expedite pull.
 		const dSrc = readPage(join(HERE, 'daimond.js'), 'utf8');
-		check('(d5) the watcher follows frames through the wake-tapped watch, never a parked read',
-			/DaimondSync\.watchProgress\(k, onProgressFrame/.test(dSrc)
-			&& !/[?&]wait=/.test(syncSrc) && !/getProgressFrame\([^)]*,[^)]*,/.test(dSrc + syncSrc));
 		check('(d6) no new expedite trigger was added -- expedite is still driven only by the dispatched index',
 			(dSrc.match(/DaimondSync\.expedite\(/g) || []).length === 1);
 		check('(d7) the flattened interim view is gone -- no `.handoff-stream` node is built, no painter defined',
 			!/className\s*=\s*'handoff-stream'/.test(dSrc)
 			&& !/function paintProgressTile/.test(dSrc)
-			&& !/function progressNodeFor/.test(dSrc)
-			&& /function applyProvisional/.test(dSrc));
-	}
-
-	// ── The runner-side frame budget stays valid JSON under the door guard. ──
-	console.log('\nThe frame is bounded so it stays valid JSON under the door\'s size guard');
-	{
-		// A turn far over the budget: progressTail drops OLDEST rows and clips the newest
-		// to the per-message share, so the encoded frame is well under the door's 48 KiB
-		// string guard (which would otherwise slice -- and corrupt -- a JSON payload).
-		const huge = [{ role: 'user', content: 'q', mid: 'U', iturn: 'U', ts: 1 }];
-		for (let i = 0; i < 40; i++) huge.push({ role: 'assistant', content: 'Z'.repeat(20 * 1024), mid: 'm' + i, ts: 2 + i });
-		const rows = P.progressTail(huge, 'U', 36 * 1024);
-		const payload = JSON.stringify({ v: 1, msgs: rows });
-		check('(f1) an over-budget final frame is bounded to fit the door (valid JSON under 48 KiB)',
-			payload.length < 48 * 1024);
-		check('(f2) and it keeps the NEWEST rows (what falls off the front the watcher already has)',
-			rows.length >= 1 && rows[rows.length - 1].mid === 'm39');
-		check('(f3) the payload round-trips as JSON (the string guard never had to slice it)',
-			JSON.parse(payload).msgs.length === rows.length);
+			&& !/function progressNodeFor/.test(dSrc));
 	}
 
 	// ── #22 co-existence: the end-of-turn changed-files table and the streamed
@@ -350,24 +197,10 @@ async function main() {
 			{ role: 'assistant', content: 'Done, two files changed.', mid: 'AN', iturn: 'U', ranOn: 'dev-runner', ts: 210 },
 			{ role: 'user', content: TAIL, mid: 'TN', ts: 211 },
 		];
-		const rows = P.progressTail(runner, 'U', 36 * 1024);
-		check('(g1) the tail-note USER message is NOT streamed as a provisional row',
-			!rows.some((r) => r.mid === 'TN') && !rows.some((r) => r.role === 'user'));
-		check('(g2) the model answer IS streamed (the table is not, so it never fights the stream)',
-			rows.some((r) => r.mid === 'AN' && r.role === 'assistant'));
-
-		// Even if a user row were somehow handed to foldProvisional, it lands as an
-		// ordinary row and is NOT marked provisional in a way that would divert the
-		// table wrongly -- but in practice progressTail is the gate and never emits one.
-		let t = baseTranscript();
-		t = P.foldProvisional(t, 'U', rows) || t;
-		check('(g3) folding the streamed rows adds the answer but never the tail-note table row',
-			t.some((m) => m.mid === 'AN' && m.provisional === 1) && !t.some((m) => m.mid === 'TN'));
-
 		// The parcel carries the durable answer AND the tail-note user message. After
 		// the merge both are present: the answer converged by mid (no dup), the
 		// tail-note appended as a NON-provisional user message (the table's source).
-		const merged = mergeMessages(runner, t);
+		const merged = mergeMessages(runner, baseTranscript());
 		check('(g4) after the merge the answer is the real copy (converged by mid, no duplicate)',
 			merged.filter((m) => m.mid === 'AN').length === 1
 			&& !merged.filter((m) => m.mid === 'AN')[0].provisional);
@@ -388,9 +221,6 @@ async function main() {
 		// `_tailNoteTable(text, current)`.
 		check('(g7) the #22 table is diverted in appendUserMessage (the user tail-note path), not the stream',
 			/_tailNoteTable\(text,/.test(dSrc) && /function appendUserMessage/.test(dSrc));
-		check('(g8) applyProvisional folds only into the model rows -- it does not touch appendUserMessage',
-			/function applyProvisional/.test(dSrc)
-			&& dSrc.split('function applyProvisional')[1].split('function ')[0].indexOf('appendUserMessage') < 0);
 	}
 
 	// ── (h) U1 provenance: a handed-off answer's provisional and final copies carry
@@ -407,61 +237,20 @@ async function main() {
 			pv: 'fireworks', role: 'chat', sp: 'sp1:0badf00d', d: '', c: 'cX', t: 'U', dev: 'dev-runner',
 			at: 1790000000000 });
 		const bytes = JSON.stringify(PROD);
-		// The wire: every frame is JSON (frameJson / parseFrame), so the record crosses as text.
-		const wire = (rows) => JSON.parse(JSON.stringify({ v: 1, msgs: rows })).msgs;
-
-		let t = baseTranscript();
-		// Frame 1: the live row `withLiveAnswer` builds, carrying `_liveProd`.
-		t = P.foldProvisional(t, 'U', wire([{ mid: AMID, role: 'assistant', content: 'Here ', ts: 150, prod: PROD }]));
-		const prov1 = t.filter((m) => m.mid === AMID)[0];
-		check('(h1) the first provisional row carries the record, byte for byte',
-			!!prov1 && prov1.provisional === 1 && JSON.stringify(prov1.prod) === bytes);
-		// Frame 2 grows the answer in place; the record does not move.
-		t = P.foldProvisional(t, 'U', wire([{ mid: AMID, role: 'assistant', content: 'Here is more', ts: 150, prod: PROD }])) || t;
-		check('(h2) a growing frame leaves the record exactly as it was',
-			JSON.stringify(t.filter((m) => m.mid === AMID)[0].prod) === bytes);
-		// A frame from a runner too old to stamp never strips a record already held.
-		t = P.foldProvisional(t, 'U', wire([{ mid: AMID, role: 'assistant', content: 'Here is more still', ts: 150 }])) || t;
-		check('(h3) a frame without a record does not take one away',
-			JSON.stringify(t.filter((m) => m.mid === AMID)[0].prod) === bytes);
-
-		// The FINAL frame: progressTail over the runner's settled transcript, whose answer is
-		// the message runTurn pushed with the same `aprod` object.
 		const settled = runnerSettled(AMID);
 		settled[settled.length - 1].prod = PROD;
-		const fin = wire(P.progressTail(settled, 'U', 36 * 1024));
-		check('(h4) the final frame\'s answer row carries the record (progressRow passes it)',
-			fin.some((r) => r.mid === AMID && JSON.stringify(r.prod) === bytes));
-		t = P.foldProvisional(t, 'U', fin) || t;
-		const provFinal = t.filter((m) => m.mid === AMID)[0];
-		check('(h5) the provisional copy and the final copy carry byte-identical records',
-			JSON.stringify(provFinal.prod) === JSON.stringify(settled[settled.length - 1].prod));
-
-		// A provisional copy PERSISTED before the parcel lands wins its mid on an equal
-		// length (store-first union) -- and still names the same product the same way.
-		const early = [{ role: 'user', content: 'do the thing', mid: 'U', iturn: 'U', ts: 100 },
-			Object.assign({}, provFinal)];
-		const mergedEarly = mergeMessages(early, settled);
-		check('(h6) whichever copy wins the mid, the record is the same bytes',
-			JSON.stringify(mergedEarly.filter((m) => m.mid === AMID)[0].prod) === bytes);
 		// And the record is chrome: `msgSig` does not read it, so it can never force a rebuild.
 		const bare = Object.assign({}, settled[settled.length - 1]); delete bare.prod;
 		check('(h7) the drawing signature ignores the record', msgSig(bare) === msgSig(settled[settled.length - 1]));
 		const dSrc = readPage(join(HERE, 'daimond.js'), 'utf8');
 		const sigSrc = dSrc.split('function msgSig(')[1].split('\n\t}')[0];
 		check('(h8) daimond.js msgSig does not read `prod` either', sigSrc.indexOf('prod') < 0);
-		check('(h9) the live row takes the record stamped at turn start (withLiveAnswer reads _liveProd)',
-			/if \(_liveProd\[id\]\) live\.prod = \[_liveProd\[id\]\]/.test(dSrc)
-			&& /_liveProd\[String\(umid\)\] = aprod/.test(dSrc) && /amsg\.prod = \[aprod\]/.test(dSrc));
+		// The streamed live row went with the turn frames (P2.3, design §5); the log's live
+		// row and the finished answer are one `answerRow`, with the record stamped at turn start.
+		check('(h9) the answer takes the record stamped at turn start (answerRow)',
+			/_liveProd\[String\(umid\)\] = aprod/.test(dSrc) && /if \(prod\) row\.prod = \[prod\]/.test(dSrc)
+			&& /var amsg = answerRow\(String\(umid\), amid, turnText, aprod,/.test(dSrc));
 
-		// An old transcript, from before records existed, folds and merges as it always did.
-		let old = baseTranscript();
-		old = P.foldProvisional(old, 'U', wire([{ mid: 'ans-old', role: 'assistant', content: 'old answer', ts: 150 }]));
-		const oldRow = old && old.filter((m) => m.mid === 'ans-old')[0];
-		check('(h10) a row with no record folds, draws and merges unchanged',
-			!!oldRow && !('prod' in oldRow)
-			&& mergeMessages(old, [{ role: 'assistant', content: 'old answer', mid: 'ans-old', iturn: 'U', ts: 150 }])
-				.filter((m) => m.mid === 'ans-old').length === 1);
 	}
 
 	// ── (i) P1b: a chat's Files row (`files_log`) is appended last, under its answer, so the thread

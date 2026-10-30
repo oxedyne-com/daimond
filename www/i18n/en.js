@@ -430,6 +430,7 @@
 	'devices.runner_mint_lapsed': 'That token has expired. Pair again for a new one.',
 	'devices.runner_mint_failed': 'Could not make a pairing token. Try again.',
 	'devices.runner_mint_signin': 'Sign in again to pair a computer.',
+	'devices.runner_off': 'Runners are off for this account.',
 	'devices.prune_many':       'Remove {n} replaced devices',
 	// The build each device is running, and the flag when it is behind this one.
 	'devices.build':            'build {id}',
@@ -4223,6 +4224,15 @@
 	'support.done':            'Close',
 	'support.sending':         'Sending a report…',
 	'support.sent':            'Sent — thank you.',
+	// The testnet's report box and its sheet (support.js, testnet.js; design §R11.3).
+	'support.box_title':       'Report a problem',
+	'support.box_hint':        'What went wrong?',
+	'support.box_send':        'Send',
+	'testnet.title':           'Testnet',
+	'testnet.card':            'Sandbox card',
+	'testnet.card_what':       'the sandbox card',
+	'testnet.card_note':       'Any future date, any CVC.',
+	'testnet.report':          'Report a Problem',
 
 	// ── TRAINING WHEELS — the temporary debug-data-sharing feature ──
 	// Remove these with www/js/debugshare.js and the DEBUG_SHARE touch points in

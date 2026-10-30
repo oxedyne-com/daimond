@@ -5,7 +5,8 @@ import { esc, friendlyError, stripAnsi, t, tn } from './util.js';
 import { nudgeSync, trashed } from './chatstore.js';
 import { filesSyncable, nominatedDeviceId, parseSyncListing } from './parcel_collect.js';
 import { deviceLabelFor, isMobileDeviceSelf, peerSyncShim, selfDeviceId } from './handoff.js';
-import { tools } from './workers.js';
+import { PeerAgents, tools } from './workers.js';
+import { diag } from './passkey_phrase.js';
 import { attachedTruly, attachedTrulyAll, attachmentsOf, bind, clear, closePop, closePreview, curDir,
 	docFilling, fmtFileBytes, folderFid, folderHandle, isOpen, joinPath, list, listNote, listed,
 	modeReconnect, openFile, parseListing, pickListing, pvEl, reknow, relabelListing, renderCrumbs,
@@ -14,7 +15,7 @@ import { attachedTruly, attachedTrulyAll, attachmentsOf, bind, clear, closePop, 
 import { DaimondPanels } from './layout.js';
 import { placeOpts, selfHoldsFolder, selfHoldsHand, toolReason } from './sourcemenu.js';
 import { annotatePresence } from './turns.js';
-import { confirmDialog, promptDialog, runnerAskerOf } from './consent.js';
+import { confirmDialog, promptDialog, runnerAsker } from './consent.js';
 import { versionsPath } from './chats.js';
 import { INSTRUCTIONS_FILE, Instructions, Prompts, instructionsSeed } from './pending.js';
 import { diamondApp } from './diamonds.js';
@@ -482,23 +483,22 @@ async function dispatchCompile(main, place, msgEl, want) {
 	}
 }
 
-/// Follow one compile's progress door and stream it onto the panel's message
-/// line -- through the same progress watch the hand-off tile uses, so a compile
-/// holds nothing open at the gateway either. Bounded by the compile's own
+/// Follow one compile on the runner and stream its progress onto the panel's
+/// message line. The runner publishes the compile as a run in its `agents.<device>`
+/// frame (REL-1b), which this device already follows for the workers list, so a
+/// compile holds nothing open at the gateway. Bounded by the compile's own
 /// deadline, past which no runner starts it.
 function watchCompile(cid, msgEl, place) {
-	var stop = function () {
-		try { DaimondSync.unwatchProgress(cid); } catch (e) { /* sync gone with the page */ }
-	};
+	var stop = function () { PeerAgents.offRun(cid); };
 	setTimeout(stop, DaimondPeer.COMPILE_DEADLINE_MS + 60000);
-	DaimondSync.watchProgress(cid, function (frame) {
+	PeerAgents.onRun(cid, function (run) {
 		if (!_placing[cid]) { stop(); return; }
-		if (frame.tail && msgEl && msgEl.isConnected) {
+		if (run.tail && msgEl && msgEl.isConnected) {
 			msgEl.textContent = t('files.compiling_on',
 				{ name: (place && place.label) || t('devices.unknown') })
-				+ ' ' + String(frame.tail);
+				+ ' ' + String(run.tail);
 		}
-		if (frame.final) stop();
+		if (['queued', 'running', 'paused'].indexOf(run.status) < 0) stop();
 	});
 }
 
@@ -515,7 +515,7 @@ async function onBuiltReport(report) {
 	// sheet pulled to Preview, the sidecar and the push -- is the dispatcher's.
 	if (!DaimondPeer.builtIsOurs(r, selfDeviceId(), _placing[cid])) return;
 	delete _placing[cid];
-	try { DaimondSync.unwatchProgress(cid); } catch (e) { /* sync gone with the page */ }
+	PeerAgents.offRun(cid);
 	var msgEl = viewEl && viewEl.querySelector('.files-view-msg');
 	var nm = deviceLabelFor(r.by) || t('devices.unknown');
 	function say(text, isErr) {
@@ -740,8 +740,11 @@ function compileDeps() {
 			catch (e) { return null; }
 		},
 		frame:     async function (cid, text, final) {
-			if (!DaimondSync || !DaimondSync.pushProgressFrame) return;
-			await DaimondSync.pushProgressFrame(cid, String(text || ''), !!final);
+			// Device work in progress: a run in this device's agents frame, never a
+			// compile-id key (the gateway refuses it). A refusal is thrown to the
+			// collector, which says it.
+			try { await PeerAgents.compileFrame(cid, String(text || ''), !!final); }
+			catch (e) { throw new Error('compile ' + cid + ': ' + String((e && e.message) || e)); }
 		},
 		post:      async function (env) {
 			await DaimondPost.post(await DaimondPeer.sealForSelf(env));
@@ -761,7 +764,15 @@ function _movedSince(path, was) { return !!was; }
 function wireCompileHandoff() {
 	if (!window.DaimondPeer || !DaimondPeer.onCompile) return false;
 	DaimondPeer.onCompile(async function (errand) {
-		return await DaimondPeer.runCompileErrand(errand, compileDeps());
+		PeerAgents.compileBegin(String(errand.cid || ''), String(errand.main || ''));
+		var res = await DaimondPeer.runCompileErrand(errand, compileDeps());
+		// A compile that failed or was revoked sends no final frame: its run ends here,
+		// so no device's list holds it running.
+		if (res && res.ran && !res.done) {
+			try { await PeerAgents.compileEnd(String(errand.cid || ''), res.error ? 'error' : 'stopped', String(res.why || '')); }
+			catch (e) { diag('compile end refused', String((e && e.message) || e)); }
+		}
+		return res;
 	});
 	// RECORDED NOW, DRAWN AFTER. The collector folds this note under the mailbox
 	// lock and waits for the handler, and the draw fetches the pages' chunks and
@@ -2406,6 +2417,6 @@ export function install() { // page-split: install
 		DaimondViewer.screenOwner(convKey);
 	}
 	// And whether the turn asking runs here for ANOTHER device, whose screen it then is
-	// (D-20261006-27). See `runnerAskerOf`.
-	if (window.DaimondViewer && DaimondViewer.remoteAsker) DaimondViewer.remoteAsker(runnerAskerOf);
+	// (D-20261006-27). See `runnerAsker`.
+	if (window.DaimondViewer && DaimondViewer.remoteAsker) DaimondViewer.remoteAsker(runnerAsker);
 } // page-split: end install

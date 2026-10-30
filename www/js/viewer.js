@@ -1783,7 +1783,7 @@
 	// left exactly as it was. `daimond.js` answers, because only it holds the
 	// runner's turns and the device each was asked from.
 
-	/// Answers `{ label, send(intent) }` for a turn run here for another device,
+	/// Answers `{ label }` for a turn run here for another device,
 	/// or null for one asked on this device.
 	var remoteAsker = null;
 
@@ -1799,7 +1799,7 @@
 		if (!remoteAsker || !turn) return null;
 		try {
 			var a = remoteAsker(String(owner || ''), String(turn));
-			return (a && typeof a.send === 'function') ? a : null;
+			return (a && typeof a === 'object') ? a : null;
 		}
 		catch (e) { return null; }
 	}
@@ -1846,7 +1846,6 @@
 		// here and no aim is moved, because nothing on this device is to change.
 		if (asker) {
 			var want = (typeof page === 'number' && page > 0) ? Math.floor(page) : 0;
-			asker.send({ show: String(path), page: want });
 			v.shown = false;
 			v.asker = String(asker.label || '');
 			if (want) v.page = want;

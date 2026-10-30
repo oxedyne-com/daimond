@@ -21,10 +21,10 @@
      - `ChatStore.noteFps` writes the authoritative fp/bytes back after an
        offload; the chunk-mutating heals clear the fp so a changed transcript
        is never served from a stale manifest.
-     - the runner's progress dep falls back to the whole-parcel `pushProgress`
-       ONLY when the frame door is absent -- never on a refused or empty frame.
+     - the runner's per-frame whole-parcel `pushProgress` is gone with the turn
+       frames (P2.3, design §5): a turn's rows travel in the chat log.
      - `flush()` collects once per round (push() reports the settled case),
-       down from three; the old-gateway `pushProgress` floor is raised to 10 s.
+       down from three.
 
    `daimond.js` is an ES module that imports the compiled wasm surface, so it
    cannot be instantiated in a sandbox here (`ledger.test.mjs`/`badge.test.mjs`
@@ -37,7 +37,6 @@
 
      node www/js/collectheap.test.mjs --break holdall     # collect holds every transcript
      node www/js/collectheap.test.mjs --break noreuse     # reuse-without-load path removed
-     node www/js/collectheap.test.mjs --break perframe    # per-frame whole-parcel fallback back
      node www/js/collectheap.test.mjs --break flush3      # flush collects three times a round
      node www/js/collectheap.test.mjs                     # and then, clean
    ============================================================ */
@@ -66,7 +65,7 @@ const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
 	return i >= 0 ? (process.argv[i + 1] || '') : '';
 })();
-const KNOWN = ['holdall', 'noreuse', 'perframe', 'flush3'];
+const KNOWN = ['holdall', 'noreuse', 'flush3'];
 if (BREAK && !KNOWN.includes(BREAK)) {
 	console.error('unknown break ' + JSON.stringify(BREAK) + '; known: ' + KNOWN.join(', '));
 	process.exit(2);
@@ -103,13 +102,6 @@ function daimondSrc() {
 		// exactly as it did before the summary carried a trustworthy fp.
 		src = src.replace('if (stored && fpHave && stored.fp === fpHave && Array.isArray(stored.chunks)) {',
 			'if (false) {  // BROKEN: reuse-without-load removed');
-	}
-	if (BREAK === 'perframe') {
-		// The per-frame guard goes: a present door that refuses or empties a frame
-		// falls through to the whole-parcel pushProgress again.
-		src = src.replace(
-			'\t\t\t\t\t\tif (out && out.ok) _progressSent[turnId] = payload;\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}',
-			'\t\t\t\t\t\tif (out && out.ok) { _progressSent[turnId] = payload; return; }\n\t\t\t\t\t}  // BROKEN: falls through per frame');
 	}
 	return src;
 }
@@ -174,22 +166,7 @@ function sourceGuards() {
 			'a tomb sweep leaves a stale fp');
 	}
 
-	console.log('\ncollectheap: source -- the runner never collects the whole parcel per frame');
-	{
-		const d = daimondSrc();
-		const body = funcBody(d, 'pushProgress: async function (turnId) {');
-		// With the door present the branch must RETURN; the whole-parcel fallback
-		// sits only after the door-absence check.
-		const doorIdx = body.indexOf('if (DaimondSync && DaimondSync.pushProgressFrame) {');
-		const fallbackIdx = body.indexOf('await DaimondSync.pushProgress();');
-		// The branch answers the time its frame left (Q20: the runner's 750 ms spacing).
-		check('the frame branch returns before the whole-parcel fallback',
-			doorIdx >= 0 && fallbackIdx > doorIdx && body.includes('// PRE-DOOR GATEWAY ONLY')
-			&& /if \(out && out\.ok\) _progressSent\[turnId\] = payload;\s*\n\s*return at;/.test(body),
-			'a present door can still fall through to a whole-parcel collect');
-	}
-
-	console.log('\ncollectheap: source -- flush collects once a round, and the floor is raised');
+	console.log('\ncollectheap: source -- flush collects once a round');
 	{
 		const s = syncSrc();
 		const body = funcBody(s, 'async function flush() {');
@@ -200,8 +177,6 @@ function sourceGuards() {
 			body.includes('r.committed'), 'flush does not use push()\'s settled report');
 		check('push() reports the settled case', s.includes('return { committed: true };'),
 			'push never signals "already on the server"');
-		check('the old-gateway progress floor is raised to 10 s',
-			/PROGRESS_PUSH_MIN_MS = 10000;/.test(s), 'the whole-parcel progress floor is still 1.8 s');
 	}
 }
 

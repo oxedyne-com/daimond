@@ -192,8 +192,8 @@ fs.writeFileSync(path.join(GRANT, '.daimond/secret.txt'), 'out of bounds\n');
 // no longer exists — a verifier that cannot say which code it measured must not
 // report success. `verify_kitfence.mjs` records having measured exactly that:
 // with a `CARGO_TARGET_DIR` inherited, its checks passed against a binary from
-// before the clamp existed. `kimberlite/src/exec.rs`'s `shipping_hand` refuses for the
-// same reason on the debug side.
+// before the clamp existed. `kimberlite/src/exec.rs`'s `shipping_hand` refused for the
+// same reason on the debug side, until LIBBIN made those integration tests that cargo builds for.
 //
 // So: build first, and then require the artefact to be newer than every source
 // cargo says went into it. `CARGO_TARGET_DIR` is REMOVED from the build's

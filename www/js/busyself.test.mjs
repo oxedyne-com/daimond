@@ -336,6 +336,15 @@ console.log('\n— B: the beat names its chats, and the switch reads them —');
 	check('B2a ingest keeps busy_chats as busyChats, strings only; absent stays absent',
 		JSON.stringify(snap.arg && snap.arg.busyChats) === '["c1"]' && snap.old && !('busyChats' in snap.old),
 		JSON.stringify(snap));
+	// B2c (P2.5b): a runner row's `busy` counts tabs only; the runner is busy when its
+	// runBusy reaches its runLimit, and a row without them keeps the old rule.
+	PR.ingest({ rk1: { name: 'kim', last_seen: now, kind: 'runner', busy: 0, runBusy: 1, runLimit: 2 },
+		rk2: { name: 'kim2', last_seen: now, kind: 'runner', busy: 0, runBusy: 2, runLimit: 2 },
+		rk3: { name: 'kim3', last_seen: now, kind: 'runner', busy: 1 } }, now);
+	const rs = PR.snapshot();
+	check('B2c a runner row is busy at runBusy >= runLimit, by busy without them',
+		rs.rk1 && rs.rk1.busy === 0 && rs.rk2 && rs.rk2.busy === 2 && rs.rk3 && rs.rk3.busy === 1,
+		JSON.stringify([rs.rk1, rs.rk2, rs.rk3]));
 	PR.beat('me', 'me', now, false, true, null, true, false, true, true, 1, ['c9']);
 	check('B2b this device\'s own beat keeps its busyChats',
 		JSON.stringify(PR.snapshot().me && PR.snapshot().me.busyChats) === '["c9"]', JSON.stringify(PR.snapshot().me));

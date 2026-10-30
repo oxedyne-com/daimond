@@ -25,10 +25,9 @@
      K9  THE SAME FAULT ELSEWHERE. Every menu whose button toggles
          leaves its button to its own click; the empty source reads
          "Credits".
-     K10 A FRAME below the page's min is not taken (A2): any device
-         holding the placeholder adopts a final frame, so a second
-         device with no report adopts nothing from one and ends the
-         turn "not run"; a legacy runner's frame is taken as before.
+     K10 A FRAME below the page's min is not taken (A2): `abiOk` and
+         sync.js's frame abi. (P2.3a: a turn's rows come by the log, so
+         the frame adoption's arm went with the frame read path.)
      K11 THE OCR ROWS (A1). The errand also carries his sealed
          `openrouter` and `mistral` rows when they reach the runner,
          as `ocr.js` reads PDFs and pictures with them; one that does
@@ -464,83 +463,6 @@ async function syncFrameChecks() {
 	check('K10 a frame naming none reads abi 0', !!b && b.abi === 0, JSON.stringify(b));
 }
 
-// ── A2: the page takes nothing from a frame below its min ────────
-function frameChecks(M) {
-	const P = page(M).DaimondPeer;
-	if (typeof P.abiOk !== 'function') { check('K10 abiOk exists', false); return; }
-	P.setEngineAbi(2, 2);
-	const NAMES = ['onProgressFrame', 'onLastFrame', 'frameAbiOk', 'refuseAbiFrame', 'refuseAbiTurn', 'dropRefusedTiles', 'adoptFinalFrame',
-		'endTurnNotRun', 'answerUnhanded', 'notRunRecord', 'placeholderNotRun', 'notRunCause', 'isNotRunRow', 'handBackNote', 'seatReason', 'applyProvisional',
-		// The fold of a native runner's figures, which the adoption calls (RT-C).
-		'runKeyCmp', 'hasNativeRuns', 'hereOf', 'nativeBaseWinner', 'nativeJoin', 'deriveNativeTotals',
-		'runFolded', 'markRunFolded', 'runnerRoadNative', 'foldRunnerTotals'];
-	const L = lift(source('daimond.js'), NAMES, ['NOTRUN_KEYS', 'FOLDED_RUNS_MAX', 'NATIVE_FIGS', 'HERE_FIELDS', 'TOTAL_FIELDS']);
-	check('K10 the frame functions are there', L.missing.length === 0, L.missing.join());
-	if (L.missing.length) return;
-	const run = (holder, by, frame, last) => {
-		const log = { folded: 0, fallback: [], dropped: [] };
-		const chat = { id: 'c1', messages: [
-			{ role: 'user', content: 'hi', iturn: 't1', mid: 'u1' },
-			{ role: 'assistant', why: 'dispatched', iturn: 't1', mid: 'p1', itext: 'hi', toDevice: holder, dispatchedBy: by },
-			{ role: 'assistant', content: 'part', iturn: 't1', mid: 'm1', provisional: true },
-		] };
-		const ctx = vm.createContext({
-			console, chats: [chat], current: null, _abiRefused: {}, _finalMids: {}, _finalRun: {}, peerReports: {}, _openAsk: {}, _handBackCause: {}, _handBack: {},
-			_progressWatched: { t1: true }, _progressView: {}, _watchIx: {},
-			REASON_DISPATCHED_STR: 'dispatched', ARRIVE_FRESH_MS: 1,
-			t: (k) => k, diag: () => {}, touchMsg: (m) => m, touchChat: () => {}, persistChats: () => {},
-			ownsChat: () => false, renderHistory: () => {}, renderDispatchedBadges: () => {}, noteArrive: () => {},
-			selfDeviceId: () => 'me', deviceNameFor: () => 'argonaut', handoffDone: () => true,
-			parseFrameRef: () => ({ msgs: [{ mid: 'm1', role: 'assistant', content: 'whole', whole: 1 }], ui: [], workers: [] }),
-			applyFrameUi: () => {}, setFrameWorkers: () => {}, fetchFinalRef: () => {},
-			finalFrameChat: () => chat, dispatchedChat: () => chat, chatHoldingTurn: () => chat,
-			dispatchedPlaceholderIn: (c) => c.messages.find((m) => m.why === 'dispatched') || null,
-			dispatchedAnswerPresent: () => false, dropOtherRunRows: () => 0, isLostRow: () => false,
-			dropDispatchedPlaceholder: (tid) => { log.dropped.push(tid); chat.messages = chat.messages.filter((m) => m.why !== 'dispatched'); },
-			clearDispatchFallback: () => {}, runDispatchFallback: (cid, tid) => { log.fallback.push(tid); },
-			DaimondLease: { record: () => ({ holder: holder, mode: 'done' }) },
-			DaimondPresence: { snapshot: () => ({ rn: { kind: 'runner', abi: 2, abiMin: 1 }, leg: { kind: 'runner' } }) },
-			DaimondModels: {},
-		});
-		ctx.window = ctx;
-		ctx.DaimondPeer = { abiOk: P.abiOk, frameWhole: () => true, frameRun: () => '',
-			foldProgress: (v, f) => ({ turn: f.turn, seq: f.seq, msgs: f.msgs, final: f.final }),
-			foldProvisional: (ms, tid, rows) => { log.folded++; return ms.map((m) => (m.mid === 'm1' ? Object.assign({}, m, { content: 'whole' }) : m)); } };
-		const api = vm.runInContext(L.body + ';({ onProgressFrame, onLastFrame, adoptFinalFrame, _abiRefused, _finalMids })', ctx);
-		if (last) api.onLastFrame('t1', frame); else api.onProgressFrame('t1', frame);
-		return { api, log, chat };
-	};
-	// The arm: a second device, no report, the runner's final frame below the min.
-	const low = run('rn', 'other', { seq: 1, tail: '{}', final: true, abi: 1 });
-	const nr = low.chat.messages.find((m) => m.mid === 't1-nr');
-	check('K10 a second device adopts nothing from a below-min final frame', low.log.folded === 0
-		&& !low.chat.messages.some((m) => m.mid === 'm1') && !low.chat.messages.some((m) => m.framed), JSON.stringify(low.chat.messages));
-	check('K10 and ends the turn "not run" with the abi line, its placeholder gone', !!nr && !!nr.notRun
-		&& /seat\.why_runner_engine/.test(nr.notRun.why) && low.log.dropped.indexOf('t1') >= 0, JSON.stringify(nr));
-	low.api._finalMids.t1 = { m1: 1 };
-	check('K10 adoptFinalFrame takes nothing for a refused turn', low.api.adoptFinalFrame('t1') === false);
-	const lowLast = run('rn', 'other', { seq: 1, tail: '{}', final: true, abi: 1 }, true);
-	check('K10 the watch\'s last read is refused the same way', lowLast.log.folded === 0
-		&& lowLast.chat.messages.some((m) => m.mid === 't1-nr'), JSON.stringify(lowLast.chat.messages));
-	const none = run('rn', 'other', { seq: 1, tail: '{}', final: true });
-	check('K10 an ABI runner\'s frame naming no ABI is refused', none.log.folded === 0, none.log.folded);
-	// The asker: the refused-report path, the hand-back with cause abi.
-	const ask = run('rn', 'me', { seq: 1, tail: '{}', final: true, abi: 1 });
-	check('K10 on the asker a refused frame goes down the abi hand-back', ask.log.folded === 0
-		&& ask.log.fallback.indexOf('t1') >= 0, JSON.stringify(ask.log));
-	// A streaming frame below the min: its rows go, and the turn waits for its ending.
-	const mid = run('rn', 'other', { seq: 1, tail: '{}', final: false, abi: 1 });
-	check('K10 a streaming frame below the min draws nothing and takes its rows down', mid.log.folded === 0
-		&& !mid.chat.messages.some((m) => m.mid === 'm1') && !mid.chat.messages.some((m) => m.mid === 't1-nr'), JSON.stringify(mid.chat.messages));
-	const ok = run('rn', 'other', { seq: 1, tail: '{}', final: true, abi: 2 });
-	check('K10 a frame at the min is folded and adopted', ok.log.folded === 1 && ok.chat.messages.some((m) => m.mid === 'm1' && m.framed),
-		JSON.stringify(ok.chat.messages));
-	const leg = run('leg', 'other', { seq: 1, tail: '{}', final: true });
-	check('K10 a legacy runner\'s frame takes the legacy path unchanged', leg.log.folded === 1
-		&& leg.chat.messages.some((m) => m.mid === 'm1' && m.framed), JSON.stringify(leg.chat.messages));
-	P.setEngineAbi(1, 1);
-}
-
 // ── daimond.js, the page half ───────────────────────────────────
 function pageChecks() {
 	const NAMES = ['electSources', 'seatReason', 'seatWhyKey', 'bookReportCost', 'handBackNote', 'wasmEngineAbi'];
@@ -715,7 +637,6 @@ offerChecks(M);
 truthChecks(M);
 pageChecks();
 await syncFrameChecks();
-frameChecks(M);
 stringChecks();
 menuChecks();
 console.log(checks + ' checks, ' + failures + ' failed');

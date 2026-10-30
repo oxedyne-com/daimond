@@ -42,6 +42,7 @@ pub mod diamond_rebase;
 pub mod diamond_versions;
 /// The runtime pieces a turn runs on: the race a Stop wins, and the per-session actor.
 pub mod engine;
+pub mod errand;
 /// How one path component is spelled on a filesystem that will not take it as it stands.
 ///
 /// Target-agnostic on purpose: the rules are a browser's, but the codec is a pure string

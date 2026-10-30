@@ -6,6 +6,7 @@ import { CHAT_MODEL_FIELDS, ChatStore, bumpDiamonds, loadChatMessages, newMid, p
 	storageAlarm, storedChats, tombMark, tombstone, touchChat, touchChatMeta, touchChatModel,
 	trashRestore } from './chatstore.js';
 import { newChatId, peekDiamondLabel, takeDiamondLabel } from './parcel_apply.js';
+import { readChatLog } from './handoff.js';
 import { _sharedClients, moveComposerTo, sendUserMessage, syncComposer, turnPhase } from './send.js';
 import { journalQueue, renderQueue, resumeQueue, stopGeneration } from './steer.js';
 import { WORKERS_PAUSED_KEY, Workers } from './workers.js';
@@ -1576,8 +1577,10 @@ export function selectChat(chat) {
 		// read is a single-row IndexedDB get -- a few milliseconds -- and the re-render
 		// is guarded on the chat still being the one on screen, so switching away
 		// mid-read leaves nothing dangling.
+		// The log above this chat's cursor is read on open (P2.3a2), once its transcript is in.
 		if (chat._loaded) {
 			renderHistory(chat.messages);
+			readChatLog(chat).catch(function () { /* the next wake reads it */ });
 		} else {
 			renderHistory(chat.messages);   // the empty array, until the row lands
 			loadChatMessages(chat).then(function () {
@@ -1588,6 +1591,7 @@ export function selectChat(chat) {
 				// never, because the seed above ran before there was anything to
 				// read `threadStarted` from.
 				if (pg.current === chat) syncAttachPrefix();
+				readChatLog(chat).catch(function () { /* the next wake reads it */ });
 			}).catch(function () { /* loadMessages never throws; the row was empty */ });
 		}
 	}

@@ -934,7 +934,7 @@ export function install() { // page-split: install
 	// SEAL-BRIDGE-BEGIN
 	(function () {
 		var want = ['seal_post', 'seal_post_epk', 'seal_post_open', 'seal_scheme',
-			'seal_peer_frame', 'seal_peer_aad'];
+			'seal_peer_frame', 'seal_peer_aad', 'errand_digest', 'errand_make'];
 		var missing = want.filter(function (n) { return typeof Sbj[n] !== 'function'; });
 		var settle = {};
 		var ready = new Promise(function (res, rej) { settle.res = res; settle.rej = rej; });
@@ -967,10 +967,43 @@ export function install() { // page-split: install
 			await ready;
 			try { return fn(); } catch (e) { throw refusal(e); }
 		}
+		// A log entry point this wasm may lack (a page ahead of its pkg): named, not a trap.
+		function logCall(name, fn) {
+			if (typeof Sbj[name] !== 'function') {
+				var err = new Error('This build cannot read the chat log: its wasm lacks ' + name + '.');
+				err.code = 'no_bridge';
+				return Promise.reject(err);
+			}
+			return call(fn);
+		}
 		window.DaimondSeal = {
 			ready: ready,
 			markReady: function () { settle.res(true); },
 			markFailed: function (e) { settle.rej(e || new Error('The wasm module did not start.')); },
+			// The chat log, written (P2.3b): the engine's `row::Writer` and row cut, so the tab and
+			// the runner write one log the same way. `rowAad` is the reader's (P2.3a), below.
+			/// A row body's plaintext for `{head, body}`, to seal under `rowAad()`.
+			rowSeal: function (head, body) {
+				return call(function () { return Sbj.row_seal(JSON.stringify(head), JSON.stringify(body)); });
+			},
+			/// The wire row for a header and its sealed body.
+			rowWire: function (head, sealed) {
+				return call(function () { return JSON.parse(Sbj.row_wire(JSON.stringify(head), u8(sealed))); });
+			},
+			/// A turn's changes since `writer` last looked at `msgs`, and its `end` when given:
+			/// `{writer, changes}`.
+			logDiff: function (writer, msgs, end) {
+				return call(function () {
+					return JSON.parse(Sbj.log_diff(JSON.stringify(writer || {}), JSON.stringify(msgs),
+						end ? JSON.stringify(end) : ''));
+				});
+			},
+			/// A change's rows numbered from `n`, each plaintext within `plainMax`: `[{head, body}]`.
+			logRows: function (turn, daimon, n, change, plainMax) {
+				return call(function () {
+					return JSON.parse(Sbj.log_rows(turn, daimon || '', n, JSON.stringify(change), plainMax));
+				});
+			},
 			/// Seal bytes to a list of 32-byte X25519 public keys (DPS1).
 			sealPost: function (recipients, plain) {
 				return call(function () {
@@ -1011,6 +1044,29 @@ export function install() { // page-split: install
 			/// The purpose a DPY2 body is bound to.
 			peerAad: function () {
 				return call(function () { return Sbj.seal_peer_aad(); });
+			},
+			/// The 32 bytes the account key signs for an envelope (`sigv:2`, the engine's
+			/// `errand::codec::signed_bytes`): the one codec, so tab and runner agree.
+			errandDigest: function (json) {
+				return call(function () { return Sbj.errand_digest(json); });
+			},
+			/// The envelope's text with `sigv:2`, `author` and `sig` (raw bytes) set.
+			errandMake: function (json, author, sig) {
+				return call(function () { return Sbj.errand_make(json, u8(author), u8(sig)); });
+			},
+			// The chat log, read (P2.3a): `rowSealed`, identity.js unwraps under `rowAad`, then
+			// `rowOpen`; `turnviewApply` is the one end-of-turn decision. Strings in, strings out.
+			rowAad: function () {
+				return logCall('row_aad', function () { return Sbj.row_aad(); });
+			},
+			rowSealed: function (wire) {
+				return logCall('row_sealed', function () { return Sbj.row_sealed(wire); });
+			},
+			rowOpen: function (wire, plain) {
+				return logCall('row_open', function () { return Sbj.row_open(wire, u8(plain)); });
+			},
+			turnviewApply: function (view, row) {
+				return logCall('turnview_apply', function () { return Sbj.turnview_apply(view, row); });
 			},
 		};
 		// Already instantiated (a harness that initialised the module first): ready now.

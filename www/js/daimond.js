@@ -77,6 +77,8 @@ import { install as parcel_collect_install } from './page/parcel_collect.js';
 import { install as parcel_apply_install } from './page/parcel_apply.js';
 import { install as handoff_install, install_2 as handoff_install_2 } from './page/handoff.js';
 import { install as send_install } from './page/send.js';
+import { install as steer_install } from './page/steer.js';
+import { install as turnwrite_install } from './page/turnwrite.js';
 import { install as workers_install } from './page/workers.js';
 import { install as files_tree_install } from './page/files_tree.js';
 import { install as files_view_install } from './page/files_view.js';
@@ -101,7 +103,7 @@ import { install as boot_install } from './page/boot.js';
 bindWasm({ Wasm, init, DaimondApp, builtin_tools, qr_matrix, set_account_ns, heap_bytes,
 	grow_on_purpose, install_panic_hook, set_workspace_dir, use_opfs_workspace, compose_prompt,
 	compose_prompt_for, default_prompt, safety_clause, Sbj });
-// page-split: order state util chatstore parcel_collect parcel_apply handoff send steer workers files_tree files_view admin layout rating sourcemenu links passkey_phrase termpanel turns consent chats tilestyle pending diamonds agentspanel crystal marks settingsui boot
+// page-split: order state util chatstore parcel_collect parcel_apply handoff send steer workers files_tree files_view admin layout rating sourcemenu links passkey_phrase termpanel turns consent chats tilestyle pending diamonds agentspanel crystal marks settingsui boot turnwrite
 util_install();
 state_install();
 util_install_2();
@@ -123,6 +125,8 @@ handoff_install_2();
 chats_install();
 tilestyle_install();
 send_install();
+steer_install();
+turnwrite_install();
 workers_install();
 pending_install();
 files_tree_install();

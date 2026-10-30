@@ -4,7 +4,7 @@ import { KITS, crystalRunning, pg, setKitsWaiting } from './state.js';
 import { friendlyError, getSecret, hideSecret, installSecretMask, mark, secretEye, t, tn, trail } from './util.js';
 import { persistChats } from './chatstore.js';
 import { chatHoldingTurn, deviceLabelFor, dispatchedChat, handOffTurn, peerSyncShim, peerTakeBack,
-	renderDispatchedBadges, selfDeviceId, uiWebUrl } from './handoff.js';
+	renderDispatchedBadges, selfDeviceId } from './handoff.js';
 import { sendUserMessage } from './send.js';
 import { waitingOn } from './steer.js';
 import { Workers } from './workers.js';
@@ -1854,14 +1854,14 @@ export function runnerCtxBegin(errand) {
 		dispatchedBy: String(errand.dispatchedBy || ''), parkCount: errand.parkCount | 0,
 		asks: Array.isArray(errand.asks) ? errand.asks.slice() : [],	// permits the sender can answer
 		auto: errand.auto === true,	// the SENDER holds the autonomous posture
-		abort: null, tag: '', ui: [],
+		abort: null, tag: '',
 		chat: null, stopping: false,	// the detached chat it runs on; a Stop pressed here
 	};
 	syncSendMode();				// the chat on screen may be this turn's
 }
 
 /// Note the engine's tag for a runner's turn, so a panel the turn asks for can be
-/// traced back to the device that asked it (`runnerAskerOf`). A no-op for a turn
+/// traced back to the device that asked it (`runnerAsker`). A no-op for a turn
 /// this device is not running for anyone.
 function runnerTagged(turnId, tag) {
 	var rc = _runnerCtx[String(turnId || '')];
@@ -1879,63 +1879,25 @@ export function runnerRoundTagged(chatId, turnId, tag, depth) {
 	if (rc) runnerTagged(rc.turnId, tag);
 }
 
-// A turn may ask for this many panels before the oldest are dropped from its frames.
-var RUNNER_UI_MAX = 8;
-
 /// The device a turn tagged `tag` was asked from, when this device runs it for
-/// another: `{ label, send(intent) }`, or null (D-20261006-27).
-///
-/// `send` queues a panel intent -- `{ show, page }` -- on the turn, and the turn's
-/// progress frames and its final frame carry every intent queued so far to the
-/// asker (`runnerUi`), which opens them there (`applyFrameUi`). Cumulative and
-/// numbered, because the door keeps only the newest frame: a frame the asker never
-/// read loses nothing that a later one does not carry again.
+/// another: `{ label }`, or null (D-20261006-27). A panel the turn asks for is then
+/// answered as shown there, never drawn here; the asker opens it off the tool row
+/// the log holds (handoff.js `onLogRows`).
 ///
 /// The dispatcher's own local recovery runs a turn in `_runnerCtx` too; asked here,
 /// it is the asking device, and its screen is the right one.
-export function runnerAskerOf(owner, tag) {
+export function runnerAsker(owner, tag) {
 	var t = String(tag || ''), self = selfDeviceId();
 	if (!t) return null;
 	for (var k in _runnerCtx) {
 		var rc = _runnerCtx[k];
 		if (!rc || rc.tag !== t) continue;
 		if (!rc.dispatchedBy || rc.dispatchedBy === self) return null;
-		return {
-			label: deviceLabelFor(rc.dispatchedBy),
-			send:  function (intent) {
-				// A file show (`{ show, page }`) or a Web page (`{ web }`).
-				var path = String((intent && intent.show) || '').slice(0, 1024);
-				var web = uiWebUrl(intent && intent.web);
-				if (!path && !web) return;
-				var n = rc.ui.length ? rc.ui[rc.ui.length - 1].n + 1 : 1;
-				rc.ui.push(web ? { n: n, web: web }
-					: { n: n, show: path, page: (intent.page | 0) > 0 ? (intent.page | 0) : 0 });
-				if (rc.ui.length > RUNNER_UI_MAX) rc.ui.splice(0, rc.ui.length - RUNNER_UI_MAX);
-				diag('handoff panel intent', 'turn=' + String(rc.turnId).slice(0, 12)
-					+ (web ? ' web ' + web.slice(0, 80) : ' show ' + path)
-					+ ' -> ' + String(rc.dispatchedBy).slice(0, 6));
-			},
-		};
+		return { label: deviceLabelFor(rc.dispatchedBy) };
 	}
 	return null;
 }
 
-/// The panel intents a runner's turn has queued, as a frame carries them, or null.
-function runnerUi(turnId) {
-	var rc = _runnerCtx[String(turnId || '')];
-	return (rc && rc.ui && rc.ui.length) ? { ui: rc.ui.slice() } : null;
-}
-
-/// The fields a runner's frame carries beside its rows: the panel intents
-/// (`runnerUi`) and the turn's workers as they stand (`Workers.frameList`), or null.
-/// The workers ride every frame, so a worker changing state changes the payload and
-/// the next tick sends it; a frame identical to the last still sends nothing.
-export function runnerFrameExtra(turnId) {
-	var ui = runnerUi(turnId), ws = [];
-	try { ws = Workers.frameList(turnId); } catch (e) { ws = []; }
-	if (!ws.length) return ui;
-	return Object.assign({}, ui || {}, { workers: ws });
-}
 /// Can the turn this device runs for another (`turnId`) still hear words said into it
 /// (UNBLOCK-27 R7c)? Deaf while its round streams prose with no call (the answer, so no
 /// seam follows) and once the turn is over; a call opens a seam again. A word said to a

@@ -412,8 +412,33 @@ export function gatewayNow() {
 /// clock (and refuses on its production port). The pages, node and the gateway then read the one clock
 /// (ONE CLOCK PER RUN, rc-b 26 Oct). A spec (`system`, `driven:…`) or no `DAIMOND_CLOCK` at all is passed
 /// through unchanged.
+/// The dev net's environment, `dev/devgw/net.env` (devgw.sh writes it from `dev/devgw.env`): the one
+/// source of `DAIMOND_NETWORK` and the per-net values a gateway will not start without (REL-1c). The
+/// caller's environment and `extra` override a value, bar the net, which is always the file's.
+export function netEnv() {
+	const f = path.join(GWCWD, 'net.env');
+	if (!fs.existsSync(f)) return {};
+	const env = {};
+	for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+		const m = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line);
+		if (m) env[m[1]] = m[2];
+	}
+	return env;
+}
+
+/// The `net` a dev Stripe event names in its metadata. The gateway tags every session it opens
+/// with its net (checkout.rs `metadata[net]`) and a test-net gateway refuses a grant event that
+/// names none (net.rs `admits`), so a synthetic event says the dev gateway's net, read from the
+/// same net.env it was started with. None when the tree writes no net.env: untagged, as before.
+export function devNetTag() {
+	const n = netEnv().DAIMOND_NETWORK;
+	return n ? { net: n } : {};
+}
+
 export function gatewayEnv(extra) {
-	const env = { ...process.env, ...extra };
+	const net = netEnv();
+	const env = { ...net, ...process.env, ...extra };
+	if (net.DAIMOND_NETWORK) env.DAIMOND_NETWORK = net.DAIMOND_NETWORK;
 	const c = env.DAIMOND_CLOCK;
 	if (c == null || c === '' || c === 'system' || c.startsWith('driven:')) return env;
 	env[RUN_CLOCK] = startRunClock();

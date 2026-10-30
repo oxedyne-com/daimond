@@ -80,7 +80,7 @@ check('recovery is not fooled by a running turn\'s own tagged rows',
 	&& /m\.iturn === iturn && m\.interrupted/.test(recover));
 
 if (helper) {
-	const pushRunRow = new Function(helper + '\nreturn pushRunRow;')();
+	const pushRunRow = new Function('logTurnRows', helper + '\nreturn pushRunRow;')(() => {});	// the log writer is turnwrite.test's
 	console.log('the tag');
 	const chat = { messages: [] };
 	const tool = pushRunRow(chat, 't5', { role: 'tool_log', mid: 'k5' });

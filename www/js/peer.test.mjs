@@ -323,6 +323,39 @@ async function main() {
 		L.forget();
 	}
 
+	// ── The Here lease and the one dead-writer detector (P2.3b, design §2 [F3]) ──
+	{
+		const L = phone.DaimondLease;
+		L.forget();
+		const cas = makeCas({});
+		const took = await L.takeHere('here-1', 'chat-1', phoneDev, cas, () => NOWD);
+		const rec = cas.peekLeases()['here-1'];
+		check('F3a: a Here turn takes its lease, naming its chat, held to the deadline',
+			took.won && rec.chatId === 'chat-1' && rec.holder === phoneDev && rec.expiry === rec.deadline && rec.deadline > NOWD);
+		check('F3b: before its deadline the lease is not dead', !L.pastDeadline(rec, rec.deadline - 1));
+		check('F3c: past its deadline, unsettled, it is', L.pastDeadline(rec, rec.deadline + 1));
+		check('F3d: a settled lease is never dead (its runner ended it)',
+			!L.pastDeadline(Object.assign({}, rec, { mode: 'released', settled: 1 }), rec.deadline + 1));
+		check('F3e: a runner hold live past the deadline is not dead',
+			!L.pastDeadline(Object.assign({}, rec, { expiry: rec.deadline + 60000 }), rec.deadline + 1));
+		check('F3f: a record with no chat cannot be ended, so is not offered',
+			!L.pastDeadline(Object.assign({}, rec, { chatId: '' }), rec.deadline + 1));
+		// The detector is told of it once the view holds it past the deadline.
+		let told = null;
+		L.install({ 'here-1': Object.assign({}, rec, { expiry: NOWD - 2, deadline: NOWD - 1 }) });
+		L.onDead(function (dead) { told = dead; });
+		check('F3g: the detector is told of the turn past its deadline, with its chat',
+			!!told && told.length === 1 && told[0].turnId === 'here-1' && told[0].chatId === 'chat-1');
+		L.onDead(null);
+		// A renew keeps the chat on the record.
+		L.forget();
+		const cas2 = makeCas({});
+		await L.take('run-1', { holder: phoneDev, chatId: 'chat-2', deadline: NOWD + 600000 }, cas2, () => NOWD);
+		await L.renew('run-1', phoneDev, cas2, () => NOWD + 1000);
+		check('F3h: every rewrite of the lease carries its chat', cas2.peekLeases()['run-1'].chatId === 'chat-2');
+		L.forget();
+	}
+
 	// ── The phone dispatches ───────────────────────────────────
 	console.log('\nDispatch — phone seals an errand to itself and posts it');
 
@@ -1437,12 +1470,13 @@ async function main() {
 	// done carries `settled:1` (leaseSetCas), and that is the turn done, report or none.
 	const settled = Object.assign({}, released, { settled: 1 });
 	const doneMode = { turnId: 'turn-u', holder: 'devLAP', mode: 'done', expiry: S + 60000, renewedAt: S };
-	check('a lease released from done, no report here -> "done" (7ca624dd: "dispatched")',
-		U.uiState(dt, settled, null, 'devPHONE', S) === 'done');
+	// P2.3a4: done is read off the folded end row (TurnView), never off the lease.
+	check('a lease released from done, its end folded -> "done" (7ca624dd: "dispatched")',
+		U.uiState(dt, settled, null, 'devPHONE', S, null, null, { state: 'ended', status: 'done' }) === 'done');
 	check('and past the deadline it is still "done", never "no-peer-awake"',
-		U.uiState(dt, settled, null, 'devPHONE', S + U.DISPATCH_DEADLINE_MS + 1) === 'done');
-	check('a lease in mode done -> "done" (7ca624dd: "claimed")',
-		U.uiState(dt, doneMode, null, 'devPHONE', S) === 'done');
+		U.uiState(dt, settled, null, 'devPHONE', S + U.DISPATCH_DEADLINE_MS + 1, null, null, { state: 'ended', status: 'done' }) === 'done');
+	check('a settled lease with no end folded is not "done" (P2.3a4)',
+		U.uiState(dt, settled, null, 'devPHONE', S) !== 'done' && U.uiState(dt, doneMode, null, 'devPHONE', S) !== 'done');
 	check('[ctl] a lease released with no settle (a take-back, a park) -> still "dispatched"',
 		U.uiState(dt, released, null, 'devPHONE', S) === 'dispatched');
 	check('[ctl] a failure report outranks a settled lease',
@@ -1533,7 +1567,6 @@ async function main() {
 	check('desk unlocks the shared account', !!unD && unD.ok === true && desk.DaimondIdentity.isUnlocked());
 	await runBroadcastConsentAcceptance(phone, laptop, desk, stranger, check);
 
-	streamedViewChecks(phone);
 	// ══════════════════════════════════════════════════════════
 	// THE BLOCKER (owner ruling 2026-09-12) — what stopped the runner is
 	// copied to every device, answerable from any one of them, cleared
@@ -1648,7 +1681,7 @@ async function runRecoveryAcceptance(P, L, check, phone) {
 		console.log('\nReload — a handed-off run the runner lost ends interrupted, never rerun');
 		L.forget();
 		const sync = makeLeaseSync({});
-		let ran = 0, acked = 0, pushed = 0, framed = 0, asked = null; let report = null; const order = [];
+		let ran = 0, acked = 0, pushed = 0, asked = null; let report = null; const order = [];
 		const errand = sentErrand(P, { turnId: 't-lost', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
 		const ctx = { chat: {}, app: {} };
 		let clk = NOW;
@@ -1658,17 +1691,16 @@ async function runRecoveryAcceptance(P, L, check, phone) {
 			reconstruct: async () => ctx,
 			interrupted: async (er, c) => { asked = [er.turnId, c === ctx]; order.push('fold'); return true; },
 			runTurn:     async () => { ran++; },
-			finalFrame:  async () => { framed++; order.push('frame:' + sync.leases()['t-lost'].mode); return '{"final":1}'; },
 			abort: () => {}, pushResult: async () => { pushed++; return 7; },
 			post:  async (r) => { report = r; }, ack: async () => { acked++; order.push('ack:' + sync.leases()['t-lost'].mode); },
 			now: () => (clk += 1),			// a moving clock: one lease write per instant
 		});
 		check('the lost run is NOT run again (no runTurn)', ran === 0 && res.ran === false && res.done === true && res.interrupted === true, JSON.stringify(res));
 		check('the fold was asked for this turn, with the reconstructed chat', !!asked && asked[0] === 't-lost' && asked[1] === true);
-		check('the final frame went first, before the lease settled', framed === 1 && order[0] === 'fold' && order[1] === 'frame:claimed', order.join());
-		check('a done report marked interrupted, naming its final frame', !!report && report.status === 'done' && report.interrupted === 1 && report.finalTail === 1,
+		check('the fold went first, before the lease settled', order[0] === 'fold', order.join());
+		check('a done report marked interrupted', !!report && report.status === 'done' && report.interrupted === 1,
 			JSON.stringify(report));
-		check('lease done before the ack, then released as settled', order[2] === 'ack:done' && sync.leases()['t-lost'].mode === 'released'
+		check('lease done before the ack, then released as settled', order[1] === 'ack:done' && sync.leases()['t-lost'].mode === 'released'
 			&& sync.leases()['t-lost'].settled === 1, order.join());
 		check('acked once and the parcel pushed', acked === 1 && pushed === 1 && res.parcelVersion === 7);
 	}
@@ -1704,14 +1736,15 @@ async function runRecoveryAcceptance(P, L, check, phone) {
 		const held = { [TID]: { turnId: TID, eid: 'e', holder: 'PHONE', dispatchedBy: 'PHONE', mode: 'claimed',
 			deadline: NOW + 600000, expiry: NOW + 600000, renewedAt: NOW - 5000 } };
 		const sync = makeLeaseSync(held);
-		let ran = 0, built = 0, folded = 0, acked = 0; const reports = [];
+		let ran = 0, built = 0, folded = 0, ended = 0, acked = 0; const reports = [];
 		const errand = sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: NOW + 600000, dispatchedBy: 'PHONE' });
 		let clk = NOW;
 		const res = await P.runErrand(errand, {
 			selfId: 'PHONE', cas: P.syncCas(sync), allowSelf: true, awaitPush: true,
 			finished:    async () => false,
 			reconstruct: async () => { built++; throw new Error("Cannot read properties of undefined (reading '__wbindgen_free')"); },
-			interrupted: async () => { folded++; return journal; },
+			// `always`: no journal run, so the turn is ended `interrupted` in the log anyway (P2.3b3).
+			interrupted: async (er, c, always) => { if (always) ended++; else folded++; return journal; },
 			runTurn:     async () => { ran++; },
 			abort: () => {}, pushResult: async () => 1,
 			post:  async (r) => { reports.push(r); }, ack: async () => { acked++; },
@@ -1719,6 +1752,8 @@ async function runRecoveryAcceptance(P, L, check, phone) {
 		});
 		const lz = sync.leases()[TID];
 		check('F2 the fold is asked first (journal ' + journal + ')', folded === 1, 'folded ' + folded);
+		check('F2 with no journal run the turn is still ended in the log (journal ' + journal + ')',
+			ended === (journal ? 0 : 1), 'ended ' + ended);
 		check('F2 no reconstruct and no run (journal ' + journal + ')', built === 0 && ran === 0,
 			'reconstruct ' + built + ', runTurn ' + ran + ', ' + JSON.stringify(res));
 		check('F2 it ends interrupted, not as a hand-back (journal ' + journal + ')',
@@ -1972,110 +2007,6 @@ async function runRecoveryAcceptance(P, L, check, phone) {
 			&& sync2.leases()['t-run'].mode === 'running', JSON.stringify(run));
 	}
 
-	// ── A FRAME FITS THE DOOR, BY WHOLE ROWS (r52d Open 1). The door's guard slices the
-	//    string and its 413 halves it, and either cuts the JSON; tool arguments are not in
-	//    the content budget. `frameJson` leaves out whole rows from the oldest end, and a
-	//    frame that left one out is not whole. The run's figures ride the rows (QA F5). ──
-	{
-		console.log('\nFrames — fitted to the door by whole rows, oldest first; the run\'s figures ride along');
-		const enc = new TextEncoder();
-		const weigh = (t) => { const e = JSON.stringify(String(t)); return { chars: String(t).length, bytes: enc.encode(e).length - 2 }; };
-		const budget = { chars: 48 * 1024, bytes: 63 * 1024 };
-		const q = '"k":"v",'.repeat(1900);				// 15,200 characters of quote-dense arguments
-		const msgs = [{ role: 'user', mid: 'T', content: 'go' }];
-		for (let i = 0; i < 4; i++) msgs.push({ role: 'tool_log', mid: 'tl' + i, name: 'file_read', content: 'ok', args: '{' + q + '}', ts: i + 1 });
-		msgs.push({ role: 'assistant', mid: 'ans', content: 'done', ts: 9, ranOn: 'PEER', ranModel: 'm-1', ranMs: 1234, ranTokIn: 10, ranTokOut: 5, ranCost: 0.01 });
-		const rows = P.progressTail(msgs, 'T', 36 * 1024);
-		check('frames: every row is whole before the fit (content is under the budget)', rows.length === 5 && P.frameWhole(rows));
-		const raw = JSON.stringify({ v: 1, msgs: rows });
-		check('frames: unfitted, the frame is over the door (the loss the fit prevents)', raw.length > budget.chars, raw.length + ' chars');
-		const fit = P.frameJson(rows, budget, weigh);
-		let parsed = null; try { parsed = JSON.parse(fit); } catch (e) { parsed = null; }
-		const w = weigh(fit);
-		check('frames: the fitted frame is under both limits and parses', !!parsed && w.chars <= budget.chars && w.bytes <= budget.bytes,
-			JSON.stringify(w));
-		check('frames: rows were left out whole, from the oldest end',
-			!!parsed && parsed.msgs.length < rows.length && parsed.msgs[parsed.msgs.length - 1].mid === 'ans'
-			&& parsed.msgs.every((r) => rows.some((o) => o.mid === r.mid && o.args === r.args && o.content === r.content)),
-			parsed ? parsed.msgs.map((r) => r.mid).join(',') : 'none');
-		check('frames: and the frame that left rows out is not whole', !!parsed && !P.frameWhole(parsed.msgs));
-		check('frames: a frame that fits is sent as it was, whole', P.frameJson(rows, { chars: 1e6, bytes: 1e6 }, weigh) === raw);
-		check('frames: a row nothing can fit leaves no frame at all, never a cut one', P.frameJson(rows.slice(0, 1), { chars: 100, bytes: 100 }, weigh) === '');
-		const ans = rows[rows.length - 1];
-		check('frames: the answer row carries the run\'s figures', ans.ranModel === 'm-1' && ans.ranMs === 1234 && ans.ranTokIn === 10
-			&& ans.ranTokOut === 5 && ans.ranCost === 0.01, JSON.stringify(ans));
-		const folded = P.foldProvisional(msgs.slice(0, 1), 'T', rows) || [];
-		const fa = folded.find((m) => m.mid === 'ans');
-		check('frames: and the sender\'s provisional copy keeps them', !!fa && fa.ranModel === 'm-1' && fa.ranCost === 0.01, JSON.stringify(fa));
-	}
-
-	// ── A RUNNER'S FRAME NAMES ITS WORKERS (workers-line, D-20261011-21). The asker draws
-	//    them on the hand-off tile; off the door they are untrusted, so each is read field
-	//    by field and an unknown state or a missing id drops the entry, never the frame.
-	{
-		const ws = [{ id: 'r1', name: 'alpha', status: 'done' }, { id: 'r2', name: 'beta', status: 'running' }];
-		const fj = P.frameJson([{ mid: 'm', role: 'assistant', content: 'x' }], null, null, { workers: ws });
-		const back = JSON.parse(fj);
-		check('workers: a frame carries them beside its rows', JSON.stringify(P.frameWorkers(back.workers)) === JSON.stringify(ws), fj);
-		check('workers: a frame from a build that sends none yields none', P.frameWorkers(undefined).length === 0);
-		const odd = P.frameWorkers([null, 'x', { id: 'a', status: 'pwned' }, { name: 'n', status: 'done' },
-			{ id: 'b', status: 'queued' }, { id: 'c', name: 7, status: 'error', extra: '<b>' }]);
-		check('workers: only known states with an id survive, named by id when unnamed',
-			JSON.stringify(odd) === JSON.stringify([{ id: 'b', name: 'b', status: 'queued' }, { id: 'c', name: 'c', status: 'error' }]),
-			JSON.stringify(odd));
-		// U3a END: a worker that went quiet ends `timed_out`; the other device must still see it
-		// (before END it showed as `capped`, so dropping the new word was a regression).
-		const quiet = P.frameWorkers([{ id: 't', name: 'slow', status: 'timed_out' }]);
-		check('workers: a timed-out worker is kept, not dropped as an unknown state',
-			JSON.stringify(quiet) === JSON.stringify([{ id: 't', name: 'slow', status: 'timed_out' }]), JSON.stringify(quiet));
-		check('workers: bounded per frame', P.frameWorkers(Array.from({ length: 99 }, (_, i) => ({ id: 'w' + i, status: 'done' }))).length === 32);
-	}
-
-	// ── A FINAL FRAME CARRIES EVERY ROW WHOLE (hand-off QA F4, round 2). The door keeps one
-	//    frame, so the rows over it ride as chunks the frame names: `turnRows` cuts nothing,
-	//    `frameJson` fits the view beside the manifest, and `refRows` takes only this turn's
-	//    rows, all of them, all whole. ──
-	{
-		console.log('\nFinal frame over the door — every row whole in the chunks, the view beside them');
-		const enc = new TextEncoder();
-		const weigh = (t) => { const e = JSON.stringify(String(t)); return { chars: String(t).length, bytes: enc.encode(e).length - 2 }; };
-		const budget = { chars: 48 * 1024, bytes: 63 * 1024 };
-		const big = 'x'.repeat(60000);
-		const msgs = [{ role: 'user', mid: 'T', content: 'go' },
-			{ role: 'tool_log', mid: 'tl', name: 'file_read', content: 'ok', args: '{"p":"a"}', ts: 1 },
-			{ role: 'assistant', mid: 'ans', content: big, ts: 2, ranOn: 'PEER', ranMs: 9 },
-			{ role: 'user', mid: 'T2', content: 'next turn', ts: 3 }];
-		const whole = P.turnRows(msgs, 'T');
-		check('final: turnRows keeps every row of the turn, the 60 000-character answer uncut, and stops at the next turn',
-			whole.length === 2 && whole[1].content.length === 60000 && P.frameWhole(whole),
-			whole.map((r) => r.mid + ':' + (r.content || '').length).join(','));
-		const own = P.turnRows(msgs.slice(0, 3), 'T');
-		check('final: and marks each whole', own.length === 2 && P.frameWhole(own) && own[1].ranMs === 9);
-		check('final: the tail the door streams cuts the same answer at 16 KiB, so it is not whole',
-			!P.frameWhole(P.progressTail(msgs.slice(0, 3), 'T', 36 * 1024)));
-		check('final: every row whole does not fit the door, so it is not sent there', P.frameJson(own, budget, weigh) === ''
-			|| JSON.parse(P.frameJson(own, budget, weigh)).msgs.length < own.length);
-		const view = P.progressTail(msgs.slice(0, 3), 'T', 36 * 1024);
-		const man = { v: 2, size: 60123, key: 'k'.repeat(64), chunks: [{ addr: 'a'.repeat(64), size: 60200 }] };
-		const fr = P.frameJson(view, budget, weigh, { ref: man, n: own.length });
-		let pf = null; try { pf = JSON.parse(fr); } catch (e) { pf = null; }
-		const fw = weigh(fr);
-		check('final: the view and the manifest fit the door together and parse',
-			!!pf && fw.chars <= budget.chars && fw.bytes <= budget.bytes && pf.v === 1 && pf.n === 2 && pf.ref && pf.ref.chunks.length === 1,
-			JSON.stringify(fw));
-		check('final: the view beside the manifest is never whole, so only the chunks are adopted', !!pf && !P.frameWhole(pf.msgs));
-		const body = JSON.parse(JSON.stringify({ v: 1, turn: 'T', msgs: own }));
-		check('final: refRows takes the whole rows of this turn', (P.refRows(body, 'T', 2) || []).length === 2);
-		check('final: refRows refuses another turn\'s chunk', P.refRows(body, 'T9', 2) === null);
-		check('final: refRows refuses a count that does not match', P.refRows(body, 'T', 3) === null);
-		const cutBody = { v: 1, turn: 'T', msgs: view };
-		check('final: refRows refuses rows that are not all whole', P.refRows(cutBody, 'T', view.length) === null);
-		const folded = P.foldProvisional(P.foldProvisional(msgs.slice(0, 1), 'T', view), 'T', own) || [];
-		const fa = folded.find((m) => m.mid === 'ans');
-		check('final: the whole rows grow the provisional view in place, the answer uncut', !!fa && fa.content.length === 60000
-			&& folded.filter((m) => m.mid === 'ans').length === 1, fa ? String(fa.content.length) : 'none');
-	}
-
 	// ── A NON-undeliverable reconstruct error (a surprise this device could be alone in
 	//    hitting) is still handed back, but NOT acked — left on the relay for another
 	//    peer or the deadline, exactly as before the undeliverable split. ──
@@ -2139,13 +2070,13 @@ async function runRecoveryAcceptance(P, L, check, phone) {
 			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - P.DISPATCH_DEADLINE_MS - 1, claimedBy: 'DESK' }, null, null, 'PHONE', now) === 'failed');
 		// check_f234 fix 1 (ruling D-20261010-22): a run cut short reads Interrupted, never done.
 		check('F234 uiState: a settled lease marked cut is interrupted, not done',
-			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, { mode: 'released', settled: 1, cut: 'deadline', holder: 'DESK', expiry: 0 }, null, 'PHONE', now) === 'interrupted');
+			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, { mode: 'released', settled: 1, cut: 'deadline', holder: 'DESK', expiry: 0 }, null, 'PHONE', now, null, null, { state: 'ended', status: 'interrupted' }) === 'interrupted');
 		check('F234 uiState: an aborted report marked cut is interrupted',
 			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, null, { t: 'report', status: 'aborted', cut: 'poison' }, 'PHONE', now) === 'interrupted');
 		check('F234 uiState: an aborted report with no cut (a refusal) stays failed',
 			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, null, { t: 'report', status: 'aborted' }, 'PHONE', now) === 'failed');
 		check('F234 uiState: a settled lease with no cut is still done',
-			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, { mode: 'released', settled: 1, holder: 'DESK', expiry: 0 }, null, 'PHONE', now) === 'done');
+			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, { mode: 'released', settled: 1, holder: 'DESK', expiry: 0 }, null, 'PHONE', now, null, null, { state: 'ended', status: 'done' }) === 'done');
 		check('F234 dispatchControl: an interrupted ask answer reopens its question',
 			P.dispatchControl('interrupted', { itext: 'Chose: yes' }) === 'answeragain');
 		check('F3 uiState: claimedBy inside the deadline with no lease read is still dispatched',
@@ -2529,11 +2460,9 @@ async function runFireAndForgetAcceptance(P, L, check) {
 		await tick0(6);				// let take / reconstruct / claimed→running / the timers start
 		// MID-TURN. The phone is backgrounded and drives nothing. Fire the DESKTOP's own
 		// progress timer a few times: the stream advances with no phone involvement.
-		const prog = timer.handles.find((h) => h.live && h.ms === 250);
-		check('(a) the desktop started its OWN progress-streaming timer (no phone needed to stream)', !!prog);
-		if (prog) { for (let i = 0; i < 3; i++) await prog.fn(); }
-		check('(a) mid-turn the desktop streamed on its own and the phone drove nothing',
-			progressPushes >= 1 && phoneTicks === 0);
+		// The turn frames are gone (P2.3, design §5): the runner streams nothing to a door.
+		check('(a) mid-turn no progress frame goes out and the phone drove nothing',
+			progressPushes === 0 && phoneTicks === 0);
 		check('(a) the answer is NOT in sync yet (the turn is still running)', !hasAnswer(parcel.messages));
 		// The phone stays backgrounded through the finish: release the turn and let the
 		// desktop complete with the phone still doing nothing.
@@ -2603,74 +2532,6 @@ async function runFireAndForgetAcceptance(P, L, check) {
 			sync.leases()[TURN].holder === 'DESK' && sync.leases()[TURN].mode === 'released');
 	}
 
-	// ── (d) THE FRAME CADENCE (Q20, D-20261006-13). The runner looks for growth every
-	//    250 ms and sends a frame at most every 750 ms from the last one that went out,
-	//    never while one is still in flight, and the final frame waits for an in-flight
-	//    one so the two cannot land out of order. The dep answers the time its frame
-	//    left (0 when the turn had not changed), and the spacing is kept on that clock. ──
-	{
-		console.log('\nFrame cadence — at most one frame per 750 ms, none overlapping, the final one last');
-		L.forget();
-		const T2 = 't-cad', C2 = 'c-cad';
-		const sync = makeLeaseSync({});
-		const timer = makeFakeTimer();
-		const chat2 = { id: C2, messages: [{ role: 'user', content: 'go', mid: T2, iturn: T2, ts: NOW - 10 }] };
-		const T0 = 1_000_000;			// the frame clock; 0 is the dep's "nothing sent"
-		let clock = T0;
-		const sent = [];				// the frame clock at each frame that went out
-		const order = [];				// 'frame' / 'frame-done' / 'final', in the order they happened
-		let hold = null;				// a frame left in flight, released by the test
-		let releaseTurn;
-		const turnGate = new Promise((r) => { releaseTurn = r; });
-		const errand = sentErrand(P, { turnId: T2, chatId: C2, prompt: 'go',
-			eid: 'e-cad', deadline: NOW + P.DISPATCH_DEADLINE_MS, dispatchedBy: 'PHONE' });
-		const running = P.runErrand(errand, { livenessGapMs: 0,
-			selfId: 'DESK', cas: P.syncCas(sync), now: () => NOW, frameNow: () => clock,
-			setTimer: timer.set, clearTimer: timer.clear,
-			finished:    async () => false,
-			reconstruct: async () => ({ chat: chat2 }),
-			runTurn: async () => {
-				await turnGate;
-				P.foldAssistant(chat2, { mid: 'a-cad', turnId: T2, text: 'done', ts: NOW });
-			},
-			abort: () => {},
-			pushProgress: async () => {
-				sent.push(clock); order.push('frame');
-				const at = clock;
-				if (hold) { await hold.p; order.push('frame-done'); }
-				return at;
-			},
-			finalFrame: async () => { order.push('final'); return 'tail'; },
-			pushResult: async () => 1, post: async () => {}, ack: async () => {},
-		});
-		await tick0(6);
-		const prog = timer.handles.find((h) => h.live && h.ms === 250);
-		check('(d) the runner looks for growth every 250 ms', !!prog,
-			'timers: ' + JSON.stringify(timer.handles.map((h) => h.ms)));
-		if (prog) {
-			for (const t of [0, 250, 500, 749, 750, 1000, 1499, 1500]) { clock = T0 + t; await prog.fn(); await tick0(2); }
-			check('(d) a frame goes out at most every 750 ms (0, 750, 1500 of eight looks)',
-				JSON.stringify(sent.map((t) => t - T0)) === '[0,750,1500]', 'sent at ' + JSON.stringify(sent.map((t) => t - T0)));
-			// A frame that does not come back holds the next one, however long it takes.
-			let rel; hold = { p: new Promise((r) => { rel = r; }) };
-			clock = T0 + 2250; prog.fn(); await tick0(2);
-			clock = T0 + 5000; await prog.fn(); await tick0(2);
-			check('(d) no second frame while one is still in flight',
-				JSON.stringify(sent.map((t) => t - T0)) === '[0,750,1500,2250]', 'sent at ' + JSON.stringify(sent.map((t) => t - T0)));
-			// The turn ends with that frame still in flight: the final frame waits for it.
-			releaseTurn();
-			await tick0(8);
-			check('(d) the final frame does not overtake a frame in flight',
-				order.indexOf('final') === -1, JSON.stringify(order));
-			rel(); hold = null;
-			await running;
-			check('(d) the final frame goes out after it, last of all',
-				order[order.length - 1] === 'final' && order.indexOf('frame-done') < order.indexOf('final'),
-				JSON.stringify(order));
-		} else releaseTurn();
-		await running;
-		check('(d) the cadence timer is stopped with the turn', timer.live() === 0);
-	}
 }
 
 // The NOMINATED runner. The account may name ONE always-on device; a non-nominee
@@ -4076,7 +3937,7 @@ async function runHeartbeatContainment(P, L, check) {
 			!!leaseAtPost && !!leaseAtPost.settled, JSON.stringify(leaseAtPost));
 		check('F4: the report carries the cut mark', !!rep && !!rep.cut, JSON.stringify(rep));
 		check('F4: the sender reads it Interrupted, not done',
-			P.uiState({ why: 'dispatched', iturn: TID, ts: errand.ts, dispatchedBy: 'PHONE' }, lz, null, 'PHONE', clock) === 'interrupted');
+			P.uiState({ why: 'dispatched', iturn: TID, ts: errand.ts, dispatchedBy: 'PHONE' }, lz, null, 'PHONE', clock, null, null, { state: 'ended', status: 'interrupted' }) === 'interrupted');
 		check('F4: and the ticker is stopped', timer.live() === 0);
 	}
 
@@ -4138,7 +3999,7 @@ async function runHeartbeatContainment(P, L, check) {
 		check('F234 Q1b: report lost -> the sender does NOT re-run it locally',
 			P.recoverDecision(ph, lz, false, 'PHONE', NOW + 1000) === false);
 		check('F234 Q1c: report lost -> the sender\'s tile reads Interrupted',
-			P.uiState(ph, lz, null, 'PHONE', NOW + 1000) === 'interrupted');
+			P.uiState(ph, lz, null, 'PHONE', NOW + 1000, null, null, { state: 'ended', status: 'interrupted' }) === 'interrupted');
 		check('F234 Q1c: and offers Retry', P.dispatchControl('interrupted', ph) === 'retry');
 		L.forget();
 		let ran2 = 0;
@@ -4584,7 +4445,7 @@ async function runRunnerAcceptance(P, L, check) {
 		L.forget();
 		const sync = makeLeaseSync({});
 		let pushed = 0, report = null, acked = 0, frames = [];
-		// The user message carries the TURN's own mid, which is what `progressTail`
+		// The user message carries the TURN's own mid, which the turn
 		// anchors to -- the runner's transcript holds the prompt the dispatcher sent.
 		const ctxChat = { id: 'chat-r', messages: [{ role: 'user', content: 'compute', mid: TID, ts: 1 }] };
 		const res = await P.runErrand(errand, { livenessGapMs: 0,
@@ -4595,37 +4456,22 @@ async function runRunnerAcceptance(P, L, check) {
 				P.foldAssistant(ctx.chat, { mid: 'a1', turnId: TID, text: 'the answer is 42', ts: 3 });
 			},
 			abort: () => {},
-			finalFrame: async (tid) => {
-				// The runner encodes the structured rows as the door's JSON payload, which
-				// is what the originator folds back in -- mirror that here.
-				const rows = P.progressTail(ctxChat.messages, tid, 48 * 1024);
-				const payload = JSON.stringify({ v: 1, msgs: rows });
-				frames.push({ tid, rows, payload });
-				return payload;
-			},
 			pushResult: async () => { pushed += 1; return 9; },
 			post: async (rep) => { report = rep; },
 			ack: async () => { acked += 1; },
 			awaitPush: true,			// so the whole sequence is assertable here
 		});
 		check('the runner completes the errand', res.ran === true && res.done === true);
-		check('the runner order is take,reconstruct,run,final-frame,complete,report,ack,release,push',
-			res.trace.join(',') === 'take,reconstruct,run,final-frame,complete,report,ack,release,push',
+		check('the runner order is take,reconstruct,run,complete,report,ack,release,push',
+			res.trace.join(',') === 'take,reconstruct,run,complete,report,ack,release,push',
 			res.trace.join(','));
 		check('the answer was folded into the transcript',
 			ctxChat.messages.some((m) => m.role === 'assistant' && m.content === 'the answer is 42'));
 		check('the transcript was pushed exactly once', pushed === 1);
-		check('R1: the FINAL FRAME carried the answer (as a structured row), and went out BEFORE the parcel',
-			frames.length === 1
-			&& frames[0].rows.some((r) => r.role === 'assistant' && r.content === 'the answer is 42')
-			&& /the answer is 42/.test(frames[0].payload)
-			&& res.trace.indexOf('final-frame') < res.trace.indexOf('push'));
 		check('R2: the report went out BEFORE the parcel -- the originator is not behind a flush',
 			res.trace.indexOf('report') < res.trace.indexOf('push'));
 		check('R3: and the lease was RELEASED before the parcel too',
 			res.trace.indexOf('release') < res.trace.indexOf('push'));
-		check('R4: the report says the answer already travelled, so the originator need not wait',
-			!!report && report.t === 'report' && report.status === 'done' && report.finalTail === 1);
 		check('the errand was acked exactly once, and before the parcel',
 			acked === 1 && res.trace.indexOf('ack') < res.trace.indexOf('push'));
 		check('the lease ends released', sync.leases()[TID].mode === 'released');
@@ -4717,20 +4563,6 @@ async function runRunnerAcceptance(P, L, check) {
 				expiry: now + 60000, renewedAt: now } }, 'THIRD', now, () => false) === '');
 		check('R7g: no leases at all is no stand-off', P.deferPushFor({}, 'THIRD', now, () => false) === ''
 			&& P.deferPushFor(null, 'THIRD', now, null) === '');
-	}
-
-	// ── R8. A FINAL FRAME CLOSES THE WATCHER'S VIEW, so a late ordinary frame cannot
-	//    draw a stale tail over the answer that replaced it. ──
-	{
-		const one = [{ mid: 'x1', role: 'assistant', content: 'word one' }];
-		const whole = [{ mid: 'x1', role: 'assistant', content: 'the whole answer' }];
-		const open1 = P.foldProgress(null, { turn: 'T1', seq: 1, msgs: one });
-		check('R8a: an ordinary frame opens the view', !!open1 && open1.msgs === one && open1.final === false);
-		const closed = P.foldProgress(open1, { turn: 'T1', seq: 2, msgs: whole, final: true });
-		check('R8b: a final frame closes it and carries the final rows',
-			!!closed && closed.final === true && closed.msgs === whole);
-		check('R8c: and no later frame reopens it',
-			P.foldProgress(closed, { turn: 'T1', seq: 3, msgs: one }) === null);
 	}
 
 	// ── The liveness read is PACED (the 2026-10-04 request storm). The engine calls onProgress on
@@ -6599,119 +6431,6 @@ async function runBroadcastConsentAcceptance(phone, laptop, desk, stranger, chec
 			P.grantDecision(pend, { turnId: 'other', verdict: 'allow' }).commit === false);
 		check('H7d: a malformed verdict is read as DENY (fail-safe)',
 			P.grantDecision(pend, { turnId: 't1', verdict: 'yes-please' }).verdict === 'deny');
-	}
-}
-
-// ════════════════════════════════════════════════════════════
-// THE STREAMED VIEW — what a frame says, and what a watcher does with it
-// ------------------------------------------------------------
-// The owner's complaint (2026-09-12): a turn typed on one device and run on
-// another appeared only when the next whole-parcel sync landed. The runner now
-// sends a small frame every couple of seconds and the watching device draws it.
-// The two decisions in that are pure and live in peer.js, so they are tested
-// here rather than through a browser: `progressTail` is what a frame SAYS, and
-// `foldProgress` is what a watcher DOES with one that arrives.
-// ════════════════════════════════════════════════════════════
-function streamedViewChecks(tab) {
-	const P = tab.DaimondPeer;
-
-	console.log('\nThe streamed view — the frame a runner sends (STRUCTURED rows)');
-	{
-		// An ending travels with its word, its reason and its tallies (E6): without them the
-		// asker's provisional stop line has no `how` and draws nothing until the parcel lands.
-		const msgs = [
-			{ role: 'user',      content: 'go', mid: 't1', iturn: 't1' },
-			{ role: 'assistant', content: 'partial', mid: 'a1', ts: 5 },
-			{ role: 'end_log', how: 'stopped', why: 'lease_cap', offered: 3, rounds: 2, calls: 1,
-				refused: 0, failed: 1, malformed: 0, reasoned: 0, missing: ['/a.txt'], mid: 'e1', ts: 6 },
-		];
-		const rows = P.progressTail(msgs, 't1', 48 * 1024);
-		const end = rows.find((r) => r.mid === 'e1') || {};
-		check('E6a: an end_log row carries how, why and the tallies',
-			end.how === 'stopped' && end.why === 'lease_cap' && end.offered === 3 && end.rounds === 2
-			&& end.calls === 1 && end.failed === 1 && end.refused === 0 && JSON.stringify(end.missing) === '["/a.txt"]',
-			JSON.stringify(end));
-		check('E6b: an ordinary row does not grow the ending\'s fields',
-			!('how' in rows.find((r) => r.mid === 'a1')) && !('why' in rows.find((r) => r.mid === 'a1')));
-	}
-	{
-		const msgs = [
-			{ role: 'user',      content: 'earlier turn', mid: 't0', iturn: 't0' },
-			{ role: 'assistant', content: 'earlier answer', mid: 'a0' },
-			{ role: 'user',      content: 'the dispatched prompt', mid: 't1', iturn: 't1' },
-			{ role: 'think_log', content: 'x'.repeat(4000), mid: 'k1' },
-			{ role: 'tool_log',  name: 'file_read', args: '{"path":"/p"}', outcome: 'ok', mid: 'l1' },
-			{ role: 'assistant', content: 'PARTIAL ANSWER so far', mid: 'a1', ranOn: 'dev-runner' },
-		];
-		const rows = P.progressTail(msgs, 't1', 48 * 1024);
-		const byMid = {};
-		rows.forEach((r) => { byMid[r.mid] = r; });
-		check('S1a: the frame is an ARRAY of structured rows, not flattened text',
-			Array.isArray(rows));
-		check('S1b: it holds the daimon\'s text for THIS turn as an assistant row',
-			byMid.a1 && byMid.a1.role === 'assistant' && byMid.a1.content === 'PARTIAL ANSWER so far');
-		check('S1c: a PREVIOUS turn is not in the frame (the tail starts at this turn)',
-			!byMid.a0 && !byMid.t0 && !byMid.t1);
-		check('S1d: thinking rides as a think_log ROW in full (the watcher draws it collapsed itself)',
-			byMid.k1 && byMid.k1.role === 'think_log' && byMid.k1.content.length === 4000);
-		check('S1e: a tool call is a tool_log row naming the tool, its outcome carried',
-			byMid.l1 && byMid.l1.role === 'tool_log' && byMid.l1.name === 'file_read' && byMid.l1.outcome === 'ok');
-		check('S1f: the answer row carries `ranOn`, so the FINAL row matches the parcel copy',
-			byMid.a1.ranOn === 'dev-runner');
-		check('S1g: a turn this device does not hold says nothing (an empty array, not an error)',
-			P.progressTail(msgs, 'not-a-turn', 4096).length === 0 && P.progressTail([], 't1', 4096).length === 0);
-
-		// One huge message is clipped so it cannot be the whole frame -- and being clipped
-		// it will NOT byte-match its final copy, so the parcel merge replaces it by mid.
-		const big = [
-			{ role: 'user', content: 'p', mid: 'tb', iturn: 'tb' },
-			{ role: 'assistant', content: 'Z'.repeat(40 * 1024), mid: 'ab' },
-		];
-		const bigRows = P.progressTail(big, 'tb', 48 * 1024);
-		check('S1h: one huge message\'s content is clipped to the per-message share',
-			bigRows.length === 1 && bigRows[0].content.length === 16 * 1024);
-
-		// The budget: the OLDEST rows fall off the front, because those are what the
-		// watcher already received in an earlier frame; the newest are kept.
-		const many = [
-			{ role: 'user',      content: 'p', mid: 'tc', iturn: 'tc' },
-			{ role: 'assistant', content: 'A'.repeat(600), mid: 'm1' },
-			{ role: 'assistant', content: 'B'.repeat(600), mid: 'm2' },
-			{ role: 'assistant', content: 'C'.repeat(600), mid: 'm3' },
-		];
-		const cut = P.progressTail(many, 'tc', 1000);
-		const cutMids = cut.map((r) => r.mid);
-		check('S1i: the frame is cut to the budget and keeps the NEWEST rows',
-			cutMids.indexOf('m3') >= 0 && cutMids.indexOf('m1') < 0);
-	}
-
-	console.log('\nThe streamed view — what a watcher does with an arriving frame');
-	{
-		const A = [{ mid: 'a1', role: 'assistant', content: 'first' }];
-		const B = [{ mid: 'a1', role: 'assistant', content: 'first and second' }];
-		const f1 = { turn: 't1', seq: 1, msgs: A };
-		const v1 = P.foldProgress(null, f1);
-		check('S2a: the first frame becomes the view', v1 && v1.seq === 1 && v1.msgs === A);
-		const v2 = P.foldProgress(v1, { turn: 't1', seq: 2, msgs: B });
-		check('S2b: a newer frame REPLACES the one before it (the rows are the whole tail)',
-			v2 && v2.seq === 2 && v2.msgs === B);
-		check('S2c: a frame already held changes nothing (no redraw is owed)',
-			P.foldProgress(v2, { turn: 't1', seq: 2, msgs: B }) === null);
-		check('S2d: a LATE frame never rewinds the view',
-			P.foldProgress(v2, { turn: 't1', seq: 1, msgs: A }) === null);
-		check('S2e: a frame for ANOTHER turn is not this watcher\'s',
-			P.foldProgress(v2, { turn: 't9', seq: 99, msgs: A }) === null);
-		check('S2f: an empty frame is not a view (nothing is drawn over something)',
-			P.foldProgress(v2, { turn: 't1', seq: 3, msgs: [] }) === null);
-		// The close: the real transcript has landed, so the streamed view stands down
-		// and no frame still in flight can reopen it. The final frame CARRIES the rows.
-		const done = P.foldProgress(v2, { turn: 't1', final: true, msgs: B });
-		check('S2g: `final` closes the streamed view and carries the final rows',
-			done && done.final === true && done.msgs === B);
-		check('S2h: a frame arriving after the close is ignored (the answer is not overdrawn)',
-			P.foldProgress(done, { turn: 't1', seq: 9, msgs: A }) === null);
-		check('S2i: a malformed frame is ignored rather than thrown on',
-			P.foldProgress(v2, null) === null && P.foldProgress(v2, {}) === null);
 	}
 }
 

@@ -3824,7 +3824,7 @@ async function runSteerHeld(f, presetArg, depthArg, detached, how, held, models)
 	var its = Date.now();
 	// A DETACHED runner run anchors to the user message the dispatch already synced
 	// (mid === the errand turn id): pushing a second copy here would duplicate it in
-	// the transcript and let `progressTail`/`chatHoldingTurn` disagree on the turn. So
+	// the transcript and let `chatHoldingTurn` and the turn's span disagree on it. So
 	// the push -- and the on-screen draw of it -- is the local-caller's alone.
 	// The note this steer sends with its words: read off its record, or off the errand for a runner.
 	var steerPre = '';

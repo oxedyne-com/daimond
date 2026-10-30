@@ -31,6 +31,13 @@
  * breadcrumb.js and diag.js state for themselves; this sends only what they
  * already collect.
  *
+ * THE ONE EXCEPTION, the testnet only (design §R11.3, tn-U2a): when policy.js
+ * says the page is on the testnet, `report()` opens a free-text box instead of
+ * the consent sheet, for the owner's own reports from his phone. Its text
+ * travels only through scrub.js's content scrubber (`DaimondScrub.scrubText`), split
+ * into rows the gateway will not clip, under the tag `testnet.report`; with the
+ * scrubber absent the text is withheld. Production keeps the rule above.
+ *
  * DEFERRED to the gateway half of B2 (not built here): a console reader that
  * lists these traces per account/wave, and a burst-rate view of
  * `error.thrown` per build. See the plan doc, §3 row B2(c).
@@ -286,6 +293,46 @@
 		return s;
 	}
 
+	// ── The testnet's free text ─────────────────────────────────────
+	//
+	// The gateway clips a row's data at 400 bytes (debug_trace.rs MAX_DATA), so
+	// the text is cut into rows of at most NOTE_ROW bytes, never inside a
+	// character, and numbered in the tag so they reassemble in order.
+	var NOTE_MAX = 2000;                     // characters the box takes
+	var NOTE_ROW = 380;                      // bytes per row, under MAX_DATA
+
+	function utf8Len(ch) {
+		var c = ch.codePointAt(0);
+		return c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+	}
+
+	/// Cut S into pieces of at most MAX UTF-8 bytes, on character boundaries.
+	function splitBytes(s, max) {
+		var out = [], cur = '', n = 0;
+		Array.from(s).forEach(function (ch) {
+			var b = utf8Len(ch);
+			if (n + b > max) { out.push(cur); cur = ''; n = 0; }
+			cur += ch; n += b;
+		});
+		if (cur) out.push(cur);
+		return out;
+	}
+
+	/// The text rows for one note, or null when the shared scrubber is not
+	/// loaded: free text never leaves without it. Scrubbed whole, before the
+	/// split, so a key cannot straddle two rows and escape both.
+	function noteRows(note) {
+		var sc = window.DaimondScrub;
+		if (!sc || typeof sc.scrubText !== 'function') return null;
+		var text = String(note == null ? '' : note).slice(0, NOTE_MAX).trim();
+		if (!text) return [];
+		text = scrub(sc.scrubText(text));
+		var parts = splitBytes(text, NOTE_ROW), now = Date.now();
+		return parts.map(function (p, i) {
+			return { ts: now, tag: 'testnet.report text ' + (i + 1) + '/' + parts.length, data: p };
+		});
+	}
+
 	/// The rows one report carries: a header row naming the build and the
 	/// reason, then the trail (always-on, up to 200 rows) and the diag ring
 	/// (up to 500, empty unless Diagnostics has been on for some of the last
@@ -293,12 +340,15 @@
 	/// diag.js's `flush()` and daimond.js's `postDebugTrace` -- no new field,
 	/// no new endpoint. Every `data` field is scrubbed before it leaves this
 	/// function (#3): nothing downstream needs to remember to do it.
-	function reportRows(reason) {
-		var rows = [{
-			ts:   Date.now(),
-			tag:  'report',
-			data: 'reason=' + String(reason || 'unspecified').slice(0, 40) + ' build=' + (buildId() || '?'),
-		}];
+	function reportRows(reason, note) {
+		var head = 'reason=' + String(reason || 'unspecified').slice(0, 40) + ' build=' + (buildId() || '?');
+		var rows = [{ ts: Date.now(), tag: 'report', data: head }];
+		if (note !== undefined) {
+			var parts = noteRows(note);
+			rows[0].tag = 'testnet.report';
+			if (!parts) rows[0].data = head + ' text=withheld';
+			else rows = rows.concat(parts);
+		}
 		try {
 			var trail = (window.DaimondTrail && DaimondTrail.rows) ? DaimondTrail.rows() : [];
 			trail.forEach(function (r) {
@@ -331,18 +381,19 @@
 	/// Trim ROWS to fit BODY_BUDGET once wrapped in the wire envelope,
 	/// dropping the OLDEST rows first (everything after the header) so the
 	/// header and the events nearest the failure -- the newest -- survive.
-	function fitBudget(rows) {
+	function fitBudget(rows, keep) {
+		keep = Math.max(1, keep || 1);          // the header, and the testnet's text rows
 		var envelope = byteLen(JSON.stringify({ v: 1, device: deviceId(), rows: [] }));
 		var sizes = rows.map(function (r) { return byteLen(JSON.stringify(r)) + 1; });   // +1 for the join comma
 		var total = envelope;
 		for (var i = 0; i < sizes.length; i++) total += sizes[i];
-		if (total <= BODY_BUDGET || rows.length <= 1) return rows;
-		var drop = 1;                             // never drop the header at index 0
+		if (total <= BODY_BUDGET || rows.length <= keep) return rows;
+		var drop = keep;                          // never drop the header, nor the text after it
 		while (drop < rows.length && total > BODY_BUDGET) {
 			total -= sizes[drop];
 			drop++;
 		}
-		return [rows[0]].concat(rows.slice(drop));
+		return rows.slice(0, keep).concat(rows.slice(drop));
 	}
 
 	/// Does a report carry more than its own header -- i.e. did either ring
@@ -355,8 +406,11 @@
 	/// Subject to the SAME gateway rate floor diag.js's own `flush()` observes
 	/// (`debug_trace.rs::MIN_INTERVAL_MS`) -- a double tap is answered with the
 	/// same 429.
-	function post(reason) {
-		var rows = fitBudget(reportRows(reason));
+	function post(reason, note) {
+		var all = reportRows(reason, note);
+		var keep = 1;
+		while (keep < all.length && /^testnet\.report text /.test(all[keep].tag)) keep++;
+		var rows = fitBudget(all, keep);
 		// The version is read from gateway.js at the send, never copied: index.html loads
 		// gateway.js after this file, so a lookup at load would find nothing (as chunks.js).
 		return fetch(ENDPOINT, {
@@ -395,6 +449,15 @@
 		DaimondLayers.done('support');
 	}
 
+	/// Put a sheet up: the consent sheet and the testnet's box go up the same way.
+	function show(wrap, card, first) {
+		wrap.appendChild(card);
+		document.body.appendChild(wrap);
+		_open = wrap;
+		DaimondLayers.open('support', close);
+		first.focus();
+	}
+
 	/// The one-tap action, called from the error toast and from Settings.
 	/// Sends straight away once this account has agreed; the FIRST time ever,
 	/// shows the consent sheet instead. A send that does not land opens the
@@ -403,6 +466,7 @@
 	/// a settings status line...).
 	function reportProblem(reason, say) {
 		say = typeof say === 'function' ? say : function () {};
+		if (window.DaimondNet && DaimondNet.isTest()) { openBox(reason, say); return; }
 		if (consented()) {
 			say(tOr('support.sending', 'Sending a report…'));
 			post(reason).then(function (r) {
@@ -463,11 +527,51 @@
 			});
 		});
 		if (failed) settled(failed);
-		wrap.appendChild(card);
-		document.body.appendChild(wrap);
-		_open = wrap;
-		DaimondLayers.open('support', close);
-		go.focus();
+		show(wrap, card, go);
+	}
+
+	/// The testnet's report box: what went wrong, in his words, sent with the
+	/// same trail and ring a live report carries. No consent sheet: on the
+	/// testnet the reporter is the owner (design §R11.3).
+	function openBox(reason, say) {
+		close();
+		var wrap = elt('div', 'modal');
+		wrap.id = 'support-sheet';
+		var card = elt('div', 'modal-card');
+		card.appendChild(elt('h2', '', tOr('support.box_title', 'Report a problem')));
+		var box = elt('textarea', 'report-text');
+		box.maxLength = NOTE_MAX;
+		box.rows = 6;
+		box.placeholder = tOr('support.box_hint', 'What went wrong?');
+		box.setAttribute('aria-label', tOr('support.box_hint', 'What went wrong?'));
+		card.appendChild(box);
+		var status = elt('p', 'report-status');
+		status.setAttribute('role', 'status');
+		card.appendChild(status);
+		var acts = elt('div', 'post-acts');
+		var go = elt('button', 'post-btn report-send', tOr('support.box_send', 'Send'));
+		go.type = 'button';
+		var no = elt('button', 'post-btn report-cancel', tOr('support.cancel', 'Not now'));
+		no.type = 'button';
+		acts.appendChild(go);
+		acts.appendChild(no);
+		card.appendChild(acts);
+		no.addEventListener('click', close);
+		go.addEventListener('click', function () {
+			go.disabled = true;
+			box.disabled = true;
+			status.textContent = tOr('support.sending', 'Sending a report…');
+			post(reason, box.value).then(function (r) {
+				status.textContent = sentLine(r);
+				say(sentLine(r));
+				no.textContent = tOr('support.done', 'Close');
+				if (r.ok) return;
+				go.textContent = tOr('mail.retry', 'Retry');
+				go.disabled = false;
+				box.disabled = false;
+			});
+		});
+		show(wrap, card, box);
 	}
 
 	window.DaimondSupport = {
@@ -481,5 +585,6 @@
 		post:         post,
 		scrub:        scrub,               // exposed for the dev test (#3)
 		fitBudget:    fitBudget,           // exposed for the dev test (#7)
+		splitBytes:   splitBytes,          // exposed for the dev test (testnet)
 	};
 })();

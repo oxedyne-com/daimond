@@ -181,10 +181,10 @@ test('the page loads the record before the modules that use it', () => {
 // ── Round 3 (the C0 check's four findings) ─────────────────────────────
 test('a page a remote turn opens goes to the asking device, never into this device\'s record', async () => {
 	// D-20261006-27, as `showToUser` answers it: the asker first, before any fold.
-	const g = globalThis, sent = [], folds = [];
+	const g = globalThis, folds = [];
 	const had = { v: g.DaimondViewer, r: g.DaimondPanelRec, w: g.DaimondWeb };
 	g.DaimondViewer = {
-		askerOf: (owner, turn) => (turn === 'remote' ? { label: 'Phone', send: (i) => sent.push(i) } : null),
+		askerOf: (owner, turn) => (turn === 'remote' ? { label: 'Phone' } : null),
 		mayTakeScreen: () => false,
 	};
 	g.DaimondPanelRec = { fold: (...a) => { folds.push(a); return true; } };
@@ -192,14 +192,12 @@ test('a page a remote turn opens goes to the asking device, never into this devi
 		// eslint-disable-next-line no-new-func
 		new Function('window', 'document', src('web.js'))(g, {});
 		const r = await g.DaimondWeb.open('https://example.org/r', 'A', 'remote');
-		assert.deepEqual(sent, [{ web: 'https://example.org/r' }], 'sent to the asker');
 		assert.equal(r.shown, false);
 		assert.equal(r.asker, 'Phone');
 		assert.deepEqual(folds, [], 'nothing written into this device\'s record');
 		// A turn asked here, for a conversation off screen, is still kept for it.
 		await g.DaimondWeb.open('https://example.org/l', 'A', 'local');
 		assert.deepEqual(folds, [['A', 'web', { url: 'https://example.org/l' }]]);
-		assert.equal(sent.length, 1);
 	} finally {
 		g.DaimondViewer = had.v; g.DaimondPanelRec = had.r; g.DaimondWeb = had.w;
 	}
@@ -215,10 +213,14 @@ test('the turn reaches the Web panel, and a page intent travels to the asker and
 	assert.ok(/web::open\(url, owner, turn\)/.test(src('../../src/wasm/host/web.rs')), 'the wasm host passes the turn on');
 	assert.ok(/askerOf:\s+askerOf/.test(src('viewer.js')), 'the viewer publishes the routing question');
 	const d = src('daimond.js');
-	const ra = d.slice(d.indexOf('function runnerAskerOf'), d.indexOf('function runnerUi'));
-	assert.ok(/uiWebUrl\(intent && intent\.web\)/.test(ra), 'the runner queues a page intent');
-	const fu = d.slice(d.indexOf('function frameUi'), d.indexOf('var _uiDone'));
-	assert.ok(/uiWebUrl\(u\.web\)/.test(fu), 'the asker reads a page intent off the frame');
+	// The runner names the asker and queues nothing (P2.3d: no frame carries an intent).
+	const ra = d.slice(d.indexOf('function runnerAsker('), d.indexOf('function runnerDeaf'));
+	assert.ok(/return \{ label: deviceLabelFor\(rc\.dispatchedBy\) \}/.test(ra) && !/rc\.ui/.test(d), 'the runner names the asker, no intent queue');
+	// The asker derives it from the tool row the log holds (P2.3a5), not off a frame.
+	const tl = fs.readFileSync(path.join(HERE, 'page/turnlog.js'), 'utf8');
+	const pi = tl.slice(tl.indexOf('function panelIntent'), tl.indexOf('function drawTurn'));
+	assert.ok(/m\.name === 'web_open'/.test(pi) && /uiWebUrl\(a\.url\)/.test(pi), 'the asker reads a page intent off the web_open row');
+	assert.ok(/panelIntent\(m\)/.test(d.slice(d.indexOf('function onLogRows'), d.indexOf('function openIntent'))), 'for each row the log drew first');
 	assert.ok(/if \(u\.web\) return .*DaimondWeb\.open\(u\.web, owner\)/.test(d), 'and opens it through the Web panel');
 });
 

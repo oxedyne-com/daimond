@@ -214,7 +214,7 @@ async function refusal(port, body) {
 			'handler is not registered. Lane `gateway` owns handlers/web.rs and not the ' +
 			'wiring: it still needs `pub use web::WebSearch` in handlers/mod.rs, an ' +
 			'`api_reg.insert_boxed("web_search", …)` in app_main.rs, the route in ' +
-			'gateway/app.jdat, and the proxy line in gateway/config.jdat.');
+			'gateway/app.jdat (deploy/steel/daimond_vhosts.jdat proxies all of /api/).');
 		cleanup();
 		process.exit(0);
 	}

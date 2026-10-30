@@ -7,7 +7,7 @@ import { RESUMABLE_ENDINGS, isFailedEnding, jsonBytes, newMid, persistChats, pri
 	workerEndingNote, workerFoldable, workerProse, workerWrites } from './chatstore.js';
 import { deviceId, loadDevices } from './parcel_collect.js';
 import { shortModel } from './parcel_apply.js';
-import { liveDispatchNotes, takeDispatchNotes } from './handoff.js';
+import { liveDispatchNotes, redrawHandoffWorkers, takeDispatchNotes } from './handoff.js';
 import { canRemint, creditsGen, keyRefused } from './send.js';
 import { appSpend, chatWorkerModel, recordSpend, runTurn, turnMeter, updateSpend } from './steer.js';
 import { Files } from './files_view.js';
@@ -513,23 +513,6 @@ export var Workers = {
 			cancelled:  how === 'cancelled',
 			waited_ms:  ms,
 		}));
-	},
-
-	/// This turn's workers and where each has got to, `[{ id, name, status }]`, oldest
-	/// first: the `workers` field of the progress frame a handed-off turn streams home.
-	/// [] where the turn started none.
-	///
-	/// The asker sees the `spawn_agent` call in the streamed transcript already; what it
-	/// cannot see is whether the worker is still going, which is the whole of what a
-	/// reader waiting on a fan-out wants to know. Drawn there with `pill`, the status
-	/// mark of this device's own agents list (`drawHandoffWorkers`).
-	frameList: function (turnId) {
-		var turn = String(turnId || '');
-		if (!turn) return [];
-		return this.runs.filter(function (r) { return String(r.turnId || '') === turn; })
-			.reverse().map(function (r) {
-				return { id: String(r.id), name: String(r.name || r.id), status: String(r.status || '') };
-			});
 	},
 
 	/// The status mark of one run: the pill an agent tile carries, and the one a
@@ -2963,6 +2946,8 @@ export var Workers = {
 export var PeerAgents = {
 	store: {},		// deviceId -> { got, runs }, DaimondPeer.peerRunsMerge
 	seen: {},		// deviceId -> when its frame was last read
+	compiles: {},	// cid -> this device's crystal compile, as a run (REL-1b)
+	watchers: {},	// run id -> fn(run), a peer's run followed by id (a dispatched compile)
 	sent: '',		// the last frame sent, so an unchanged one is not sent again
 	sentAt: 0,
 	timer: 0,
@@ -2980,21 +2965,72 @@ export var PeerAgents = {
 		this.timer = setTimeout(function () { self.timer = 0; self.publishNow(); }, wait);
 	},
 
+	/// Send this device's frame now. Resolves to the door's answer (`{ ok, why }`), or
+	/// null when nothing was sent: locked, no device, or unchanged.
 	publishNow: function () {
-		if (Workers._locked || !window.DaimondSync || !DaimondSync.pushProgressFrame || !window.DaimondPeer) return;
+		if (Workers._locked || !window.DaimondSync || !DaimondSync.pushProgressFrame || !window.DaimondPeer) return Promise.resolve(null);
 		var me = '';
-		try { me = deviceId(); } catch (e) { return; }
+		try { me = deviceId(); } catch (e) { return Promise.resolve(null); }
 		Workers.stampEnds();
-		var body = DaimondPeer.agentsFrame(Workers.runs, me, Date.now(), DaimondSync.progressBudget, DaimondSync.progressWeight,
-			liveDispatchNotes());
-		if (!body) return;
-		if (body === this.sent && Date.now() - this.sentAt < this.REFRESH_MS) return;
+		var body = DaimondPeer.agentsFrame(Workers.runs.concat(this.compileRuns()), me, Date.now(),
+			DaimondSync.progressBudget, DaimondSync.progressWeight, liveDispatchNotes());
+		if (!body) return Promise.resolve(null);
+		if (body === this.sent && Date.now() - this.sentAt < this.REFRESH_MS) return Promise.resolve(null);
 		var self = this;
 		this.sentAt = Date.now();
-		DaimondSync.pushProgressFrame(DaimondPeer.agentsKey(me), body).then(function (out) {
+		return DaimondSync.pushProgressFrame(DaimondPeer.agentsKey(me), body).then(function (out) {
 			if (out && out.ok) self.sent = body;
-		}, function () { /* the next change, or the renewal, sends it again */ });
+			return out;
+		}, function (e) { return { ok: false, why: String((e && e.message) || e) }; });
 	},
+
+	/// A CRYSTAL COMPILE IS DEVICE WORK IN PROGRESS (ruled 30 Oct): its progress goes out
+	/// as a run in this device's frame, the channel the workers list reads, so the device
+	/// that asked for it sees it move as it sees a worker. A compile-id key is refused by
+	/// the gateway. Throws when the door refuses the frame.
+	compileFrame: async function (cid, text, final, name) {
+		var now = Date.now();
+		var c = this.compiles[cid] || { id: String(cid), name: String(name || cid), kind: 'compile' };
+		c.status = final ? 'done' : 'running';
+		c.tail   = String(text || '');
+		if (final) c.endedAt = now;
+		this.compiles[cid] = c;
+		var out = await this.publishNow();
+		if (out && !out.ok) throw new Error('compile frame refused: ' + String(out.why || 'unknown'));
+	},
+
+	/// Name a compile this device is about to run, by its main file, before its first frame.
+	compileBegin: function (cid, main) {
+		if (!cid) return;
+		this.compiles[cid] = { id: String(cid), name: String(main || cid), kind: 'compile', status: 'queued' };
+	},
+
+	/// End a compile that sent no final frame (failed or revoked): `status` 'error' or 'stopped'.
+	compileEnd: async function (cid, status, why) {
+		var c = this.compiles[cid];
+		if (!c) return;
+		c.status  = status;
+		c.tail    = String(why || c.tail || '');
+		c.endedAt = Date.now();
+		var out = await this.publishNow();
+		if (out && !out.ok) throw new Error('compile end refused: ' + String(out.why || 'unknown'));
+	},
+
+	/// This device's compiles as runs, those ended over a day ago let go.
+	compileRuns: function () {
+		var out = [], now = Date.now(), self = this;
+		Object.keys(this.compiles).forEach(function (cid) {
+			var c = self.compiles[cid];
+			if (c.endedAt && now - c.endedAt > 24 * 3600e3) { delete self.compiles[cid]; return; }	// fixed: the grid's day
+			out.push(c);
+		});
+		return out;
+	},
+
+	/// Follow one peer run by id (a compile this device dispatched): `fn(run)` on each frame
+	/// that carries it, until `offRun(id)`.
+	onRun:  function (id, fn) { this.watchers[String(id)] = fn; },
+	offRun: function (id) { delete this.watchers[String(id)]; },
 
 	/// Follow every other device's key, and renew this device's frame. Once a minute.
 	tick: function () {
@@ -3022,8 +3058,14 @@ export var PeerAgents = {
 		if (!got) return;
 		this.seen[dev] = Date.now();
 		this.store = DaimondPeer.peerRunsMerge(this.store, got, Date.now());
+		var self = this;
+		got.runs.forEach(function (r) {
+			var fn = self.watchers[r.id];
+			if (fn) { try { fn(r); } catch (e) { /* the watcher's own fault */ } }
+		});
 		takeDispatchNotes(got.disp);
 		this.draw();
+		try { redrawHandoffWorkers(); } catch (e) { /* no chat on screen */ }
 	},
 
 	draw: function () {

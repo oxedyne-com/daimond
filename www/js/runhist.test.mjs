@@ -117,7 +117,7 @@ function page(ls, o) {
 		currentDiamond: { id: 'd1' }, diamonds: [], selfDeviceId: () => 'PHONE', deviceNameFor: () => '',
 		relTime: () => 'just now', showCrystalHistory: () => { calls.redrawn = (calls.redrawn | 0) + 1; },
 		peerReports: {}, requeueUnheard() {}, takeReportTaint() {}, settleRunnerWords: async () => true, settleRunnerSession() {}, settleRunnerAlerts() {}, settleRunnerAsk() {}, renderDispatchedBadges() {}, updateExpedite() {},
-		adoptFinalFrame: () => false, readReportedFinal: () => false, otherErrandReport: () => false, _openAsk: {}, histFile: () => makeEl('div'),
+		otherErrandReport: () => false, _openAsk: {}, histFile: () => makeEl('div'),
 		diamondTurning: (id) => !!(o.turning && o.turning(id)), refreshDiamondAfterChange: async () => {},
 		noticeDialog: (title, body) => { (calls.notices = calls.notices || []).push([title, body]); },
 	};

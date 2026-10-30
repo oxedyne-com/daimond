@@ -19,8 +19,6 @@
                and the work lands once the link heals (never).
      STORED    H3. The gateway stored the POST whose answer was lost:
                the retry lands one redundant version and loses nothing.
-     PROGHANG  H3. A progress frame nothing answers: the final push
-               still gets the gate (never).
      HELDLOG   PLD. A Diamond held back by its page log: the same version is
                merged again on the next pull, and skipped once the hold lifts.
      FLUSHDOOR M1. flush() over a parcel refused at the 8 MiB front
@@ -400,24 +398,6 @@ if (want('STORED')) {
 		&& JSON.stringify(top.chats) === '["c1"]', JSON.stringify(top));
 	check('and nothing is owed, at the version it landed', S.state().stalled === false && S.state().version === 6,
 		JSON.stringify({ why: S.state().stalledWhy, v: S.state().version }));
-}
-
-if (want('PROGHANG')) {
-	console.log('\nPROGHANG (H3): a progress frame nothing answers, then the final push\n');
-	const { tab, S } = await booted();
-	tab.parcel = { v: 3, chats: [], note: 'half an answer' };
-	tab.postMode = 'hang';
-	S.pushProgress();
-	await advance(tab, 5000);
-	check('[ctl] the frame is hanging and holds the gate', S.state().busyWith === 'a round is running',
-		JSON.stringify(S.state().busyWith));
-	tab.postMode = 'normal';
-	tab.parcel = { v: 3, chats: [], note: 'the whole answer' };
-	S.push();
-	await advance(tab, 120000);
-	check('the final push lands once the frame passes its deadline (release 4: never)',
-		JSON.parse(tab.mailbox.blob.slice(7)).note === 'the whole answer', 'v' + tab.mailbox.version
-		+ ' ' + JSON.stringify(tab.posts));
 }
 
 // ── M1 ─────────────────────────────────────────────────────────

@@ -232,7 +232,7 @@ function lift(name) {
 const NAMES = ['runDispatchFallback', 'leaseDoorRead', 'electProvider', 'electSources', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'endSendNotRun', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
 	'reRunParked', 'markInterrupted', 'isNotRunRow', 'notRunAsk', 'retryTurn', 'lostRetryMid', 'turnMessagesOf',
 	'sendPresenceRead', 'endHandOffNotRun', 'endTurnNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn',
-	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'handBackNote', 'seatReason', 'seatWhyKey', 'dropRefusedTiles',
+	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'turnLogState', 'handBackNote', 'seatReason', 'seatWhyKey', 'dropRefusedTiles',
 	'notRunCause', 'notRunRecord', 'placeholderNotRun', 'notRunWhyKey', 'drawNotRunReason'];
 
 // ── peer.js, loaded as the page loads it (the real recoverDecision / settledLease) ──
@@ -329,6 +329,9 @@ function world(fault, extra) {
 		steerDiamondOf: (c) => (c && c.diamondId ? { id: c.diamondId } : null), diamondBusy: () => false,
 		loadMsgTombs: () => ({}), msgTombstone: () => {}, sessionCut: () => {}, ChatStore: { compact: () => {} },
 		leaseClockNow: () => Date.now(),
+		// The chat log's one writer of a turn's end (P2.3b3): a not-run end is logged, not drawn here.
+		logEnd: async (chat, turn, end) => { (W.logEnds || (W.logEnds = [])).push(turn + ':' + (end && end.status)); return true; },
+		notRunEnd: (why) => ({ status: 'not_run', not_run: { why: why } }),
 		// The backstop's world: one chat, a lease the test sets, a hand-back held or not.
 		chats: [], _handBack: {}, _handBackCause: {}, _abiRefused: {}, _progressView: {}, _finalMids: {}, _finalRun: {}, _fallbackInFlight: {}, _localRecovering: {}, _localEnding: {}, LEASE: null,
 		// The test's one lease is the turn under test's, never its retry's `-rt` lease unless it names it.
@@ -340,6 +343,7 @@ function world(fault, extra) {
 		dropDispatchedPlaceholder: (tid) => { W.dropped = tid; const c = env.chats[0];
 			c.messages = c.messages.filter((x) => !(x.why === 'dispatched' && x.iturn === tid)); },
 		current: null,
+		turnView: () => null,	// turnlog.js: no log folded in this world
 	};
 	env.window = env;
 	const have = NAMES.concat(extra || []).map((n) => [n, lift(n)]).filter((x) => x[1]);
@@ -439,6 +443,7 @@ async function main() {
 		if (id === 'H') {
 			verdict('H', W, chat, 'h1', PROMPT);
 			check('H the placeholder goes, so the row is the turn\'s one ending', W.dropped === 'h1', String(W.dropped));
+			check('H the log gets the turn\'s one end, not_run', (W.logEnds || []).join() === 'h1:not_run', (W.logEnds || []).join());
 		} else {
 			const n = chat.messages.filter((m) => !!m.notRun).length;
 			check(id + ' no "not run" row, nothing run here', n === 0 && W.ran.length === 0, 'notrun=' + n + ' ran=' + JSON.stringify(W.ran));

@@ -862,7 +862,10 @@ start_gateway() {
 	# failed left the wrapper's pid alone in the file, and `stop_gateway` stopped the wrapper
 	# and orphaned the gateway. Found on 2026-09-27: a nightly rerun's gateway (pid 1957255,
 	# under wrapper 1957254) had held :9002 on a deleted worktree's store since 09-25.
-	( cd "$GW_CWD" && APP_MODE=sandbox exec nohup "$(rootpath "$GW_BIN")" >>"$SCRATCH/suite-gw.log" 2>&1 &
+	# The dev net's environment: devgw.sh's net.env, the one file every dev launcher loads (REL-1c).
+	local ne=()
+	[ -f "$GW_CWD/net.env" ] && mapfile -t ne < <(grep -E '^[A-Z_][A-Z0-9_]*=' "$GW_CWD/net.env")
+	( cd "$GW_CWD" && APP_MODE=sandbox exec nohup env "${ne[@]}" "$(rootpath "$GW_BIN")" >>"$SCRATCH/suite-gw.log" 2>&1 &
 		echo $! > "$SCRATCH/suite-gw.pid" )
 	wait_gateway 25 || return 1
 	# AND THE PID THAT SERVES IS NOT THE PID THAT WAS SPAWNED, which is the whole
@@ -1271,7 +1274,9 @@ if [ $# -eq 0 ]; then
 	# builds it -- this crate has no integration test, so cargo has no reason to --
 	# so `shipping_hand` in kimberlite/src/exec.rs refuses rather than skipping, on the
 	# rule that a fence test which cannot say which code it measured must not report
-	# success. `verify_handreal` does not supply it either: that builds `--release`
+	# success. (LIBBIN, 26 Oct 2026: those tests now live in
+	# kimberlite/tests/shipping_launcher.rs, where CARGO_BIN_EXE_kimberlite makes cargo
+	# build the binary first, and `shipping_hand` is gone.) `verify_handreal` does not supply it either: that builds `--release`
 	# with `CARGO_TARGET_DIR` deleted from the environment on purpose, and these
 	# tests look for a DEBUG binary beside themselves, in whatever target directory
 	# they were compiled into. So the build belongs HERE, in this environment, where

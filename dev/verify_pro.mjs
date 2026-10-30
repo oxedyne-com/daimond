@@ -18,7 +18,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
+import { devNetTag, requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
 import { GW_URL as GW } from './ports.mjs';
 import { CLIENT_API } from './clientapi.mjs';
 
@@ -91,7 +91,7 @@ async function grantPro(accountId) {
 		type: 'checkout.session.completed',
 		data: { object: {
 			payment_status: 'paid', amount_total: 4500, payment_intent: `pi_pro_${accountId}`,
-			metadata: { account_id: accountId, product: 'pro' },
+			metadata: { account_id: accountId, product: 'pro', ...devNetTag() },
 		} },
 	});
 	const t = Math.floor(Date.now() / 1000);

@@ -2237,7 +2237,9 @@
 		// Exposed for the verifier (www/js/debugshare.test.mjs):
 		_fingerprint: fingerprint,
 		_redact:      redact,
-		// The content scrubber -- the shared block's two entry points.
+		// The content scrubber -- the shared block's two entry points. `scrubText`
+		// is public: support.js passes the testnet's free text through it.
+		scrubText:    scrubText,
 		_scrubText:   scrubText,
 		_scrubDeep:   scrubDeep,
 		_elide:       elide,

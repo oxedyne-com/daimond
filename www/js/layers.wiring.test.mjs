@@ -261,6 +261,7 @@ const KEPT = {
 	'share.js':      [ [ 'document.body.appendChild(input);', 'a file input, clicked and removed' ], [ 'document.body.appendChild(input);', '' ] ],
 	'support.js':    [ [ 'document.body.appendChild(wrap);', 'the support modal' ] ],
 	'syncicon.js':   [ [ 'document.body.appendChild(tip);', 'the sync tooltip' ] ],
+	'testnet.js':    [ [ 'document.body.appendChild(wrap);', 'the Testnet sheet (a modal)' ] ],
 	'terminal.js':   [ [ 'document.body.appendChild(ta);', 'a copy textarea, removed at once' ] ],
 	'undo.js':       [ [ 'document.body.appendChild(el);', 'the undo bar (role status)' ] ],
 	'updater.js':    [ [ 'document.body.appendChild(b);', 'the update banner (role status)' ] ],

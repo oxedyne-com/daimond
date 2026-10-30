@@ -203,49 +203,30 @@
 	// envelope is signed with the account's PRIVATE signing key, which is on no
 	// card, so `verifyEnvelope` accepts only an envelope this account authored.
 	//
-	// It is a DETACHED signature over the canonical bytes, NOT the wasm
-	// `signingInput`/`assemble` path a message takes -- the errand stays off the
-	// bridge and out of the message renderer, which is the whole reason it is raw
-	// JSON and not a message artefact.
+	// It is a DETACHED signature over the envelope's digest (`sigv:2`), which the
+	// engine's codec computes through the wasm (`errandDigest`); the errand stays out
+	// of the message renderer, which is why it is raw JSON and not a message artefact.
 
-	/// Canonical JSON of a value: object keys sorted, arrays in order, so the
-	/// signer and the verifier serialise byte-for-byte the same thing however
-	/// their field insertion order happened to differ.
-	function canonical(v) {
-		if (v === null || typeof v !== 'object') return JSON.stringify(v);
-		if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']';
-		var keys = Object.keys(v).sort();
-		return '{' + keys.map(function (k) {
-			return JSON.stringify(k) + ':' + canonical(v[k]);
-		}).join(',') + '}';
-	}
-
-	/// The bytes a signature is over: the envelope WITHOUT its own `author`/`sig`,
-	/// canonicalised. Both sides compute these identically -- the signer before it
-	/// adds the two fields, the verifier after it strips them.
-	function signedBytes(obj) {
-		var base = {};
-		Object.keys(obj).forEach(function (k) {
-			if (k !== 'author' && k !== 'sig') base[k] = obj[k];
-		});
-		return utf8(canonical(base));
+	/// The bytes a signature is over (`sigv:2`, P2.2): the SHA-256 of the canonical envelope
+	/// without its `author`/`sig`, `sigv` included, computed by the engine's codec through the
+	/// wasm (`errandDigest`), so the tab and the runner sign and check the same 32 bytes.
+	async function signedBytes(obj) {
+		return await (await sealBridge()).errandDigest(JSON.stringify(obj));
 	}
 
 	/// Sign an envelope with this account's signing key and answer a copy carrying
-	/// `author` (this account's public key, hex) and `sig` (base64, as
-	/// `DaimondIdentity.sign` answers).
+	/// `sigv:2`, `author` (this account's public key, hex) and `sig` (base64, as
+	/// `DaimondIdentity.sign` answers), as the engine's `errand_make` writes them.
 	async function signEnvelope(obj) {
 		if (!window.DaimondIdentity || !window.DaimondIdentity.sign) {
 			throw new Error('peer: no identity, so an errand cannot be signed.');
 		}
 		var author = await window.DaimondIdentity.publicKeyRaw();
 		if (!author) throw new Error('peer: this device has no signing key.');
-		var sig = await window.DaimondIdentity.sign(signedBytes(obj));	// base64
-		var out = {};
-		Object.keys(obj).forEach(function (k) { out[k] = obj[k]; });
-		out.author = hex(author);
-		out.sig    = sig;
-		return out;
+		var json = JSON.stringify(obj);
+		var bridge = await sealBridge();
+		var sig = await window.DaimondIdentity.sign(await bridge.errandDigest(json));	// base64
+		return JSON.parse(await bridge.errandMake(json, author, b64dec(sig)));
 	}
 
 	/// Whether an envelope was authored by THIS account: the signature verifies
@@ -266,7 +247,8 @@
 		var mine = await window.DaimondIdentity.publicKeyRaw();
 		if (!mine) throw new Error('peer: this device has no account key yet, so a peer envelope cannot be checked.');
 		if (hex(mine) !== String(obj.author)) return false;	// authored by us?
-		return await window.DaimondIdentity.verifySig(unhex(obj.author), obj.sig, signedBytes(obj));
+		if (obj.sigv !== 2) return false;	// scheme 1 is refused whole (sig:v1-refused)
+		return await window.DaimondIdentity.verifySig(unhex(obj.author), obj.sig, await signedBytes(obj));
 	}
 
 	// ── The envelopes ──────────────────────────────────────────
@@ -1348,8 +1330,7 @@
 	/// says the asker last saw is always one its seed can carry and its fingerprint counts.
 	function conversational(m) {
 		if (!m || (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'tool')) return false;
-		// A render-only provisional row is not history: a final frame the runner cut at the door
-		// (`progressRow`) is held provisional until the runner's own copy lands (F4).
+		// A render-only provisional row is not history (F4).
 		if (m.provisional) return false;
 		// A cut turn's LANDED partial answer is memory (C2: `landFailedTurn`, the kill path, a recovered
 		// row). A hand-off's placeholder is not, whatever words it shows, nor a badge with none.
@@ -2003,9 +1984,14 @@
 	/// this device has taken the turn on itself (a hand-off that fell back here) before
 	/// its own claim lands: it reads `claimed`, by this device, never "Sending to <runner>";
 	/// 'end' says this device is ending it "not run", which reads `ending`.
-	function uiState(turn, lease, report, selfId, now, ask, localRun) {
+	/// `view` is the turn's TurnView state as this device's log folded it (turnlog.js
+	/// `turnView`: `{state: 'open'}`, `{state: 'ended', status}`, or null): an end it has
+	/// folded is the tile's end, whatever the lease or a report says, and the lease is
+	/// never read for an end (P2.3a4).
+	function uiState(turn, lease, report, selfId, now, ask, localRun, view) {
 		if (!turn || turn.why !== REASON_DISPATCHED) return 'not-dispatched';
 		var n = now == null ? Date.now() : now;
+		if (view && view.state === 'ended') return VIEW_END_UI[view.status] || 'done';
 		// ENDED, NOT RUN (SUHT-I9). Before any report: a runner's hand-back report is what
 		// sends a turn here to be ended, and read first it drew "<asker> is picking this up".
 		// Its own end before the claim lands reads so too, unless ANOTHER device's live lease
@@ -2033,13 +2019,11 @@
 			if (report.status === 'aborted' && report.cut) return 'interrupted';
 			return 'failed';									// aborted / error / refused-spend: terminal
 		}
-		// A LEASE THAT SAYS THE TURN FINISHED, with no report here (r52d QA F2). The report
-		// lives only in the memory of the tab that collected it, so a second tab of the
-		// sending device, or this one after a reload, read the released lease as
-		// "dispatched" beside the finished answer. The lease is read by every tab and every
-		// device: `done`, or released from done (`settled`, stamped by `leaseSetCas`).
-		// One marked `cut` ended unfinished: it is settled, never re-run, and reads Interrupted.
-		if (settledLease(lease)) return lease.cut ? 'interrupted' : 'done';
+		// A LEASE THAT SAYS THE RUN FINISHED, its end not yet folded here: the runner's end
+		// row is on its way through the log, so the tile stays on the run (`running`) until
+		// it lands. Never `done` or `interrupted` off the lease (the end is the TurnView's),
+		// and never `failed`: the lease lapsing below is a lost run, this is not.
+		if (settledLease(lease)) return 'running';
 		// A BLOCKER ON THE LEASE outranks everything the lease mode could say (it
 		// reads 'running' throughout the wait) and outranks the relayed ask, because
 		// it is the authoritative copy: the runner wrote it through the same CAS that
@@ -2075,7 +2059,12 @@
 		return 'dispatched';
 	}
 
-	/// Does a lease record say its turn ran to completion: `done`, or released from done?
+	/// The tile state each TurnView end status reads (`uiState`): a stopped turn's rows stand
+	/// as a done one's; a not-run end reads as the turn ended not run.
+	var VIEW_END_UI = { done: 'done', stopped: 'done', interrupted: 'interrupted', not_run: 'ending' };
+
+	/// Does a lease record say its run finished: `done`, or released from done? A lease
+	/// fact for run-or-not and lease decisions, never the turn's end (`uiState`'s `view`).
 	function settledLease(r) {
 		return !!r && (r.mode === 'done' || (r.mode === 'released' && !!r.settled));
 	}
@@ -2130,13 +2119,17 @@
 	/// The take is the arbiter: if the runner's claim landed first, it wins, the take
 	/// stands down and the turn runs there. Only from a deriving gateway's row (`rec`, the
 	/// runner's): an old gateway's beat cannot say a runner stopped listening, and the
-	/// backstop stays for that and for a runner that listens but never claims.
-	function withdrawOnLoss(turn, lease, rec, selfId, now) {
+	/// backstop stays for that and for a runner that listens but never claims. `view` is
+	/// the turn's TurnView state (`uiState`'s): an ended turn is never withdrawn.
+	function withdrawOnLoss(turn, lease, rec, selfId, now, view) {
 		if (!turn || turn.why !== REASON_DISPATCHED || !turn.toDevice) return false;
+		if (view && view.state === 'ended') return false;
 		if (!turn.dispatchedBy || String(turn.dispatchedBy) !== String(selfId)) return false;
 		if (!recDerived(rec) || rec.listening !== false) return false;
 		var n = now == null ? Date.now() : now;
-		if (liveLease(lease, n) || settledLease(lease)) return false;	// claimed, or finished
+		if (liveLease(lease, n)) return false;							// claimed
+		// A settled lease is a finished run, its end not folded yet; `recoverDecision` stands
+		// it down, so it is never withdrawn.
 		return recoverDecision(turn, lease, false, selfId, n);
 	}
 
@@ -2717,6 +2710,11 @@
 			// ABSENT when the gateway or the peer does not send it: unknown is not idle,
 			// but neither is it busy, and the runner answers a busy errand itself.
 			if (rec.busy != null) recOut.busy = busyDepth(rec.busy);
+			// A native runner's row (P2.5b) counts its tabs alone in `busy`; the runner is
+			// busy when its own runs reach its limit, at that depth. Without them, as before.
+			if (rec.kind === 'runner' && typeof rec.runBusy === 'number' && typeof rec.runLimit === 'number') {
+				recOut.busy = rec.runBusy >= rec.runLimit ? busyDepth(rec.runBusy) : 0;
+			}
 			// The chats that load is in, so the switch offers a runner busy with THIS chat
 			// (the turn queues there) and passes over one busy with others. ABSENT when not
 			// sent: such a peer is busy by its count, as before.
@@ -4156,23 +4154,6 @@
 
 	var LEASE_TTL_MS   = 90000;		// a lease past this is vacant (§2.4)
 	var RENEW_EVERY_MS = 30000;		// three renews per TTL, so one dropped renew is survivable
-	// How often the runner streams the running turn's transcript to the mailbox, so a
-	// peer watching the hand-off sees the thinking and tool calls unfold rather than a
-	// blank wait until the turn finishes. Faster than the liveness ticker because it is
-	// the UX cadence, not the lease cadence. A tick sends ONE SMALL FRAME -- the turn's
-	// rendered tail through the progress door (sync.js pushProgressFrame), tens of
-	// kilobytes at most -- and not the whole account parcel, which is what made this
-	// cadence affordable; a tick whose tail is unchanged sends nothing at all.
-	//
-	// 750 ms, down from 2000 (Q20, D-20261006-13: model output reached a watcher too
-	// slowly). The runner LOOKS every PROGRESS_TICK_MS and SENDS only when the turn
-	// changed, at least PROGRESS_EVERY_MS after the last frame left and never while
-	// one is in flight -- so a quiet turn costs nothing and a busy one at most four
-	// frames in three seconds. A fixed 750 ms interval could not keep that spacing:
-	// a frame leaves some milliseconds after its tick, so the next tick would land
-	// short of 750 ms and wait a whole interval more.
-	var PROGRESS_EVERY_MS = 750;		// least spacing of two streaming frames
-	var PROGRESS_TICK_MS  = 250;		// how often the runner looks for growth
 	var LIVENESS_GAP_MS   = 3000;		// least spacing of event-driven lease reads on a running turn
 	var MAX_TAKE_TRIES = 10;		// bound the CAS retry loop (was 6): more headroom under two-device churn
 	var TAKE_BACKOFF_MS = 250;		// jittered wait between take retries so a claim gets a clean window
@@ -4439,6 +4420,37 @@
 	// footer claimed -> running the same way a report does.
 	var _onLeaseChange = null;
 	function leaseOnChange(fn) { _onLeaseChange = fn; }
+
+	/// Is a lease record a turn left with no writer: not live, not settled, and past its
+	/// deadline (design §2 [F3])? Read only to decide whether to write the turn's `end
+	/// interrupted`, never for display. A runner's hold reaches past the deadline while it
+	/// runs, so a record still live is not dead whatever its deadline says.
+	function pastDeadline(r, now) {
+		return !!r && !isMark(r) && !settledLease(r) && !!r.chatId
+			&& leaseMs(r.deadline) > 0 && now > leaseMs(r.deadline) && !liveLease(r, now);
+	}
+
+	/// The turns of the lease view past their deadline, `[{turnId, chatId}]`.
+	function leasesPastDeadline(now) {
+		var t = now == null ? authorityNow() : now, out = [];
+		for (var id in _leases) {
+			if (Object.prototype.hasOwnProperty.call(_leases, id) && pastDeadline(_leases[id], t)) {
+				out.push({ turnId: String(_leases[id].turnId || id), chatId: String(_leases[id].chatId) });
+			}
+		}
+		return out;
+	}
+
+	// The one dead-writer detector (page/turnwrite.js `endDeadTurns`), told of the turns past
+	// their deadline whenever the view moves or its clock passes a deadline.
+	var _onDead = null;
+	function leaseOnDead(fn) { _onDead = fn; deadFire(); }
+	function deadFire() {
+		if (!_onDead) return;
+		var dead = leasesPastDeadline();
+		if (!dead.length) return;
+		try { _onDead(dead); } catch (err) { /* the next move or deadline asks again */ }
+	}
 	// STOP-ON-PEER: the turns this device is RUNNING, each with the check its runner
 	// wants made when an adopted lease view moves. A revoke written elsewhere reaches
 	// the view on the lease wake (sync.js `leaseWake`), and the runner reads
@@ -4460,6 +4472,14 @@
 			try { f(why || 'poison'); n += 1; } catch (err) { /* one run's end never blocks another's */ }
 		}
 		return n;
+	}
+	/// Call `fn` each time an adopted lease view moves, while turn `turnId` runs on this device:
+	/// a Here turn's watch for its Stop (steer.js `takeHereLease`); a runner's is `runErrand`'s.
+	/// Answers the unwatch.
+	function leaseWatch(turnId, fn) {
+		var tid = String(turnId);
+		_leaseWatch[tid] = fn;
+		return function () { if (_leaseWatch[tid] === fn) delete _leaseWatch[tid]; };
 	}
 	function leaseWatchFire() {
 		var ws = Object.keys(_leaseWatch);
@@ -4492,6 +4512,7 @@
 			try { _onLeaseChange(); } catch (err) { /* a redraw must never break a sync */ }
 		}
 		if (moved) leaseWatchFire();	// STOP-ON-PEER
+		if (moved) deadFire();
 		armLeaseExpiry();
 		return moved;
 	}
@@ -4518,6 +4539,8 @@
 			if (liveLease(r, now)) at = leaseMs(r.expiry);
 			else if (settledLease(r) && !isMark(r) && !deadLease(r, now)) {
 				at = Math.max(leaseMs(r.expiry), leaseMs(r.deadline), leaseMs(r.renewedAt)) + LEASE_TTL_MS + 1;
+			} else if (r && r.chatId && !settledLease(r) && !isMark(r)) {
+				at = leaseMs(r.deadline) + 1;	// the detector's moment
 			}
 			if (at > now && (!next || at < next)) next = at;
 		}
@@ -4533,6 +4556,7 @@
 		if (_onLeaseChange) {
 			try { _onLeaseChange(); } catch (err) { /* a redraw must never break the clock */ }
 		}
+		deadFire();
 		armLeaseExpiry();
 	}
 
@@ -4774,6 +4798,8 @@
 			var claim = {
 				turnId: tid, eid: String(o.eid || ''), holder: holder,
 				dispatchedBy: String(o.dispatchedBy || ''),
+				// The chat the turn is in, so a device reading the lease dead can end it (§2 [F3]).
+				chatId: String(o.chatId || ''),
 				mode: 'claimed', deadline: deadline || 0,
 				expiry: (deadline && deadline > now) ? deadline : (now + LEASE_TTL_MS),
 				// A RETAKE OUTRANKS THE CLAIM IT REPLACES (SYNCREAD-R2 MED-1). For one holder the
@@ -4862,6 +4888,15 @@
 		return leaseTakeFrom(await cas.read(), turnId, opts, cas, nowFn);
 	}
 
+	/// TAKE the lease for a Here turn this device runs in chat `chatId` (design §2 [F3]), held
+	/// straight to the errand deadline as a runner's claim is, with no renew: a tab that dies
+	/// mid-turn leaves a lease the dead-writer detector ends `interrupted` once it passes.
+	async function leaseTakeHere(turnId, chatId, holder, cas, nowFn) {
+		var now = leaseNow(nowFn);
+		return leaseTake(turnId, { holder: holder, chatId: chatId, ts: now,
+			deadline: now + DISPATCH_DEADLINE_MS }, cas, nowFn);
+	}
+
 	/// RENEW a lease this device holds, bumping its expiry. A healthy peer renews on
 	/// journal progress; a dead one stops, and the lease expires. Answers
 	/// `{ ok, why }`. Aborts (ok:false, why:'revoked') if the lease is no longer
@@ -4893,7 +4928,7 @@
 			var exp = Math.max(now + LEASE_TTL_MS, dl);
 			if (holdMs && dl) exp = Math.max(exp, Math.min(now + holdMs, dl + MAX_LEASE_LIFE_MS));
 			var bumped = {
-				turnId: tid, eid: cur.eid, holder: h, dispatchedBy: String(cur.dispatchedBy || ''),
+				turnId: tid, eid: cur.eid, holder: h, dispatchedBy: String(cur.dispatchedBy || ''), chatId: String(cur.chatId || ''),
 				mode: cur.mode === 'claimed' && !hold ? 'running' : cur.mode,
 				deadline: dl,
 				expiry: exp, renewedAt: now,
@@ -5116,7 +5151,7 @@
 			// it is preserved (`cur.settled | 0`), and it survives every merge because
 			// `pickLease`/`clampExpiry` carry whole records rather than rebuilding fields.
 			var next = {
-				turnId: tid, eid: cur.eid, holder: h, dispatchedBy: String(cur.dispatchedBy || ''),
+				turnId: tid, eid: cur.eid, holder: h, dispatchedBy: String(cur.dispatchedBy || ''), chatId: String(cur.chatId || ''),
 				mode: mode, deadline: leaseMs(cur.deadline),
 				// AFTER the record it replaces, even within one millisecond: the merge below
 				// keeps the door's copy on a same-holder tie, which silently dropped a `done`
@@ -5208,7 +5243,7 @@
 			// released-wins tie-break (or a strictly-greater renew) always keeps this
 			// over the peer's live running record -- a fast-clock peer cannot outbid it.
 			var revoked = {
-				turnId: tid, eid: cur.eid, holder: cur.holder, dispatchedBy: String(cur.dispatchedBy || ''),
+				turnId: tid, eid: cur.eid, holder: cur.holder, dispatchedBy: String(cur.dispatchedBy || ''), chatId: String(cur.chatId || ''),
 				mode: 'released', expiry: 0, deadline: leaseMs(cur.deadline),
 				renewedAt: Math.max(now, leaseMs(cur.renewedAt)),
 			};
@@ -5572,7 +5607,7 @@
 				return { ok: false, why: 'not_ours' };
 			}
 			var next = {
-				turnId: tid, eid: cur.eid, holder: h, dispatchedBy: String(cur.dispatchedBy || ''),
+				turnId: tid, eid: cur.eid, holder: h, dispatchedBy: String(cur.dispatchedBy || ''), chatId: String(cur.chatId || ''),
 				mode: cur.mode, deadline: leaseMs(cur.deadline), expiry: cur.expiry,
 				renewedAt: Math.max(now, leaseMs(cur.renewedAt) + 1),
 			};
@@ -5741,6 +5776,7 @@
 		LEASE_TTL_MS:      LEASE_TTL_MS,
 		RENEW_EVERY_MS:    RENEW_EVERY_MS,
 		MAX_LEASE_LIFE_MS: MAX_LEASE_LIFE_MS,
+		RUN_HOLD_MS:       RUN_HOLD_MS,
 		/// The gateway-corrected clock every lease age/expiry check must use in place
 		/// of a raw `Date.now()` (SIM-4). Published so a caller that judges liveness
 		/// directly, rather than through a `nowFn` a lease call takes, can still reach
@@ -5769,6 +5805,15 @@
 		heldBy:    leaseHeldBy,
 		/// The lifecycle over a compare-and-set.
 		take:      leaseTake,
+		takeHere:  leaseTakeHere,
+		/// The read-only dead-writer check, and the detector it tells (§2 [F3]).
+		pastDeadline: pastDeadline,
+		pastAll:   leasesPastDeadline,
+		onDead:    leaseOnDead,
+		/// What a turn's record says to the device that runs it (ours, stopped, released, not_ours,
+		/// absent), and the watch that hears it move.
+		verdict:   leaseVerdict,
+		watch:     leaseWatch,
 		/// TAKE from a snapshot already read -- lets a test race two takes from ONE
 		/// base version, which is the concurrency the lease exists to arbitrate.
 		takeFrom:  leaseTakeFrom,
@@ -5849,24 +5894,8 @@
 	///   pushResult   async () -> version: `captureSession` + parcel push (append merge).
 	///                Called LAST and NOT awaited (see step 4), so nothing the
 	///                originator is watching is behind it;
-	///   finalFrame   optional async (turnId) -> tail: send the turn's WHOLE rendered
-	///                tail as the last frame on the progress door, marked `final`, so
-	///                the originating device shows the finished answer without waiting
-	///                for the parcel. Absent -> the parcel is the first sight of it,
-	///                which is what a runner on an older build does;
 	///   awaitPush    optional: await the parcel push before answering, so a test can
 	///                assert the whole sequence. Production leaves it off;
-	///   pushProgress optional async (turnId) -> at: stream the RUNNING turn's
-	///                transcript tail to the progress door on a timer, so a peer
-	///                watching the hand-off sees it unfold. ONE SMALL FRAME per tick,
-	///                keyed by the turn -- no new turn, no new lease, no second
-	///                charge, and not the account parcel (which travels once, at the
-	///                end, through `pushResult`). A no-op answering 0 when the tail
-	///                has not changed; otherwise the `frameNow` time the frame was
-	///                handed to the door, which the cadence is kept from.
-	///                Absent (runner-acceptance, tests) -> no streaming, no timer;
-	///   frameNow     optional () -> ms: the clock of `pushProgress`'s answer
-	///                (default Date.now; NOT `now`, which is the lease clock).
 	///   post         async (reportEnvelope): post the report;
 	///   ack          async (): `DaimondPost.ack`, AFTER the push committed;
 	///   now          optional clock, for tests.
@@ -5920,7 +5949,7 @@
 		};
 	}
 
-	/// How a runner's turn ENDS, finished or interrupted: the final frame, the report, the
+	/// How a runner's turn ENDS, finished or interrupted: the report, the
 	/// lease settled done, the ack, the lease released, and the parcel. `e` is the errand,
 	/// or a lease record standing in for it (`reportFor`). Answers the parcel's version.
 	///
@@ -5930,12 +5959,8 @@
 	///
 	/// Answers `{ revoked, stopped, parcelVersion }`.
 	async function finishTurn(e, d, rep, trace, leaseClock, leaseSettled, deadAt) {
-		var tid = String((e && e.turnId) || ''), finalTail = '', stopped = !!leaseSettled;
+		var tid = String((e && e.turnId) || ''), stopped = !!leaseSettled;
 		var dl = leaseMs(deadAt) || leaseMs(e && e.deadline);
-		if (d.finalFrame) {
-			try { finalTail = String((await d.finalFrame(tid)) || ''); trace.push('final-frame'); }
-			catch (err) { /* a dropped final frame only means the parcel is the first sight */ }
-		}
 		// THE LEASE BEFORE THE REPORT (check_final D1's class). A take-back this run has not
 		// read refuses the `done`; the errand is then the taker's, so the run ends as endDead's
 		// revoke does -- no done report, no ack, no release, no parcel.
@@ -5958,7 +5983,7 @@
 		// No `stopped` on the report: the sender's own Stop marks its tile, and the runner's
 		// row is marked by its abort or `endLocal` (Rulings §1).
 		try {
-			await d.post(reportFor(e, Object.assign({ status: 'done', parcelVersion: 0, finalTail: finalTail ? 1 : 0 }, rep || {})));
+			await d.post(reportFor(e, Object.assign({ status: 'done', parcelVersion: 0 }, rep || {})));
 			trace.push('report');
 		} catch (err) { /* the report is only the nudge; the frame already carried the answer */ }
 		try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
@@ -6276,7 +6301,7 @@
 		// 1. TAKE. Stand down -- never run -- if a peer already holds it.
 		var tTake = leaseNow(leaseClock);
 		var took = await leaseTake(turnId, { holder: d.selfId, eid: e.eid, dispatchedBy: e.dispatchedBy,
-			deadline: e.deadline, ts: e.ts, until: age.until }, d.cas, leaseClock);
+			chatId: e.chatId, deadline: e.deadline, ts: e.ts, until: age.until }, d.cas, leaseClock);
 		trace.push('take');
 		if (!took.won) {
 			diag('collect stand-down', 'turn=' + turnId
@@ -6298,7 +6323,7 @@
 		// hung turn's lifetime -- it never writes the parcel, so a running turn causes no
 		// churn. The check is owned HERE (not in the injected runTurn) and stopped on
 		// EVERY exit (the finally), so it can neither outlive the errand nor leak a timer.
-		var revoked = false, checkStopped = false, checkTimer = null, progressTimer = null;
+		var revoked = false, checkStopped = false, checkTimer = null;
 		// THE RUN'S OTHER END (UNBLOCK-7 F4). `runTurn` is raced against this, resolved when
 		// the lease deadline passes or the engine is poisoned: a run whose await never settles
 		// still ends, reported aborted, acked and released, rather than holding the runner.
@@ -6327,7 +6352,6 @@
 		var runHold = (d.runHoldMs != null) ? d.runHoldMs : RUN_HOLD_MS;
 		function holdEnd() { return Math.max(deadAt, heldTo); }
 		var stoppedThere = false;		// the revoke is the sender's Stop (settled), not a take-back
-		var progFlight = null, progLast = 0;		// the frame in flight; when the last one left
 		var checkStart = leaseNow(leaseClock);
 		var maxLife = (d.maxLeaseLifeMs != null) ? d.maxLeaseLifeMs : MAX_LEASE_LIFE_MS;
 		var setT = d.setTimer   || (typeof setInterval   === 'function' ? setInterval   : null);
@@ -6337,11 +6361,6 @@
 			if (_leaseWatch[turnId] === leaseWatched) delete _leaseWatch[turnId];
 			if (liveTrail != null) { try { clearTimeout(liveTrail); } catch (err) {} liveTrail = null; }
 			if (checkTimer != null && clrT) { try { clrT(checkTimer); } catch (err) {} checkTimer = null; }
-			// The progress timer streams the RUNNING turn; it dies with the ticker, on
-			// EVERY exit, so it can neither push a frame of a finished turn nor leak.
-			// Stopped HERE (before the final pushResult, which stopCheck precedes) so a
-			// progress frame never overlaps the final push on the one-round gate.
-			if (progressTimer != null && clrT) { try { clrT(progressTimer); } catch (err) {} progressTimer = null; }
 		}
 		// READ-ONLY: never writes the parcel (no renew, no churn). Aborts on a revoke
 		// -- the lease is no longer ours, or was released, which a sync pull adopts into
@@ -6488,23 +6507,19 @@
 		}
 		// What the engine's journal events call: a nudge, never a forced read.
 		function nudge() { return liveness(false); }
-		// Steps 4's tail: the final frame, the report, the lease, the ack and the parcel,
-		// as a finished run and an interrupted one both end. Answers `{ revoked, parcelVersion }`.
+		// Steps 4's tail: the report, the lease, the ack and the parcel, as a finished run
+		// and an interrupted one both end. Answers `{ revoked, parcelVersion }`.
 		async function complete(rep) {
-			// A streaming frame still in flight lands first, so it can never arrive after
-			// the final frame and stand in for the finished turn.
-			if (progFlight) { try { await progFlight; } catch (err) { /* settled either way */ } }
 			return finishTurn(e, d, Object.assign({}, rep || {}, { heard: heardIds() }), trace, leaseClock, false, holdEnd());
 		}
 		// What an adopted lease view calls (`_leaseWatch`): a read of the door, but only
 		// when the view no longer says this device runs the turn, so a lease change on
 		// another turn costs no request.
-		// A run its sender stopped ends as a finished one does -- final frame, report, ack,
+		// A run its sender stopped ends as a finished one does -- report, ack,
 		// parcel -- so the partial the Stop kept reaches the sender, as a Stop pressed here
 		// sends it; only the lease is not written, the sender's Stop having settled it.
 		async function endStopped() {
 			stopCheck();
-			if (progFlight) { try { await progFlight; } catch (err) { /* settled either way */ } }
 			var sfin = await finishTurn(e, d, { heard: heardIds() }, trace, leaseClock, true, holdEnd());
 			return { ran: true, done: true, stopped: true, parcelVersion: sfin.parcelVersion, trace: trace };
 		}
@@ -6584,6 +6599,8 @@
 				diag('collect RETAKE', 'turn=' + turnId + ' own live lease: interrupted, not rerun');
 				var rir = await reportInterrupted(e, d, null, trace, deadAt);
 				if (rir) return rir;
+				// No journal run here: the turn still ends `interrupted`, in the log too.
+				try { if (d.interrupted) await d.interrupted(e, null, true); } catch (err) { /* the detector ends it */ }
 				trace.push('interrupted');
 				var rfin = await finishTurn(e, d, { interrupted: 1 }, trace, depsClock(d), false, deadAt);
 				if (rfin.revoked) return { ran: false, aborted: true, why: 'revoked', trace: trace };
@@ -6691,29 +6708,6 @@
 			if (setT) checkTimer = setT(function () { liveness(true); if (d.heartbeat) d.heartbeat(); }, RENEW_EVERY_MS);
 			_leaseWatch[turnId] = leaseWatched;	// and at once, on a lease wake
 			_poisonWatch[turnId] = killRun;		// and at once, on a poisoned engine
-			// STREAM THE RUNNING TURN. Through the length of the run, push the transcript
-			// as it stands so a peer watching the hand-off sees it unfold. A no-op dep
-			// (the runner-acceptance path, and peer.test) starts no timer, so this is
-			// invisible where it is not wired. Money-safe: `pushProgress` is the SAME
-			// account parcel under compare-and-set -- no new turn, no new lease, no
-			// second charge -- and it never waits, so it cannot stall the turn. Stopped
-			// by stopCheck on every exit, before the final pushResult.
-			if (setT && d.pushProgress) {
-				var frameNow = d.frameNow || Date.now;
-				progressTimer = setT(function () {
-					if (checkStopped || revoked || progFlight) return;
-					if (progLast && frameNow() - progLast < PROGRESS_EVERY_MS) return;
-					// The turn id is PASSED: a frame is keyed by the turn it belongs to, so the
-					// dep cannot be left to guess which turn this device is running.
-					var sent;
-					try { sent = d.pushProgress(turnId); } catch (err) { return; }	// a dropped frame is only a slower stream
-					progFlight = Promise.resolve(sent).then(function (at) {
-						if (typeof at === 'number' && at > 0) progLast = at;
-					}, function () { /* a dropped frame is only a slower stream */ })
-						.then(function () { progFlight = null; });
-					return progFlight;
-				}, PROGRESS_TICK_MS);
-			}
 			try {
 				// D3 — the prompt is ALREADY in the synced transcript (the dispatcher
 				// persist-first pushed it before posting the errand, §4.1). Tell runTurn so,
@@ -6790,9 +6784,9 @@
 			// the finished answer sitting in it the entire time. 58.9 s total for a 3.5 s
 			// turn, most of it after the model had stopped.
 			//
-			// So the FINAL FRAME goes first: the turn's whole rendered tail, on the
-			// progress door the watcher is already reading, marked `final` so it draws it
-			// and stops following. Then the lease, then the report, then the ack -- every
+			// So the answer goes first, as the turn's rows and its `end` in the chat log
+			// (runTurn writes them as the turn runs). Then the lease, then the report, then
+			// the ack -- every
 			// one of them a small write the originator is waiting on. The PARCEL goes LAST
 			// and is not awaited: it carries the durable copy, the workspace the turn
 			// touched and the session, and nobody is watching a spinner for it.
@@ -6800,9 +6794,8 @@
 			// Money-safety is unchanged and the reasoning is worth keeping: the ACK is
 			// what takes the errand off the relay, and a crash before the answer is
 			// durable must leave it there. The answer is durable in two places now -- the
-			// final frame on the progress door, which the originator folds into its own
-			// transcript, and the parcel. A crash between the two leaves the errand ACKED
-			// with the answer on the door, which is the state the originator already
+			// chat log, which the originator reads, and the parcel. A crash between the two
+			// leaves the errand ACKED with the answer in the log, which is the state the originator already
 			// handles; what it can no longer do is strand the turn for the length of a
 			// flush.
 			var fin = await complete(null);
@@ -6916,7 +6909,12 @@
 		async function say(text, final) {
 			if (!d.frame) return;
 			try { await d.frame(cid, text, !!final); trace.push(final ? 'final' : 'frame'); }
-			catch (err) { /* a dropped frame is only a quieter stream */ }
+			catch (err) {
+				// The compile goes on, but a refused frame is said: a stream that
+				// never arrives was once silent here (REL-1b).
+				trace.push('frame-refused');
+				diag('collect FRAME REFUSED', 'compile=' + cid + ' why=' + String((err && err.message) || err));
+			}
 		}
 		async function release() {
 			try { await settleLease('compile', cid, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
@@ -7227,212 +7225,9 @@
 		return to ? to === String(selfId || '') : !!inFlight;
 	}
 
-	// ════════════════════════════════════════════════════════════
-	// THE STREAMED VIEW OF A RUNNING TURN
-	// ------------------------------------------------------------
-	// Two pure functions, here rather than in daimond.js because they are the whole
-	// content of the streaming path and the only part of it worth testing without a
-	// browser: what a frame SAYS (`progressTail`) and what a watcher DOES with one
-	// that arrives (`foldProgress`). The app supplies the messages and draws the
-	// result; the decisions are here.
-	// ════════════════════════════════════════════════════════════
-
-	// Any one streamed message's content share, so one huge tool argument or a giant
-	// paste cannot be the whole frame. A message longer than this is clipped -- and a
-	// clipped provisional row does NOT byte-match its final copy, so it is REPLACED by
-	// mid on the parcel merge rather than converged; the common turn is well under it
-	// and its provisional rows match their final copies exactly (no rebuild at merge).
-	var PROGRESS_MSG_CHARS = 16 * 1024;
-	// The roles a watcher draws (drawHistoryMessage's own set): anything else after the
-	// user turn is view-only scaffolding the watcher rebuilds for itself.
-	var PROGRESS_ROLES = {
-		assistant: 1, think_log: 1, tool_log: 1, vision_log: 1,
-		error_log: 1, note_log: 1, fold_log: 1, leak_log: 1, end_log: 1, cut_log: 1,
-	};
-
-	/// The turn's messages AFTER its own user message, as STRUCTURED rows a watcher can
-	/// fold into its transcript and draw through the ordinary renderer -- not flattened
-	/// text. Each row carries only what the drawing reads: `{mid, role, name, content,
-	/// outcome, args, callId, folded, kept, interrupted, ts}`. A message's content is
-	/// kept in FULL (up to `PROGRESS_MSG_CHARS`), so a provisional row byte-matches the
-	/// final copy that syncs later and the parcel merge is a no-op redraw rather than a
-	/// rebuild. The whole array is bounded by `maxChars`, OLDEST rows dropped first --
-	/// what falls off the front the watcher already holds from an earlier frame.
-	///
-	/// Pure and DOM-free: `messages` is the chat's array. A turn whose user message is
-	/// not in it answers [] -- the runner has nothing to say about a turn it does not
-	/// hold, which is a quiet frame and not an error.
-	function progressTail(messages, turnId, maxChars) {
-		var msgs = Array.isArray(messages) ? messages : [];
-		var id   = String(turnId || '');
-		var cap  = (maxChars | 0) > 0 ? (maxChars | 0) : 48 * 1024;
-		if (!id) return [];
-		var at = -1;
-		for (var i = 0; i < msgs.length; i++) {
-			var m = msgs[i];
-			if (m && (String(m.mid || '') === id || String(m.iturn || '') === id)
-				&& m.role === 'user') { at = i; break; }
-		}
-		if (at < 0) return [];
-		// Gather from the tail backwards under the total budget, so the OLDEST row is
-		// the one dropped (the watcher already saw it), then restore document order.
-		var picked = [];
-		var used = 0, dropped = false;
-		for (var j = msgs.length - 1; j > at; j--) {
-			var row = progressRow(msgs[j]);
-			if (!row) continue;
-			var len = row.content ? row.content.length : 0;
-			if (used + len > cap && picked.length) { dropped = true; break; }	// budget spent, oldest dropped first
-			used += len;
-			picked.push(row);
-		}
-		// A frame that left rows out is not the whole turn, so no row of it says so.
-		if (dropped) for (var w = 0; w < picked.length; w++) delete picked[w].whole;
-		picked.reverse();
-		return picked;
-	}
-
-	/// One transcript message as a streamed structured row, or null for a view-only
-	/// row a watcher does not draw. Content is kept in full up to `PROGRESS_MSG_CHARS`,
-	/// and in full whatever its length when `full` is set (`turnRows`).
-	///
-	/// `whole: 1` says nothing was cut from it. The sender makes a final frame's rows its
-	/// real answer only when every row says so (`adoptFinalFrame`); a cut row would be a
-	/// truncated answer kept for good if the runner's own copy never arrived.
-	function progressRow(m, full) {
-		if (!m || !m.role || !(PROGRESS_ROLES[m.role] || runnerSteerRow(m))) return null;
-		var lim = full ? Infinity : PROGRESS_MSG_CHARS;
-		var c = String(m.content == null ? '' : m.content);
-		var cut = c.length > lim;
-		if (cut) c = c.slice(0, lim);
-		var row = { mid: String(m.mid || ''), role: m.role, content: c, ts: +m.ts || 0 };
-		if (m.name)        row.name    = String(m.name);
-		if (m.outcome)     row.outcome = String(m.outcome);
-		if (m.args && String(m.args).length > lim) cut = true;
-		if (m.args)        row.args    = String(m.args).length > lim
-			? String(m.args).slice(0, lim) : String(m.args);
-		if (m.callId)      row.callId  = String(m.callId);
-		if (m.folded)      row.folded  = m.folded | 0;
-		if (m.kept)        row.kept    = m.kept | 0;
-		if (m.interrupted) row.interrupted = 1;
-		// An interrupted row says why and carries the prompt its Retry re-sends; a run id says
-		// which run of a handed-off turn made the row (`otherRunRows`).
-		if (m.interrupted && m.why)   row.why   = String(m.why);
-		if (m.interrupted && m.itext) row.itext = String(m.itext);
-		if (m.run)         row.run     = String(m.run);
-		if (m.interrupted && m.lostOn) row.lostOn = String(m.lostOn);
-		// What the row says as the page's own i18n key and params (a native runner's error,
-		// vision and failed-answer rows, whose content is empty), so the asker says it in its
-		// own language (`logRowText`).
-		if (m.say && m.say.k) row.say = sayOf(m.say);
-		// `ranOn` is what the answer's final copy carries (the device that ran the turn):
-		// streaming it means the FINAL provisional row byte-matches the parcel copy's
-		// `msgSig`, so the merge is a no-op redraw rather than a rebuild.
-		if (m.ranOn)       row.ranOn   = String(m.ranOn);
-		// And the run's own figures (hand-off QA F5): an adopted final frame is the answer
-		// on the sender, so it carries what the runner's copy would, or its tile says
-		// nothing of the model, time, tokens or cost when that copy never replaces it.
-		RAN_FACTS.forEach(function (k) { if (m[k] != null && m[k] !== '') row[k] = ranFact(k, m[k]); });
-		if (!cut)          row.whole   = 1;
-		// THE PRODUCT RECORD, as stamped: the same object on every frame and on the final
-		// copy, so a provisional row persisted before the parcel lands carries the same bytes.
-		if (m.prod)        row.prod    = m.prod;
-		// An ending is its figures and its word, not its content: without them the asker's
-		// provisional stop line has no `how` and draws nothing until the parcel lands.
-		if (m.role === 'end_log') END_FIELDS.forEach(function (k) {
-			if (m[k] == null) return;
-			row[k] = Array.isArray(m[k]) ? m[k].map(String) : (typeof m[k] === 'string' ? m[k] : (m[k] | 0));
-		});
-		return row;
-	}
-
-	// What an `end_log` carries beyond the common row: how the turn ended, why it stopped, and the tallies.
-	var END_FIELDS = ['how', 'why', 'offered', 'rounds', 'calls', 'refused', 'failed', 'malformed', 'reasoned', 'missing'];
-
-	// The figures `runTurn` stamps on a handed-off answer, and their types off the door.
-	var RAN_FACTS = ['ranMs', 'ranModel', 'ranTokIn', 'ranTokOut', 'ranCost', 'ranCached', 'ranCtx'];
-	function ranFact(k, v) { return k === 'ranModel' ? String(v) : (+v || 0); }
-
-	// A row's `say`, `{k, v}`, as the door carries it: the key a string, the params as given.
-	function sayOf(s) {
-		var o = { k: String(s.k) };
-		if (s.v != null) o.v = s.v;
-		return o;
-	}
-
-	/// Is this a runner's steer row: a user row of the run, mid `<run>-t<i>`? It is drawn in
-	/// the turn, never taken for the turn's opening row.
-	function runnerSteerRow(m) {
-		return !!(m && m.role === 'user' && m.run && String(m.mid || '').indexOf(String(m.run) + '-t') === 0);
-	}
-
-	/// A frame's rows as the door's payload, `{v:1, msgs:[...]}` JSON, fitted to the door:
-	/// `budget` is `{chars, bytes}` and `weigh(text)` what a text adds (sync.js
-	/// `progressBudget`, `progressWeight`). Whole rows are left out from the OLDEST end, as
-	/// `progressTail` leaves them, and none is ever cut: the door's own guard slices the
-	/// string and its 413 halves it, and either cuts the JSON, so an unfitted frame over the
-	/// line was lost (r52d Open 1: `whole: 1` adds ten bytes a row, and tool arguments are
-	/// not in the content budget at all). A frame that left rows out is not the whole turn,
-	/// so no row of it says so. '' when not even the newest row fits. Without a budget, the
-	/// rows as they are.
-	///
-	/// `extra` adds fields beside `msgs` (a final frame's `ref` and `n`, `finalRef`), weighed
-	/// with the shell so the rows are fitted to what is left.
-	function frameJson(rows, budget, weigh, extra) {
-		if (!Array.isArray(rows) || !rows.length) return '';
-		var parts, head = '{"v":1,';
-		try {
-			parts = rows.map(function (r) { return JSON.stringify(r); });
-			if (extra) Object.keys(extra).forEach(function (k) {
-				if (k !== 'v' && k !== 'msgs') head += JSON.stringify(k) + ':' + JSON.stringify(extra[k]) + ',';
-			});
-		}
-		catch (e) { return ''; }
-		head += '"msgs":[';
-		var all = head + parts.join(',') + ']}';		// JSON.stringify({ v: 1, ...extra, msgs: rows })
-		if (!budget || typeof weigh !== 'function') return all;
-		var shell = weigh(head + ']}');
-		var chars = shell.chars, bytes = shell.bytes, keep = 0;
-		for (var i = parts.length - 1; i >= 0; i--) {
-			var w = weigh(parts[i]), sep = keep ? 1 : 0;		// the comma between two rows
-			if (chars + w.chars + sep > budget.chars || bytes + w.bytes + sep > budget.bytes) break;
-			chars += w.chars + sep;
-			bytes += w.bytes + sep;
-			keep++;
-		}
-		if (!keep) return '';
-		if (keep === rows.length) return all;
-		var out = rows.slice(rows.length - keep).map(function (r) {
-			var c = Object.assign({}, r);
-			delete c.whole;
-			return JSON.stringify(c);
-		});
-		return head + out.join(',') + ']}';
-	}
-
-	// The run states a frame's `workers` may name (daimond.js `Workers`).
+	// The run states an agents frame's runs may name (daimond.js `Workers`).
 	var WORKER_STATES = ['queued', 'running', 'paused', 'done', 'error', 'stopped',
 		'interrupted', 'capped', 'spend_cap', 'blocked', 'timed_out', 'not_started'];
-	var FRAME_WORKERS_MAX = 32;		// workers read off one frame
-
-	/// The workers a runner's frame names, `[{ id, name, status }]`, read field by field:
-	/// off the door, so untrusted. An entry without an id or with a state this build does
-	/// not know is dropped, and a frame from a build that sends none yields [].
-	function frameWorkers(raw) {
-		if (!Array.isArray(raw)) return [];
-		var out = [];
-		for (var i = 0; i < raw.length && out.length < FRAME_WORKERS_MAX; i++) {
-			var w = raw[i];
-			if (!w || typeof w !== 'object') continue;
-			var id = (typeof w.id === 'string') ? w.id.slice(0, 64) : '';
-			var st = (typeof w.status === 'string') ? w.status : '';
-			if (!id || WORKER_STATES.indexOf(st) < 0) continue;
-			var name = (typeof w.name === 'string' && w.name) ? w.name.slice(0, 80) : id;
-			out.push({ id: id, name: name, status: st });
-		}
-		return out;
-	}
-
 
 	// ── Agents across devices (UNBLOCK-28) ─────────────────────
 	//
@@ -7447,9 +7242,11 @@
 	var AGENTS_RUNS_MAX   = 200;			// runs read off one peer's frame
 	var AGENTS_LIVE       = ['queued', 'running', 'paused'];
 	// What a run carries across, and the longest each string may be. Nothing else
-	// leaves the device: no task, no transcript, no engine.
+	// leaves the device: no task, no transcript, no engine. `kind` and `tail` are a
+	// crystal compile's (REL-1b): device work in progress, crossing as a run with its
+	// latest progress line.
 	var AGENTS_STR = { id: 64, name: 80, diamondId: 64, diamondName: 120, chatId: 64, chatName: 120,
-		turnId: 64, parentId: 64, model: 120, deviceId: 64, context: 16 };
+		turnId: 64, parentId: 64, model: 120, deviceId: 64, context: 16, kind: 16, tail: 240 };
 	var AGENTS_NUM = ['costUsd', 'priorCost', 'capUsd', 'endedAt', 'rating'];
 
 	/// The door key a device's agents frame is stored under.
@@ -7480,7 +7277,7 @@
 	}
 
 	/// This device's agents frame, `{v:1, dev, runs:[...]}` JSON, newest run first, fitted
-	/// to the door (`budget`/`weigh` as `frameJson`) by leaving out the OLDEST runs: a cut
+	/// to the door (`budget` {chars, bytes}, `weigh(s)` -> {chars, bytes}) by leaving out the OLDEST runs: a cut
 	/// string would be lost whole. '' when there is no device id. An empty list is still a
 	/// frame, so a peer learns the runs have gone.
 	///
@@ -7633,24 +7430,13 @@
 		});
 		return out;
 	}
-	/// EVERY row of the turn, each whole (`progressRow(m, true)`), in document order up to
-	/// the next user message: what a final frame stands for. `progressTail` is the view of it that fits one frame; these
-	/// are the rows a watcher may make its answer (`adoptFinalFrame`), so nothing is cut or
-	/// left out. [] when the turn's user message is not held.
-	function turnRows(messages, turnId) {
-		var msgs = Array.isArray(messages) ? messages : [];
-		var id   = String(turnId || '');
-		if (!id) return [];
-		var asked = msgs.some(function (m) {
-			return m && m.role === 'user' && (String(m.mid || '') === id || String(m.iturn || '') === id);
-		});
-		if (!asked) return [];
-		var out = [];
-		turnSpan(msgs, id).forEach(function (m) {
-			var row = progressRow(m, true);
-			if (row) out.push(row);
-		});
-		return out;
+	/// The workers `runs` (`peerRunsList`'s) holds for turn `turnId`, as a hand-off tile draws
+	/// them: `[{ id, name, status }]`, in order.
+	function turnWorkers(runs, turnId) {
+		var t = String(turnId || '');
+		if (!t || !Array.isArray(runs)) return [];
+		return runs.filter(function (r) { return r && r.turnId === t; })
+			.map(function (r) { return { id: r.id, name: r.name || r.id, status: r.status }; });
 	}
 
 	/// The rows of turn `turnId`, in document order: every row tagged `iturn === turnId`, and
@@ -7706,62 +7492,11 @@
 		return out;
 	}
 
-	/// The run a final frame's rows were made by: the `run` its rows carry (the last one
-	/// when a frame holds more than one), or '' from a build that stamps none.
-	function frameRun(rows) {
-		var run = '';
-		(Array.isArray(rows) ? rows : []).forEach(function (r) { if (r && r.run) run = String(r.run); });
-		return run;
-	}
-
-	// ── A final frame larger than the door (hand-off QA F4, 2026-09-25) ──
-	//
-	// The door keeps ONE frame per account (gateway `put_progress`: a frame for any other
-	// turn id reclaims the last), newest wins, so a final frame cannot be paged across
-	// several frames: a watcher reading on a tap or a 4 s tick sees only the last page. So
-	// the whole rows travel as content chunks, the door the Diamonds' bytes and a compile's
-	// files already take, and the final frame names them: `{v:1, ref, n, msgs}`, where
-	// `msgs` is the view that fits (`progressTail`, cut, never adopted) and `ref` the
-	// manifest of `{v:1, turn, msgs}` holding every row whole. A chunk nobody commits is
-	// swept after the gateway's day of grace, long past any hand-off's deadline.
-
-	/// The rows a final frame's chunk holds, checked: `obj` is the parsed chunk body, and
-	/// the answer is its rows when it is this turn's, carries `n` rows, and every one is
-	/// whole, or null. Untrusted until then, as everything off the door is.
-	function refRows(obj, turnId, n) {
-		if (!obj || obj.v !== 1 || String(obj.turn || '') !== String(turnId || '')) return null;
-		if (!Array.isArray(obj.msgs) || !obj.msgs.length) return null;
-		if ((n | 0) && obj.msgs.length !== (n | 0)) return null;
-		return frameWhole(obj.msgs) ? obj.msgs : null;
-	}
-
-	/// Is a frame the whole of what it streams: rows, every one marked `whole` by
-	/// `progressRow`, none cut and none left out? A frame from a build that marks
-	/// nothing never is.
-	function frameWhole(rows) {
-		if (!Array.isArray(rows) || !rows.length) return false;
-		for (var i = 0; i < rows.length; i++) if (!rows[i] || rows[i].whole !== 1) return false;
-		return true;
-	}
-
-	/// Fold an arriving frame into what a watcher is showing: answers the new state,
-	/// or null when the frame changes nothing and no redraw is owed.
-	///
-	/// A frame REPLACES the one before it -- it carries the whole tail as structured
-	/// rows, not a delta -- so this is a newest-wins reducer and the rules are about
-	/// what "newest" means:
-	///
-	///   * a frame for another turn is not this watcher's, and is ignored;
-	///   * a seq at or below the one in hand arrived late (the door's park and the
-	///     fallback poll can both answer, and either may be overtaken), and is ignored,
-	///     so a late frame never rewinds the view;
-	///   * `final` closes the streamed view and CARRIES the full final rows -- the last
-	///     word on the turn, which no later frame reopens or overdraws.
-	/// Can the turn a watched view (`foldProgress` state) stands for still hear words said into it
-	/// (UNBLOCK-27 R7c)? Not once its final frame is in, nor while its newest row is its answer
+	/// Can the turn a watched view (`{msgs, final}`, its log as read) stands for still hear words
+	/// said into it (UNBLOCK-27 R7c)? Not once its end is in, nor while its newest row is its answer
 	/// being written: prose with no call after it, so no seam follows, or its ending. Prose before
 	/// a call is filed as working (`think_log`), so a trailing assistant row is the answer. A turn
-	/// with no frame yet may still hear; its runner answers a late word `unheard` itself.
+	/// with no row yet may still hear; its runner answers a late word `unheard` itself.
 	function frameHears(view) {
 		if (!view) return true;
 		if (view.final) return false;
@@ -7770,199 +7505,6 @@
 		if (!last) return true;
 		if (last.role === 'end_log') return false;
 		return !(last.role === 'assistant' && String(last.content == null ? '' : last.content).trim());
-	}
-
-	function foldProgress(state, frame) {
-		var cur = state || {};
-		if (cur.final) return null;
-		if (!frame || !frame.turn) return null;
-		if (cur.turn && String(cur.turn) !== String(frame.turn)) return null;
-		if (frame.final) {
-			var fin = Array.isArray(frame.msgs) ? frame.msgs : (cur.msgs || []);
-			return { turn: String(frame.turn), seq: (frame.seq | 0) || (cur.seq | 0),
-				msgs: fin, final: true };
-		}
-		var seq = frame.seq | 0;
-		if (seq <= (cur.seq | 0)) return null;
-		var rows = Array.isArray(frame.msgs) ? frame.msgs : [];
-		if (!rows.length) return null;
-		return { turn: String(frame.turn), seq: seq, msgs: rows, final: false };
-	}
-
-	/// Fold a frame's structured rows into a transcript `messages` array as PROVISIONAL
-	/// rows, so the ordinary renderer draws the handed-off turn as it is produced and
-	/// the tile grows exactly like a live local turn. Pure: answers a NEW array, or null
-	/// when nothing changed (so the caller draws nothing).
-	///
-	/// The rules that keep tiles immutable and the parcel merge a no-op redraw:
-	///   * a new row lands after the nearest earlier row of its frame already held, else
-	///     after the turn's dispatched placeholder (the chrome tile that stands above the
-	///     streaming answer and is removed when it merges), so the turn is drawn in the
-	///     runner's order and a growing turn's add is an APPEND the append fast path draws
-	///     without rebuilding the thread; absent a placeholder the rows go at the tail of the turn;
-	///   * a REAL (non-provisional) row already in the transcript for a mid WINS -- the
-	///     answer has merged, and a stale frame must never overdraw it;
-	///   * a provisional row is updated in place BY MID, never moved, so a tile already
-	///     shown grows rather than being rebuilt underneath the reader;
-	///   * each provisional row carries the SAME mid the runner will push, so the parcel
-	///     merge replaces it by mid (mergeMessages) with a byte-identical final copy --
-	///     equal `msgSig`, no rebuild.
-	function foldProvisional(messages, turnId, frameMsgs) {
-		var msgs = Array.isArray(messages) ? messages : [];
-		var id   = String(turnId || '');
-		var rows = Array.isArray(frameMsgs) ? frameMsgs : [];
-		if (!id) return null;
-		// Where the user turn is, and where the placeholder for it sits (if any).
-		var userAt = -1, placeAt = -1;
-		for (var i = 0; i < msgs.length; i++) {
-			var m = msgs[i];
-			if (m && m.role === 'user' && !runnerSteerRow(m)
-				&& (String(m.mid || '') === id || String(m.iturn || '') === id)) userAt = i;
-			if (userAt >= 0 && m && m.why === REASON_DISPATCHED && String(m.iturn || '') === id) { placeAt = i; break; }
-		}
-		if (userAt < 0) return null;					// the watcher does not hold this turn yet
-		// The mids the transcript already carries: a REAL (merged) row is authoritative
-		// and a frame never touches it; a provisional row of the same mid may grow.
-		var real = {}, prov = {};
-		for (var k = 0; k < msgs.length; k++) {
-			var mm = msgs[k];
-			if (!mm || !mm.mid) continue;
-			if (mm.provisional) prov[String(mm.mid)] = mm; else real[String(mm.mid)] = k;
-		}
-		var changed = false;
-		var add = [];							// [frame index, new row]
-		for (var j = 0; j < rows.length; j++) {
-			var r = rows[j];
-			if (!r || !r.mid) continue;
-			var rid = String(r.mid);
-			if (real[rid] != null) continue;			// the real copy has landed: leave it
-			var want = provRow(r, id);
-			var have = prov[rid];
-			if (have) {
-				if (provRowSig(have) !== provRowSig(want)) { copyProv(have, want); changed = true; }
-			} else {
-				add.push([j, want]); prov[rid] = want; changed = true;
-			}
-		}
-		var out = msgs.slice();
-		var moved = frameOrder(out, id, rows);
-		if (!changed && !moved) return null;
-		if (!add.length) return out;				// in place: new content, or the runner's order restored
-		// Each new row goes right after the nearest EARLIER row of the frame the transcript
-		// already holds (merged or provisional, by mid), so a row that arrives a frame late --
-		// the answer after its thinking, tool 2 after tool 1 -- is drawn where the runner has
-		// it. A frame over the cap carries only its newest rows (UNBLOCK-43), so a new row may
-		// have no earlier row in it: it goes right before the nearest LATER row held, which
-		// keeps it below the rows earlier frames drew. With neither, the row is newer than
-		// everything the turn holds (a watcher that missed a frame reads one of only new rows),
-		// so it goes after the turn's own last row: after the placeholder when that is all the
-		// turn holds, and before any later turn, so a final frame folded once a later turn has
-		// begun stays with its turn. Rows added together keep the frame's order, and while the
-		// turn's rows end the transcript an add is a pure append.
-		var endAt = userAt;
-		for (var e = userAt + 1; e < out.length; e++) {
-			if (out[e] && out[e].role === 'user' && String(out[e].iturn || '') !== id) break;
-			endAt = e;
-		}
-		var baseAt = endAt + 1;
-		for (var a = 0; a < add.length; a++) {
-			var insAt = -1;
-			for (var p = add[a][0] - 1; p >= 0 && insAt < 0; p--) {
-				var pid = rows[p] && rows[p].mid ? String(rows[p].mid) : '';
-				if (!pid) continue;
-				for (var q = userAt; q < out.length; q++) {
-					if (out[q] && String(out[q].mid || '') === pid) { insAt = q + 1; break; }
-				}
-			}
-			for (var f = add[a][0] + 1; f < rows.length && insAt < 0; f++) {
-				var fid = rows[f] && rows[f].mid ? String(rows[f].mid) : '';
-				if (!fid || isAdded(add, a, fid)) continue;		// added later in this pass: not yet placed
-				for (var g = userAt; g < out.length; g++) {
-					if (out[g] && String(out[g].mid || '') === fid) { insAt = g; break; }
-				}
-			}
-			if (insAt < 0) insAt = baseAt;
-			out.splice(insAt, 0, add[a][1]);
-		}
-		return out;
-	}
-
-	/// Is `mid` one of the rows `add` places after its `a`th?
-	function isAdded(add, a, mid) {
-		for (var i = a + 1; i < add.length; i++) if (String(add[i][1].mid) === mid) return true;
-		return false;
-	}
-
-	/// Put the provisional rows of turn `id` that a frame carries into the frame's order, in
-	/// place, in the slots they already hold: the runner's order is the turn's (UNBLOCK-43).
-	/// Real rows and rows the frame does not carry stay where they are. Answers whether
-	/// anything moved.
-	function frameOrder(out, id, rows) {
-		var at = {};
-		rows.forEach(function (r, i) { if (r && r.mid) at[String(r.mid)] = i; });
-		var slots = [], held = [];
-		for (var i = 0; i < out.length; i++) {
-			var m = out[i];
-			if (m && m.provisional && String(m.iturn || '') === id && m.mid && at[String(m.mid)] != null) { slots.push(i); held.push(m); }
-		}
-		var want = held.slice().sort(function (x, y) { return at[String(x.mid)] - at[String(y.mid)]; });
-		var moved = false;
-		for (var k = 0; k < slots.length; k++) { if (out[slots[k]] !== want[k]) { out[slots[k]] = want[k]; moved = true; } }
-		return moved;
-	}
-
-	/// A provisional transcript row from a streamed structured row.
-	function provRow(r, turnId) {
-		var m = {
-			mid: String(r.mid), role: r.role,
-			content: String(r.content == null ? '' : r.content),
-			iturn: String(turnId || ''), ts: +r.ts || 0, provisional: 1,
-		};
-		if (r.name)        m.name    = String(r.name);
-		if (r.outcome)     m.outcome = String(r.outcome);
-		if (r.args)        m.args    = String(r.args);
-		if (r.callId)      m.callId  = String(r.callId);
-		if (r.folded)      m.folded  = r.folded | 0;
-		if (r.kept)        m.kept    = r.kept | 0;
-		if (r.interrupted) m.interrupted = 1;
-		if (r.interrupted && r.why)   m.why   = String(r.why);
-		if (r.interrupted && r.itext) m.itext = String(r.itext);
-		if (r.run)         m.run     = String(r.run);
-		if (r.interrupted && r.lostOn) m.lostOn = String(r.lostOn);
-		if (r.ranOn)       m.ranOn   = String(r.ranOn);
-		if (r.say && r.say.k) m.say = sayOf(r.say);
-		RAN_FACTS.forEach(function (k) { if (r[k] != null && r[k] !== '') m[k] = ranFact(k, r[k]); });
-		if (r.prod)        m.prod    = r.prod;
-		if (r.role === 'end_log') END_FIELDS.forEach(function (k) { if (r[k] != null) m[k] = r[k]; });
-		return m;
-	}
-	/// Copy a provisional row's drawable fields onto an existing one, in place, so the
-	/// tile grows rather than the array reordering.
-	function copyProv(dst, src) {
-		dst.content = src.content; dst.ts = src.ts;
-		dst.name = src.name; dst.outcome = src.outcome; dst.args = src.args;
-		dst.callId = src.callId; dst.folded = src.folded; dst.kept = src.kept;
-		dst.interrupted = src.interrupted; dst.ranOn = src.ranOn;
-		['why', 'itext', 'run', 'lostOn'].forEach(function (k) { if (src[k] != null) dst[k] = src[k]; });
-		if (src.say) dst.say = src.say; else delete dst.say;
-		RAN_FACTS.forEach(function (k) { if (src[k] != null) dst[k] = src[k]; else delete dst[k]; });
-		// Never taken away: a record, once a row has one, is the row's for good.
-		if (src.prod) dst.prod = src.prod;
-		if (src.role === 'end_log') END_FIELDS.forEach(function (k) { if (src[k] != null) dst[k] = src[k]; });
-	}
-	/// The drawable signature of a provisional row -- what a redraw or the transcript's
-	/// own `msgSig` would read, so an unchanged frame folds to null AND the final frame's
-	/// `ranOn`/content changes are applied (making the provisional row match the parcel
-	/// copy so the merge is a no-op redraw).
-	function provRowSig(m) {
-		var c = m.content == null ? '' : String(m.content);
-		return m.role + '#' + c.length + '#' + (m.outcome || '') + '#' + (m.name || '')
-			+ '#' + (m.folded || 0) + '#' + (m.kept || 0) + '#' + (m.interrupted ? 1 : 0)
-			+ '#' + (m.ranOn || '') + '#' + (m.run || '')
-			+ '#' + RAN_FACTS.map(function (k) { return m[k] == null ? '' : m[k]; }).join(',')
-			+ '#' + (m.prod ? m.prod.length || 1 : 0) + '#' + (m.say ? JSON.stringify(m.say) : '')
-			+ (m.interrupted ? '#' + (m.why || '') + '#' + (m.lostOn || '') : '')
-			+ (m.role === 'end_log' ? '#' + (m.how || '') + '#' + (m.why || '') : '');
 	}
 
 	// The control a dispatched turn's footer offers, given its §5 display state. The
@@ -8107,9 +7649,6 @@
 		settledLease:  settledLease,
 		endingLease:   endingLease,
 		endedHere:     endedHere,
-		frameWhole:    frameWhole,
-		frameJson:     frameJson,
-		frameWorkers:  frameWorkers,
 		agentsKey:     agentsKey,
 		agentsFrame:   agentsFrame,
 		agentsFromFrame: agentsFromFrame,
@@ -8117,12 +7656,9 @@
 		dispatchNoteRows: dispatchNoteRows,
 		peerRunsMerge: peerRunsMerge,
 		peerRunsList:  peerRunsList,
-		turnRows:      turnRows,
+		turnWorkers:   turnWorkers,
 		otherRunRows:  otherRunRows,
 		turnSpan:      turnSpan,
-		frameRun:      frameRun,
-		refRows:       refRows,
-		PROGRESS_MSG_CHARS: PROGRESS_MSG_CHARS,
 		watchDecision: watchDecision,
 		handoffDeadline: handoffDeadline,
 		handoffExpired:  handoffExpired,
@@ -8324,18 +7860,6 @@
 		/// The content address of some sealed bytes, exposed for a caller that
 		/// seals by hand.
 		addressOf:   addressOf,
-		/// THE STREAMED VIEW of a running turn, all pure. `progressTail(messages, turnId,
-		/// maxChars)` is what a runner's frame SAYS -- the turn's messages after the user
-		/// turn as STRUCTURED rows (full content, oldest dropped to fit the budget), not
-		/// flattened text. `foldProgress(state, frame)` is what a watcher DOES with an
-		/// arriving frame: newest-wins replacement, a late or foreign frame ignored, and
-		/// `final` carrying the full rows once the real transcript has landed.
-		/// `foldProvisional(messages, turnId, frameMsgs)` folds those rows INTO a
-		/// transcript as PROVISIONAL messages the ordinary renderer draws -- the immutable
-		/// tile that grows like a live turn and is replaced by mid on the parcel merge.
-		progressTail:    progressTail,
-		foldProgress:    foldProgress,
-		foldProvisional: foldProvisional,
 		/// Can a watched turn still hear words said into it (UNBLOCK-27 R7c)?
 		frameHears:      frameHears,
 		/// The footer control a dispatched turn offers for a §5 state -- 'runhere',

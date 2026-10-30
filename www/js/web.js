@@ -376,7 +376,6 @@
 		var asker = (url && window.DaimondViewer && DaimondViewer.askerOf)
 			? DaimondViewer.askerOf(owner, turn) : null;
 		if (asker) {
-			asker.send({ web: url });
 			return {
 				url: url, shown: false, asker: String(asker.label || ''),
 				note: 'The page opens in the Web panel on the device the user asked from'

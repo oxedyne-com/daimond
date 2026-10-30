@@ -11,7 +11,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { gatewayNow } from './gwbin.mjs';
+import { devNetTag, gatewayNow } from './gwbin.mjs';
 import { GW_URL } from './ports.mjs';
 
 /// The account id the page's own identity binds to.
@@ -74,7 +74,7 @@ export async function grantPro(accountId, gatewayDir, gwUrl = GW_URL) {
 			customer:           `cus_${accountId}`,
 			status:             'active',
 			current_period_end: cpe,
-			metadata: { account_id: accountId, product: 'pro' },
+			metadata: { account_id: accountId, product: 'pro', ...devNetTag() },
 		} },
 	});
 	// The gateway checks the signature's timestamp against its own clock, 300 s either way.
@@ -119,7 +119,7 @@ export async function grantPack(accountId, pack, gatewayDir, gwUrl = GW_URL) {
 			object:         'checkout.session',
 			customer:       `cus_${accountId}`,
 			payment_status: 'paid',
-			metadata: { account_id: accountId, product: 'pack', pack: pack },
+			metadata: { account_id: accountId, product: 'pack', pack: pack, ...devNetTag() },
 		} },
 	});
 	// The gateway checks the signature's timestamp against its own clock, 300 s either way.

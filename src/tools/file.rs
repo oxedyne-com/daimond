@@ -2518,7 +2518,8 @@ pub(super) struct Linking {
 /// The scripts in `dev/` that create a symbolic link, with the line each does it on at the time
 /// of writing: `gate.sh:135` and `:147`, `attribute.sh:72`, `devgw.sh:26`, `shot_betatier.mjs:80`,
 /// `verify_deploy_provmatch.sh:21`, `install_runner_system.test.sh:128`, `runner_n1_check.sh:110`,
-/// `install_dev_userns_profile.test.sh:36`, `probe_agentsacross.mjs:50`.
+/// `install_dev_userns_profile.test.sh:36`, `probe_agentsacross.mjs:50`,
+/// `testnet_standup.sh:208`.
 pub(super) const LINKING_SCRIPTS: &[Linking] = &[
     Linking {
         path: "dev/gate.sh",
@@ -2539,6 +2540,13 @@ pub(super) const LINKING_SCRIPTS: &[Linking] = &[
         instead: "Ask the user to start the dev gateway; the links it needs are exactly what the \
             fence withholds, and a copy would not do -- a webhook signature is checked against \
             those keys.",
+    },
+    Linking {
+        path: "dev/testnet_standup.sh",
+        does: "the test gateway's keys directory to its key root on the host it stands the testnet up on",
+        instead: "It stands up the testnet beside production over ssh, which is the owner's \
+            operation and not a check you run inside a turn. Ask the user to run it, and say \
+            which step you wanted.",
     },
     Linking {
         path: "dev/reflux.mjs",

@@ -130,6 +130,7 @@ const onDisk = () => (IDB.dbs['daimond-journal'] ? IDB.dbs['daimond-journal'].ro
 		diag() {}, _localRecovering: {}, _localEnding: {}, _handoffStart: {}, _dispatchedIx: {}, _finalMids: {}, _finalRun: {},
 		_heldWake: {}, claimTurnHere: async () => ({ release() {} }), peerSyncShim: () => ({}), leaseClockNow: () => Date.now(),
 		scheduleDispatchFallback() {}, UNDECIDED_RECOLLECT_MS: 1, redrawRunner() {},
+		logEnd: async () => true, notRunEnd: (why) => ({ status: 'not_run', not_run: { why: why } }),
 		answerUnhanded: (c, tid) => c.messages.push({ role: 'assistant', mid: 'nr-1', iturn: tid, content: 'Not run.', why: 'not-run' }),
 		dispatchedChat: () => chat, handoffTargetLabel: () => 'argonaut', deviceLabelFor: () => '', selfDeviceId: () => 'me',
 		msgTombstone() {}, ownsChat: () => false, renderHistory() {}, touchChat() {}, persistChats() {}, ChatStore: { compact() {} },

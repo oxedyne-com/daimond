@@ -1524,6 +1524,8 @@
 
 	window.DaimondGateway = {
 		bootstrap:      bootstrap,
+		/// The account this device is signed in as, as the gateway names it; '' before.
+		account:        function () { return state.accountId || ''; },
 		/// Take a session again after one was refused. Single-flight, so a file
 		/// holding its own `fetch` -- sync, the Web panel, mail -- answers its own
 		/// 401 through the one renewal rather than starting another.

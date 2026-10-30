@@ -267,14 +267,13 @@ const shared = turn();
 	const frameRow = { mid: RID, role: 'tool_log', name: 'ask', args: JSON.stringify(TOOL), content: '', outcome: 'done',
 		ts: NOW - 5500, run: 'R1', whole: 1 };
 	const askRows = (c) => (c.messages || []).filter((m) => m.role === 'tool_log' && m.name === 'ask');
-	// Report first, then the frame folds in.
+	// Report first. The log's copy of the row that lands after it joins by mid (turnlog.test JOIN).
 	const a = tab(turn());
 	const tookA = await a.settle(repRow);
-	a.chat.messages = P.foldProvisional(a.chat.messages, 't1', [frameRow]) || a.chat.messages;
 	const rowsA = askRows(a.chat);
 	check('(g) report first: the row is stored under the frame\'s own id', tookA === true && rowsA.length >= 1 && rowsA[0].mid === RID,
 		rowsA.map((m) => m.mid));
-	check('(g) report first, then the frame: exactly one Ask row (one card)', rowsA.length === 1, rowsA.map((m) => m.mid + (m.provisional ? '~' : '')));
+	check('(g) report first: exactly one Ask row (one card)', rowsA.length === 1, rowsA.map((m) => m.mid));
 	// Frame first, then the report.
 	const b = tab(turn().concat([Object.assign({ iturn: 't1' }, frameRow)]));
 	const tookB = await b.settle(repRow);

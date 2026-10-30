@@ -2,7 +2,7 @@
    Test: a native runner's turn is adopted on the page as a whole turn (RUNNER-TURN RT-C,
    design notes/daimond_runner_20261016/runnerturn_design.md §1.4, §3.2 a, c, d).
 
-   The runner's final frame carries every row of the turn, the answer with its product record
+   The runner's log rows carry every row of the turn, the answer with its product record
    and its figures (`ran*`, with `ranCached` and `ranCtx`). The page adopts them through the
    existing path; RT-C adds what only the page can do:
 
@@ -13,10 +13,8 @@
      D     `recordCarriedTurn` builds the turn's Files row `<run>-files` from the version the
            wasm recorded, before `<run>-end`, and none when it recorded nothing (the second
            device, by run); the runner's session gets the tail note the Here session gets;
-     FACTS `ranCached`/`ranCtx` and an error row's `say` (i18n key and params) travel through
-           provRow, copyProv and provRowSig;
-     STEER a runner's steer row (role `user`, mid `<run>-t<i>`) is admitted, and never taken
-           for the turn's opening row (`foldProvisional`'s anchor);
+   P2.3a: the rows arrive by the chat log, so the turn's end (`onLogEnd`) is where A and C
+   happen; the frame's adoption and its provisional copies are gone.
      KEY   a row that carries `say: {k, v}` (a native runner's error, vision or failed answer,
            content empty) is said through `t(k, v)`, else its content.
      CUT   the runner's stand-in for rows a frame had to drop (`<run>-cut`, role `cut_log`,
@@ -68,10 +66,10 @@ const psrc = readPage(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
 // The real peer.js and provenance.js, each in a bare window.
 const pwin = {};
 new Function('window', 'document', 'console', 'setTimeout', 'clearTimeout', 'Date',
-	'with (window) {\n' + psrc.replace(/\}\)\(\);\s*$/, 'window.__rtc = { provRow: provRow, copyProv: copyProv, provRowSig: provRowSig, progressRow: progressRow };\n})();')
+	'with (window) {\n' + psrc
 	+ '\n}')(pwin, undefined, console, setTimeout, clearTimeout, Date);
 // The real module, and its row functions the page adopts through (not exported: reached in place).
-const P = Object.assign({}, pwin.DaimondPeer, pwin.__rtc);
+const P = Object.assign({}, pwin.DaimondPeer);
 const vwin = {};
 new Function('window', readPage(join(HERE, 'provenance.js'), 'utf8'))(vwin);
 const Prov = vwin.DaimondProvenance;
@@ -109,16 +107,15 @@ const lifted = new Function('env', [
 	extractFn(src, 'handoffDone'),
 	extractVar(src, 'ARRIVE_FRESH_MS'),
 	extractFn(src, 'noteArrive'),
-	extractFn(src, 'finalFrameChat'),
 	extractFn(src, 'dropOtherRunRows'),
 	extractFn(src, 'isNotRunRow'),
 	extractFn(src, 'isLostRow'),
 	...RTC.map((n) => extractVar(src, n)),
 	...RTC_FNS.filter((n) => n !== 'carriedFilesRow' && n !== 'logRowText').map((n) => extractFn(src, n)),
-	extractFn(src, 'adoptFinalFrame'),
+	extractFn(src, 'onLogEnd'),
 	extractFn(src, 'rateProdOf'),
 	extractFn(src, 'rateQualifies'),
-	'return { adoptFinalFrame: adoptFinalFrame, rateQualifies: rateQualifies };',
+	'return { onLogEnd: onLogEnd, rateQualifies: rateQualifies };',
 ].join('\n'));
 
 function world(presence) {
@@ -132,7 +129,10 @@ function world(presence) {
 		peerReports: {}, finalMids: {}, finalRun: {}, persisted: 0, touched: 0, chat: null,
 		chatFor: () => env.chat,
 	};
-	return Object.assign(env, lifted(env));
+	Object.assign(env, lifted(env));
+	// The turn's end row folded (turnlog.js `onEnd`): the view's rows are the turn's own.
+	env.end = (t) => { env.onLogEnd(env.chat, t, { rows: env.chat.messages.filter((m) => m.iturn === t && m.role !== 'user') }); return true; };
+	return env;
 }
 
 const PROD = { h: 'p1:answer:c1:R1-final', k: 'answer', m: 'm1', pv: 'p1', cm: 'm1', fam: '', fi: true, cls: 'unknown',
@@ -147,22 +147,20 @@ const BASE = { promptTokens: 1000, completionTokens: 200, cachedTokens: 300, cos
 const tot = (c) => [c.promptTokens, c.completionTokens, c.cachedTokens, +(+c.costUsd).toFixed(6), c.lastPrompt];
 const WANT = [1100, 220, 350, 0.75, 900];
 
-/// Device `w` holding the turn with the runner's rows provisional, its done report in.
+/// Device `w` holding the turn with the runner's rows drawn from the log, its done report in.
 function stage(w, run, on, native, totals) {
 	w.chat = Object.assign({ id: 'c1', updatedAt: 5, metaAt: 5,
 		messages: [user(), place(native),
-			{ mid: run + '-t0', role: 'think_log', content: 'adding', ts: 20, iturn: 'u1', run, provisional: 1 },
-			Object.assign(answer(run, on), { provisional: 1 })] }, totals || BASE);
-	w.finalMids.u1 = { [run + '-t0']: 1, [run + '-final']: 1 };
-	w.finalRun.u1 = run;
+			{ mid: run + '-t0', role: 'think_log', content: 'adding', ts: 20, iturn: 'u1', run },
+			answer(run, on)] }, totals || BASE);
 	w.peerReports.u1 = { t: 'report', turnId: 'u1', status: 'done' };
 	return w;
 }
 
-console.log('\nA: the adopted runner answer keeps its record, so a tray mounts\n');
+console.log('\nA: the runner answer keeps its record at the turn\'s end, so a tray mounts\n');
 {
 	const w = stage(world({ RUN: { kind: 'runner' } }), 'R1', 'RUN', true);
-	check('adopted', w.adoptFinalFrame('u1') === true);
+	w.end('u1');
 	const a = w.chat.messages.find((m) => m.mid === 'R1-final');
 	check('its prod is the runner\'s, byte for byte', a && J(a.prod) === J([PROD]), J(a && a.prod));
 	check('rateQualifies passes on it', w.rateQualifies(a));
@@ -171,40 +169,40 @@ console.log('\nA: the adopted runner answer keeps its record, so a tray mounts\n
 console.log('\nC: the totals grow once per run, native only\n');
 {
 	const w = stage(world({ RUN: { kind: 'runner' } }), 'R1', 'RUN', true);
-	w.adoptFinalFrame('u1');
+	w.end('u1');
 	check('native, by the dispatch mark: base + the row\'s figures, lastPrompt = ranCtx', J(tot(w.chat)) === J(WANT), J(tot(w.chat)));
 	check('the run is recorded folded', Array.isArray(w.chat.foldedRuns) && w.chat.foldedRuns.some((f) => f.r === 'R1'), J(w.chat.foldedRuns));
-	check('the chat was touched and saved', w.touched >= 1 && w.persisted >= 1);
-	// A re-collect: the same frame again, its rows provisional again.
+	// The save is readChatLog's, after the fold (logboot.test).
+	// The end read again (a re-read past the cursor, or a second device's copy).
 	const held = w.chat;
 	stage(w, 'R1', 'RUN', true, { promptTokens: held.promptTokens, completionTokens: held.completionTokens,
 		cachedTokens: held.cachedTokens, costUsd: held.costUsd, lastPrompt: held.lastPrompt, foldedRuns: held.foldedRuns });
-	w.adoptFinalFrame('u1');
-	check('a re-adopt of the same run leaves them at base + d', J(tot(w.chat)) === J(WANT), J(tot(w.chat)));
+	w.end('u1');
+	check('a second end of the same run leaves them at base + d', J(tot(w.chat)) === J(WANT), J(tot(w.chat)));
 }
 {
 	// The road read from the runner's presence row where the mark has none (an older mark).
 	const w = stage(world({ RUN: { kind: 'runner' } }), 'R1', 'RUN', false);
-	w.adoptFinalFrame('u1');
+	w.end('u1');
 	check('native, by the presence row of ranOn: folded', J(tot(w.chat)) === J(WANT), J(tot(w.chat)));
 }
 {
 	const w = stage(world({ PG: { kind: 'page' } }), 'R2', 'PG', false);
-	w.adoptFinalFrame('u1');
+	w.end('u1');
 	check('a page runner (no mark, its presence a page): not folded', J(tot(w.chat)) === J(tot(BASE)), J(tot(w.chat)));
 }
 {
 	// A page runner whose record (base + d, R2 marked folded) synced before the frame.
 	const w = stage(world({ PG: { kind: 'page' } }), 'R2', 'PG', true,
 		{ promptTokens: 1100, completionTokens: 220, cachedTokens: 350, costUsd: 0.75, lastPrompt: 900, foldedRuns: [{ r: 'R2', at: 30 }] });
-	w.adoptFinalFrame('u1');
+	w.end('u1');
 	check('a page runner\'s record first, then its frame: still base + d', J(tot(w.chat)) === J(WANT), J(tot(w.chat)));
 }
 {
 	const w = stage(world({ RUN: { kind: 'runner' } }), 'R1', 'RUN', true, Object.assign({}, BASE, { ranTokIn: 0 }));
 	const a = w.chat.messages.find((m) => m.mid === 'R1-final');
 	['ranTokIn', 'ranTokOut', 'ranCost', 'ranCached', 'ranCtx'].forEach((k) => delete a[k]);
-	w.adoptFinalFrame('u1');
+	w.end('u1');
 	check('[ctl] an answer with no figures (an old runner) folds nothing', J(tot(w.chat)) === J(tot(BASE)) && !w.chat.foldedRuns, J(tot(w.chat)));
 }
 
@@ -217,17 +215,17 @@ console.log('\nC: the totals grow once per run, native only\n');
 	else {
 		// Device A adopted and folded; its record synced to B before B adopted.
 		const a = stage(world({ RUN: { kind: 'runner' } }), 'R1', 'RUN', true);
-		a.adoptFinalFrame('u1');
+		a.end('u1');
 		a.chat.updatedAt = 9;
 		const b = stage(world({ RUN: { kind: 'runner' } }), 'R1', 'RUN', true);
 		const merged = M.mergeChatRecords(a.chat, b.chat, { mtombs: {} });
 		check('the merge carries A\'s foldedRuns', Array.isArray(merged.foldedRuns) && merged.foldedRuns.some((f) => f.r === 'R1'), J(merged.foldedRuns));
 		b.chat = Object.assign(merged, { messages: b.chat.messages });
-		b.adoptFinalFrame('u1');
+		b.end('u1');
 		check('B adopts after A\'s folded record synced: counted once', J(tot(b.chat)) === J(WANT), J(tot(b.chat)));
 		// The other order: B folded first, then A's record lands.
 		const b2 = stage(world({ RUN: { kind: 'runner' } }), 'R1', 'RUN', true);
-		b2.adoptFinalFrame('u1');
+		b2.end('u1');
 		b2.chat.updatedAt = 8;
 		const m2 = M.mergeChatRecords(a.chat, b2.chat, { mtombs: {} });
 		check('B folded first, then A\'s record: still once', J(tot(m2)) === J(WANT), J(tot(m2)));
@@ -376,41 +374,6 @@ console.log('\nD: recordCarriedTurn builds the Files row before the end row\n');
 	}
 }
 
-console.log('\nFACTS: the new figures and keys ride provRow, copyProv and provRowSig\n');
-{
-	const r = { mid: 'R1-final', role: 'assistant', content: 'six', ts: 1, run: 'R1', ranOn: 'RUN', ranTokIn: 9, ranCached: 4, ranCtx: 77, whole: 1 };
-	const m = P.provRow(r, 'u1');
-	check('provRow keeps ranCached and ranCtx', m.ranCached === 4 && m.ranCtx === 77, J(m));
-	const was = P.provRow(Object.assign({}, r, { ranCached: 0, ranCtx: 0 }), 'u1');
-	check('provRowSig tells a frame whose only change is ranCtx', P.provRowSig(was) !== P.provRowSig(m));
-	check('provRowSig tells a prod arriving', P.provRowSig(m) !== P.provRowSig(Object.assign({}, m, { prod: [PROD] })));
-	const say = { k: 'err.rate', v: { s: 3 } };
-	const e = P.provRow({ mid: 'R1-t1', role: 'error_log', content: '', say: say, ts: 2, whole: 1 }, 'u1');
-	check('provRow keeps an error row\'s say', J(e.say) === J(say), J(e));
-	check('progressRow keeps it', J((P.progressRow({ mid: 'R1-t1', role: 'error_log', content: '', say: say, ts: 2 }) || {}).say) === J(say));
-	const dst = P.provRow({ mid: 'R1-t1', role: 'error_log', content: '', ts: 2 }, 'u1');
-	check('provRowSig tells a say arriving', P.provRowSig(dst) !== P.provRowSig(e));
-	P.copyProv(dst, e);
-	check('copyProv takes it', J(dst.say) === J(say), J(dst));
-}
-
-console.log('\nSTEER: a runner steer row is admitted, never the turn\'s anchor\n');
-{
-	const steer = { mid: 'R1-t2', role: 'user', content: 'also four', ts: 30, run: 'R1', whole: 1 };
-	check('progressRow admits a runner steer row', !!P.progressRow(Object.assign({ iturn: 'u1' }, steer)));
-	check('[ctl] and still drops a plain user row', !P.progressRow({ mid: 'u9', role: 'user', content: 'q', ts: 1 }));
-	// Held: the opening row, t0 already real, the steer provisional (a view tail).
-	const held = [user(), { mid: 'R1-t0', role: 'think_log', content: 'a', ts: 20, iturn: 'u1', run: 'R1' },
-		Object.assign(P.provRow(steer, 'u1'))];
-	const frame = [{ mid: 'R1-t0', role: 'think_log', content: 'a', ts: 20, run: 'R1', whole: 1 },
-		{ mid: 'R1-t1', role: 'tool_log', content: 'ok', ts: 25, run: 'R1', whole: 1 }, steer,
-		{ mid: 'R1-final', role: 'assistant', content: 'six', ts: 40, run: 'R1', whole: 1 }];
-	const out = P.foldProvisional(held, 'u1', frame) || [];
-	check('rows land in the runner\'s order, the steer row in place', J(out.map((m) => m.mid)) === J(['u1', 'R1-t0', 'R1-t1', 'R1-t2', 'R1-final']),
-		J(out.map((m) => m.mid)));
-	check('the steer row is a user row of the turn', out.some((m) => m.mid === 'R1-t2' && m.role === 'user' && m.iturn === 'u1'));
-}
-
 console.log('\nKEY: an error or vision row with a key is said in the page\'s language\n');
 {
 	const f = extractFn(src, 'logRowText');
@@ -459,30 +422,16 @@ console.log('\nCUT: a frame\'s "N steps not shown" row is drawn, once, where it 
 	const frame = [Object.assign(cutRow(3), { whole: 1 }),
 		{ mid: 'R1-t5', role: 'tool_log', name: 'read', content: 'ok', ts: 30, run: 'R1', whole: 1 },
 		{ mid: 'R1-final', role: 'assistant', content: 'six', ts: 40, run: 'R1', whole: 1 }];
-	check('progressRow passes a cut_log row on, its say with it',
-		J((P.progressRow(cutRow(3)) || {}).say) === J({ k: 'turn.rows_cut', v: { n: 3 } }), J(P.progressRow(cutRow(3))));
-
-	// Before adoption: the frame folded in as provisional rows.
-	const once = P.foldProvisional([user()], 'u1', frame) || [];
-	check('folded: the cut row sits at its ts, after the ask and before the kept rows',
-		J(once.map((m) => m.mid)) === J(['u1', 'R1-cut', 'R1-t5', 'R1-final']), J(once.map((m) => m.mid)));
-	check('folded: drawn once as "3 steps not shown"', says(once).length === 1, J(drawn.map((d) => d[0])));
-	// The same frame read again: no second row.
-	const twice = P.foldProvisional(once, 'u1', frame) || once;
-	check('a re-read frame does not repeat it', twice.filter((m) => m.role === 'cut_log').length === 1, J(twice.map((m) => m.mid)));
-
-	// After adoption: the final frame merged as the real turn.
+	// The turn's rows as the log draws them, then its end.
 	const w = world({ RUN: { kind: 'runner' } });
 	w.chat = { id: 'c1', updatedAt: 5, metaAt: 5, messages: [user(), place(true)].concat(
-		frame.map((r) => Object.assign(P.provRow(r, 'u1'), r.mid === 'R1-final' ? answer('R1', 'RUN', { provisional: 1 }) : {}))) };
-	w.finalMids.u1 = { 'R1-cut': 1, 'R1-t5': 1, 'R1-final': 1 };
-	w.finalRun.u1 = 'R1';
+		frame.map((r) => Object.assign({ iturn: 'u1' }, r, r.mid === 'R1-final' ? answer('R1', 'RUN') : {}))) };
 	w.peerReports.u1 = { t: 'report', turnId: 'u1', status: 'done' };
-	check('adopted', w.adoptFinalFrame('u1') === true);
+	w.end('u1');
 	const kept = w.chat.messages.filter((m) => m.mid !== 'p1');
-	check('adopted: the cut row stays at its ts', J(kept.map((m) => m.mid)) === J(['u1', 'R1-cut', 'R1-t5', 'R1-final']),
+	check('ended: the cut row stays at its ts', J(kept.map((m) => m.mid)) === J(['u1', 'R1-cut', 'R1-t5', 'R1-final']),
 		J(w.chat.messages.map((m) => m.mid)));
-	check('adopted: drawn once as "3 steps not shown"', says(w.chat.messages).length === 1, J(drawn.map((d) => d[0])));
+	check('ended: drawn once as "3 steps not shown"', says(w.chat.messages).length === 1, J(drawn.map((d) => d[0])));
 
 	// Agent-accessible: the plain-text transcript says the same sentence.
 	const transcriptOf = new Function('logRowText', [

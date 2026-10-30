@@ -1,7 +1,7 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
 import { chatOutput, diamondBusy, pg } from './state.js';
 import { readJson, t } from './util.js';
-import { ChatStore, chatTaintOf, ensureDispatchedResident, loadChatMessages, msgTombstone, newMid,
+import { ChatStore, chatTaintOf, ensureDispatchedResident, loadChatMessages, msgJoin, msgTombstone, newMid,
 	onChatsChangedElsewhere, persistChats, stampMessages, takeReportTaint, touchChat, touchMsg } from './chatstore.js';
 import { DEVICE_ID_RE, loadDevices, nominatedDeviceId } from './parcel_collect.js';
 import { ARRIVE_FRESH_MS, noteArrive } from './parcel_apply.js';
@@ -14,14 +14,16 @@ import { Files } from './files_view.js';
 import { _enginePoison, endTurnEngine } from './layout.js';
 import { errandModelOf, storedEffort, storedPre, turnEffortOf } from './rating.js';
 import { _electionTrace, _handoffStart, answerUnhanded, autoLogHandoffLatency, continueTurn,
-	foldJournalTurn, notRunCause, presenceTick, renderSeatSwitch, seatReason, seatSwitchFor } from './sourcemenu.js';
+	notRunCause, presenceTick, renderSeatSwitch, seatReason, seatSwitchFor } from './sourcemenu.js';
 import { diag, toast } from './passkey_phrase.js';
+import { logCursor, panelIntent, readChat, turnEnded, turnView, viewMessages } from './turnlog.js';
 import { cutAccount, dispatchedAnswerPresent, followActivity, followsEnd, handoffTargetLabel,
 	isLostRow, renderHistory, sigsOf, tilePeek } from './turns.js';
 import { _openAsk, _peerStopping, _runnerCtx, _runnerParked, adoptRemoteGrant, busyForChat,
 	chatHasWork, deliverGrant, noticeDialog, noticePermit, ownTurns, queueBehind, raiseConsentFromPeer,
-	reRaiseOpenAsks, runnerCtxBegin, runnerCtxEnd, runnerDeaf, runnerFrameExtra, scopeChatTo } from './consent.js';
+	reRaiseOpenAsks, runnerCtxBegin, runnerCtxEnd, runnerDeaf, scopeChatTo } from './consent.js';
 import { abortTurn, syncSendMode, turnHold } from './chats.js';
+import { endInterrupted, logEnd, notRunEnd, readerEnded } from './turnwrite.js';
 import { runnerPairPoll } from './pending.js';
 import { diamondCanRun, dispatchToPeer, loadDiamonds } from './diamonds.js';
 import { claimedModelsOf, runSteerDetached, sentModelsOf, setCrystalBusy } from './crystal.js';
@@ -402,48 +404,26 @@ async function graftSeed(errand, opts) {
 	return chat;
 }
 
-/// Fold a run of `er`'s turn that a reload here cut short into its chat, as interrupted, and
-/// clear it from the journal; the runner's `interrupted` dep. Answers whether there was one.
-/// `ctx` is the reconstructed context, when the runner built one; `c` the chat the boot
-/// recovery holds.
-async function foldInterruptedRun(er, c, ctx) {
+/// END A RUN OF `er`'s TURN THAT A RELOAD HERE CUT SHORT, `interrupted` (the runner's
+/// `interrupted` dep; rulings §1: it ends, never re-runs). Its rows reached the chat log as it
+/// ran, so the end is all it lacks, and it goes through the one writer of that end, the
+/// dead-writer detector's (`endInterrupted`, design §2 [F3]). The journal's run then goes.
+/// Answers whether the journal held one; `always` ends the turn even when it does not (a
+/// re-take of this device's own lease, whose run left no journal here).
+async function endInterruptedRun(er, always) {
 	var tid = String((er && er.turnId) || '');
-	var cx = ctx || c;
 	if (!tid || !window.DaimondJournal) return false;
 	var rec;
 	try { rec = await DaimondJournal.recover(); } catch (e) { return false; }
 	var t = null;
 	(rec.turns || []).forEach(function (x) { if (x && String(x.turnId) === tid && x.meta && x.meta.ho) t = x; });
-	if (!t) return false;
-	var chat = (cx && cx.chat) || null;
-	if (!chat) for (var ci = 0; ci < pg.chats.length; ci++) if (pg.chats[ci] && pg.chats[ci].id === t.chatId) { chat = pg.chats[ci]; break; }
-	// NOT HERE IS NOT NOWHERE (R568-FU F3). A reload before the seed graft persisted the
-	// chat leaves this device's list without it, and the turn is settled Interrupted all the
-	// same, so answering false left its rounds in the journal, never shown and never
-	// cleared. The chat is made from the errand as the graft makes it: a replica at the
-	// seed's stamps, which the parcel merges into by id when it lands.
-	if (!chat) {
-		try { chat = await graftSeed({ chatId: String(er.chatId || t.chatId || ''), turnId: tid, seed: er.seed, scope: er.scope }, { bare: true }); }
-		catch (e) { chat = null; }
-	}
-	if (!chat) return false;
-	// THE TRANSCRIPT, NOT THE SUMMARY. `loadChats` restores summaries; a fold into a
-	// chat whose messages were never read would persist the fold over an empty
-	// transcript. Merged with whatever is live, and a no-op once resident.
-	if (!chat._loaded && chat.id) { try { await loadChatMessages(chat); } catch (e) { return false; } }
-	chat.messages = chat.messages || [];
-	foldJournalTurn(chat, t, { runner: true });
-	if (t.meta.run) dropOtherRunRows(chat, tid, String(t.meta.run), null);
-	stampMessages(chat.messages, chat.id);
-	touchChat(chat);
-	try { persistChats(); } catch (e) { /* the parcel push persists */ }
-	// The journal goes only once the store holds the fold (as `recoverInterrupted`).
-	try { await ChatStore.settled(); } catch (e) { /* the alarm is up */ }
-	try { DaimondJournal.clearTurn(tid); } catch (e) { /* gone already */ }
-	diag('handoff run interrupted', 'turn=' + tid.slice(0, 12) + ' run=' + String(t.meta.run || '').slice(0, 12)
-		+ ' tools=' + ((t.tools || []).length) + ' (not rerun)');
-	if (pg.current && pg.current.id === chat.id) renderHistory(chat.messages);
-	return true;
+	if (!t && !always) return false;
+	var cid = String((er && er.chatId) || (t && t.chatId) || '');
+	try { await endInterrupted(cid, tid); } catch (e) { /* the detector ends it at the deadline */ }
+	if (t) { try { DaimondJournal.clearTurn(tid); } catch (e) { /* gone already */ } }
+	diag('handoff run interrupted', 'turn=' + tid.slice(0, 12) + ' run=' + String((t && t.meta.run) || '').slice(0, 12)
+		+ ' (not rerun)');
+	return !!t;
 }
 
 /// Reconstruct the chat and its workspace for an errand. It SEEDS THE THREAD FROM
@@ -932,49 +912,42 @@ async function drainAgenticRounds(chat) {
 	}
 }
 
-/// Is an errand's turn already SETTLED on THIS device -- a done or terminal-park
-/// (aborted) report collected for it, or a non-empty, non-interrupted assistant answer
-/// merged under its iturn? The ONE predicate three callers share, so they cannot drift:
+/// Is an errand's turn already SETTLED on THIS device: its TurnView has folded its end
+/// (any status), or the lease view says the run finished (`handoffLeaseSettled`)? The ONE
+/// predicate three callers share, so they cannot drift:
 ///  - the runner's D1(b) `finished` guard, so a released lease is never re-taken;
 ///  - the dispatcher's `holdOwnDispatch` probe (DaimondPeer.onSettled), so a settled
 ///    OWN errand stops holding its relay row -- the moment `takeRow` re-decides it, the
 ///    cursor passes it and no peer waking inside the deadline re-runs and re-bills it
 ///    (S-HAND #1, the money defect);
 ///  - `dispatchedTurnFinished`, the local-recovery decision.
-/// Errand-shaped input `{ turnId, chatId }`; when `chatId` is given only that chat is
-/// searched (every caller has it), else every chat.
+/// Every end settles it, `interrupted` and `not_run` included: the log's first end wins, so
+/// a turn run again is a new turn. A report or an answer row read off the transcript
+/// decides nothing (P2.3a4): the log's end is the one decision. The lease view stays for
+/// a device that has not read the chat's log, as these are run-or-not decisions, never
+/// display. Errand-shaped input `{ turnId, chatId }`; when `chatId` is given only that
+/// chat is searched (every caller has it), else every chat.
 function dispatchedTurnSettled(er) {
 	try {
 		var tid = String(er && er.turnId);
-		var rep = peerReports[tid];
-		// ANY TERMINAL REPORT SETTLES IT (2026-09-23): done, a terminal park
-		// (`aborted`), an `error`, a `refused` spend. Only a survivable `parked` and a
-		// hand-back leave the turn to be run again, and both of those are acted on where
-		// they are collected. Counting `done` and `aborted` alone left a turn whose
-		// runner reported a failure eligible for recovery for ever -- one such turn, five
-		// days old, was re-run on 2026-09-22 and deleted files. A terminal park is
-		// settled-for-rerun too, so a device that collects it does not claim the
-		// released lease and respend. The list is peer.js's (`settlingReport`), which
-		// `uiState` reads too: r543 kept a copy here, and a `busy` hand-back it did not
-		// know settled the turn, so it never ran (QA F-A1).
-		if (DaimondPeer.settlingReport(rep)) return true;
-		// THE LEASE SAYS SO where the report was collected by another tab or before a
-		// reload (r52d QA F2): `done`, or released from done.
-		if (handoffLeaseSettled(tid)) return true;
-		var cid = String((er && er.chatId) || '');
-		for (var ci = 0; ci < pg.chats.length; ci++) {
-			var c = pg.chats[ci];
-			if (!c || (cid && c.id !== cid) || !c.messages) continue;
-			for (var mi = 0; mi < c.messages.length; mi++) {
-				var m = c.messages[mi];
-				// A PROVISIONAL row is the streamed view of a turn still running
-				// elsewhere, drawn and never pushed: it is not an answer.
-				if (m.role === 'assistant' && String(m.iturn) === tid && !m.provisional
-					&& m.content && m.content.trim() && !m.interrupted) return true;
-			}
-		}
+		var v = turnLogState(tid, String((er && er.chatId) || ''));
+		if (v && v.state === 'ended') return true;
+		return handoffLeaseSettled(tid);
 	} catch (e) { /* on any doubt, let the lease decide */ }
 	return false;
+}
+
+/// A turn's TurnView state (`turnView`) in `chatId`, else in the first chat whose log
+/// names it; null where none does.
+function turnLogState(turnId, chatId) {
+	var tid = String(turnId), cid = String(chatId || '');
+	for (var ci = 0; ci < pg.chats.length; ci++) {
+		var c = pg.chats[ci];
+		if (!c || (cid && c.id !== cid)) continue;
+		var v = turnView(c, tid);
+		if (v) return v;
+	}
+	return null;
 }
 
 /// Does a report answer an errand other than the one its turn's placeholder was last
@@ -995,13 +968,6 @@ function otherErrandReport(report) {
 function handoffLeaseSettled(turnId) {
 	if (!window.DaimondPeer || !DaimondPeer.settledLease || !window.DaimondLease || !DaimondLease.record) return false;
 	return DaimondPeer.settledLease(DaimondLease.record(String(turnId)));
-}
-
-/// Is a handed-off turn DONE, as far as this tab can tell: a `done` report collected
-/// here, or a lease that settled?
-function handoffDone(turnId) {
-	var rep = peerReports[String(turnId)];
-	return (!!rep && rep.t === 'report' && rep.status === 'done') || handoffLeaseSettled(turnId);
 }
 
 /// The chat an errand's turn is in, as this device holds it, or null.
@@ -1147,7 +1113,7 @@ function peerRunErrandDeps(opts) {
 		// A re-take of this device's own live lease (RUNNER-READY F2) asks BEFORE any
 		// reconstruct, with no `c`: the chat is then the one this device holds, found by
 		// the journal's own chat id, so the fold needs no engine.
-		interrupted: function (er, c) { return foldInterruptedRun(er, c, ctx); },
+		interrupted: function (er, c, always) { return endInterruptedRun(er, always); },
 		// The ordinary turn engine. No heartbeat is created here: the lease no longer
 		// renews (it is claimed straight to the errand's deadline), and runErrand owns
 		// the READ-ONLY liveness ticker that detects a take-back and caps a hung turn.
@@ -1315,100 +1281,6 @@ function peerRunErrandDeps(opts) {
 				await DaimondSync.push();
 			} catch (e) { /* the report still nudges */ }
 			return 0;
-		},
-		// STREAM THE RUNNING TURN. Called on a timer through the run so a peer
-		// watching the hand-off sees the thinking and tool calls appear as they are
-		// produced, rather than a blank placeholder until the turn finishes.
-		//
-		// ONE SMALL FRAME, not the parcel. The tail of this turn's rendered
-		// transcript (DaimondPeer.progressTail: the daimon's text, tool calls as
-		// labels, thinking as a count) goes to the progress door, which is a record
-		// of its own per turn. A frame cannot be refused by another device's push
-		// and costs tens of kilobytes; the account parcel travels ONCE, at the end,
-		// through pushResult. No captureSession here either: the model session is
-		// settled at the end, and a frame is only the view.
-		//
-		// A tail the same as the last one sends nothing and answers 0. A frame sent
-		// answers the time it left, which the runner keeps its 750 ms spacing from
-		// (peer.js PROGRESS_EVERY_MS). Where the door is not available (an older
-		// gateway) the whole-parcel push is still the fallback, so a hand-off
-		// streams -- expensively -- rather than not at all.
-		pushProgress: async function (turnId) {
-			try {
-				// The chat the TURN is in, which on a runner is whatever chat it
-				// reconstructed and need not be the one on screen.
-				var chat = chatHoldingTurn(turnId);
-				if (chat) stampTurnRun(chat, turnId);
-				var rows = (window.DaimondPeer && DaimondPeer.progressTail && chat)
-					? DaimondPeer.progressTail(chat.messages, turnId, PROGRESS_TAIL_MAX) : [];
-				// The frame carries STRUCTURED rows the watcher folds into its transcript
-				// and draws through the ordinary renderer, so the handed-off tile grows
-				// like a live local turn rather than a throwaway text view. Plus the live
-				// answer still arriving (below), which is in neither the stored transcript
-				// nor the on-screen buffer while a BACKGROUND runner produces it.
-				rows = withLiveAnswer(rows, turnId, chat);
-				var payload = frameJson(rows, runnerFrameExtra(turnId));
-				if (DaimondSync && DaimondSync.pushProgressFrame) {
-					// Door present: a frame is the ONLY progress push. Nothing new, a
-					// refused frame or an empty one all simply wait for the next frame --
-					// NEVER the whole-parcel `pushProgress` collect (the ~40 MB the S1 above
-					// bounds), which used to fire here on the runner's 1.8 s timer. A refused
-					// frame is the next frame's problem; the final `pushResult` reconciles.
-					if (!payload || payload === _progressSent[turnId]) return 0;
-					var at = Date.now();
-					var out = await DaimondSync.pushProgressFrame(turnId, payload);
-					if (out && out.ok) _progressSent[turnId] = payload;
-					return at;
-				}
-				// PRE-DOOR GATEWAY ONLY: no frame door, so the whole-parcel push is the only
-				// way a hand-off streams -- expensively -- rather than not at all.
-				if (DaimondSync && DaimondSync.pushProgress) {
-					var atP = Date.now();
-					await DaimondSync.pushProgress();
-					return atP;
-				}
-			} catch (e) { /* a dropped frame is only a slower stream */ }
-			return 0;
-		},
-		// THE LAST FRAME OF THE TURN. The whole finished tail, as structured rows on
-		// the progress door the originator is already reading, marked `final` -- so
-		// the finished answer is on its screen without waiting for the account parcel.
-		// That wait was 20.3 s of the owner's 58.9 s hand-off, every second of it
-		// after the model had stopped, and it included a 409 against a third device's
-		// push.
-		//
-		// NOT a frame like the streaming ones: those are the turn unfolding and are
-		// skipped when nothing changed; this one is the finished rows (full content,
-		// their real mids), is sent whether or not it differs from the last, and
-		// carries `final` so the watcher's provisional rows converge by mid with the
-		// parcel that follows -- equal `msgSig`, no rebuild.
-		//
-		// EVERY ROW WHOLE (hand-off QA F4). The runner acks its errand on the strength of
-		// this frame, so it carries the turn uncut: in the frame when it fits the door,
-		// and otherwise as content chunks it names (`finalRef`), beside the view that fits.
-		finalFrame: async function (turnId) {
-			try {
-				var chat = chatHoldingTurn(turnId);
-				if (!chat) return '';
-				if (!(window.DaimondPeer && DaimondPeer.turnRows)) return '';
-				if (!(DaimondSync && DaimondSync.pushProgressFrame)) return '';
-				// The frame is this run's rows and no other's: a run this device lost (a
-				// reload mid-turn, folded back as interrupted) or any earlier one goes now,
-				// so neither the frame nor the parcel after it carries a dead run's rows.
-				var keep = runOfTurn(chat, turnId);
-				if (keep) {
-					stampTurnRun(chat, turnId);
-					if (dropOtherRunRows(chat, turnId, keep, null)) { touchChat(chat); try { persistChats(); } catch (e) { /* the parcel push persists */ } }
-				}
-				var payload = await finalPayload(chat, turnId);
-				if (!payload) return '';
-				var out = await DaimondSync.pushProgressFrame(turnId, payload, true);
-				if (!out || !out.ok) return '';
-				_progressSent[turnId] = payload;
-				diag('handoff final frame', 'turn=' + String(turnId).slice(0, 12)
-					+ ' ' + (out.bytes | 0) + 'B in ' + (out.ms | 0) + 'ms (ahead of the parcel)');
-				return payload;
-			} catch (e) { return ''; }
 		},
 		post: async function (report) {
 			try { var body = await DaimondPeer.sealForSelf(report); await DaimondPost.post(body); }
@@ -1695,15 +1567,8 @@ function registerPeerRunner() {
 			// from ANY device bumps from the true total rather than a device-local
 			// zero. A parked (survivable) turn can re-run; a terminal one cannot.
 			if (report.status === 'parked') markPlaceholderParked(tid, report.parkCount | 0);
-			// A SETTLING REPORT ENDS THE WATCH NOW, and the watch's last read fetches the
-			// final frame the runner stored before it (`updateProgressWatch`), so the answer
-			// is drawn as the tile's spinner goes and not up to a tick later. Nothing here
-			// waits: the read is started and left to land.
+			// A settling report ends the watch now; the turn's rows and end come from its log.
 			try { updateExpedite(); } catch (e) { /* the next reindex re-decides it */ }
-			// The final frame folded before the report came: it is the answer now.
-			if (report.status === 'done' && adoptFinalFrame(tid)) return;
-			// A final frame on the door that this tab has not read is read now, watched or not.
-			readReportedFinal(tid, report);
 			renderDispatchedBadges();
 		} catch (e) { /* a report is only a nudge */ }
 	});
@@ -1739,8 +1604,6 @@ function registerPeerRunner() {
 	// its initial target guess differed, and stays correct after the lease releases.
 	try { if (DaimondLease && DaimondLease.onChange) DaimondLease.onChange(function () {
 		try { stampDispatchHolders(); } catch (e) { /* the re-render still advances the footer */ }
-		// A lease that settled is the turn done, here as on the tab that collected the report.
-		try { Object.keys(_finalMids).forEach(function (k) { adoptFinalFrame(k); }); } catch (e) { /* the parcel still comes */ }
 		// A runner's receipt for words its turn could no longer hear: sent as the next turn now.
 		try { heedUnheard(); } catch (e) { /* the turn's report still sends them */ }
 		renderDispatchedBadges();
@@ -1872,6 +1735,239 @@ function dispatchedPlaceholderIn(chat, turnId) {
 	return null;
 }
 
+// ── The chat log, drawn (P2.3a, design §2) ─────────────────
+//
+// Every turn writes its rows to its chat's log, and this is where a device draws them:
+// page/turnlog.js reads above the chat's cursor, opens each row and folds it through the
+// engine's TurnView, which alone says when a turn has ended. Read when the gateway taps
+// `c<chat>:<head>` past the cursor, when a hand-off is watched, and on the slow floor
+// (`updateExpedite`) where no tap comes.
+//
+// The cursor and an open turn's view are this device's, not the chat's: they never ride
+// the parcel (a record carries no reader's place), and a device with none reads the log
+// from its start, which folds what it already holds by mid and adds nothing twice.
+var LOG_PLACE_KEY = 'daimond.chatlog.place';
+var _logBusy = Object.create(null);		// chat id -> a read in flight
+var _logAgain = Object.create(null);	// chat id -> tapped again while it ran
+
+function logPlaces() {
+	try { return JSON.parse(localStorage.getItem(LOG_PLACE_KEY) || '{}') || {}; } catch (e) { return {}; }
+}
+function saveLogPlace(chat) {
+	var all = logPlaces();
+	all[chat.id] = { seq: logCursor(chat), views: chat.logViews || {}, ends: chat.logEnds || {} };
+	try { localStorage.setItem(LOG_PLACE_KEY, JSON.stringify(all)); } catch (e) { /* re-read next boot */ }
+}
+function loadLogPlace(chat) {
+	if (chat.logSeq != null) return;
+	var p = logPlaces()[chat.id];
+	chat.logSeq   = p ? (+p.seq || 0) : 0;
+	chat.logViews = (p && p.views) || {};
+	chat.logEnds  = (p && p.ends) || {};
+}
+
+/// Has this device read turn `turn` of chat `chatId` ended? The dead-writer detector's check
+/// (`readerEnded`), from the chat if resident, else from this device's log place.
+export function chatLogEnded(chatId, turn) {
+	var id = String(chatId || ''), chat = (pg.chats || []).find(function (c) { return c && c.id === id; });
+	if (chat && chat.logSeq != null) return turnEnded(chat, turn);
+	var p = logPlaces()[id];
+	return !!p && turnEnded({ logEnds: p.ends, logViews: p.views }, turn);
+}
+
+/// The turn's state tile: its empty hand-off placeholder.
+function isStateTile(m, turnId) {
+	return !!m && m.why === REASON_DISPATCHED_STR && String(m.iturn) === String(turnId)
+		&& !(m.content && m.content.trim());
+}
+
+/// Read and draw `chat`'s log above its cursor. Single-flight per chat: a tap during a
+/// read reads once more after it.
+export async function readChatLog(chat) {
+	if (!chat || !chat.id || !chat.messages || !window.DaimondSync || !DaimondSync.readLog
+		|| !window.DaimondSeal || !window.DaimondIdentity || !DaimondIdentity.unwrapBytesAad
+		|| (DaimondIdentity.isUnlocked && !DaimondIdentity.isUnlocked())) return null;
+	if (_logBusy[chat.id]) { _logAgain[chat.id] = true; return null; }
+	_logBusy[chat.id] = true;
+	try {
+		if (window.DaimondGateway && DaimondGateway.account) pg.member = DaimondGateway.account() || pg.member;
+		var out;
+		do {
+			delete _logAgain[chat.id];
+			loadLogPlace(chat);
+			var follow = (pg.current && pg.current.id === chat.id) ? followsEnd() : true;
+			var held = chat.messages;
+			out = await readChat(chat, {
+				seal:   window.DaimondSeal,
+				unwrap: function (b, aad) { return DaimondIdentity.unwrapBytesAad(b, aad); },
+				read:   function (id, since) { return DaimondSync.readLog(id, since); },
+				join:   msgJoin,
+				isTile: isStateTile,
+				onRows: onLogRows,
+				onEnd:  onLogEnd,
+			});
+			for (var vt in chat.logViews || {}) {
+				_progressView[vt] = { turn: vt, msgs: viewMessages(chat.logViews[vt]), final: false };
+			}
+			saveLogPlace(chat);
+			if (chat.messages !== held) {
+				touchChat(chat);
+				try { persistChats(); } catch (e) { /* drawn; the next save takes it */ }
+				if (pg.current && pg.current.id === chat.id && ownsChat(chat)) {
+					renderHistory(chat.messages);
+					followActivity(follow);
+				}
+			}
+		} while (_logAgain[chat.id]);
+		return out;
+	} finally { delete _logBusy[chat.id]; }
+}
+
+/// The logs a boot owes (P2.3a2), read on every unlock: the chat on screen, every chat with
+/// a turn the log holds open here (a view in this device's place), and every chat holding a
+/// hand-off placeholder, each once its transcript is resident. One at a time.
+export async function readLogsAtBoot() {
+	var places = logPlaces(), held = {};
+	try { ChatStore.stored().forEach(function (s) { if (s && s.id && Array.isArray(s.iturns) && s.iturns.length) held[s.id] = 1; }); }
+	catch (e) { /* placeholders unknown: the screen and the open turns still read */ }
+	var list = (pg.chats || []).filter(function (c) {
+		if (!c || !c.id) return false;
+		var p = places[c.id];
+		return (pg.current && pg.current.id === c.id) || held[c.id]
+			|| !!(p && p.views && Object.keys(p.views).length);
+	});
+	for (var i = 0; i < list.length; i++) {
+		try {
+			if (!list[i]._loaded) await loadChatMessages(list[i]);
+			await readChatLog(list[i]);
+		} catch (e) { /* the next wake or open reads it */ }
+	}
+}
+
+/// A turn's end row folded (P2.3a2): its view is final, a native runner's figures on its
+/// answer join the chat's totals once, and its hand-off placeholder goes.
+function onLogEnd(chat, turnId, view) {
+	_progressView[turnId] = { turn: turnId, msgs: [], final: true };
+	var ph = dispatchedPlaceholderIn(chat, turnId);
+	var mids = {};
+	((view && view.rows) || []).forEach(function (f) { if (f && f.role === 'assistant') mids[String(f.mid)] = 1; });
+	(chat.messages || []).forEach(function (m) { if (m && mids[String(m.mid)]) foldRunnerTotals(chat, m, ph); });
+	dropDispatchedPlaceholder(turnId);
+}
+
+// ── What a handed-off turn shows the asker (P2.3a5) ──────────────
+//
+// A runner turning a handed-off turn's show (`file_show`, `web_open`) to the asker's screen
+// (D-20261006-27) leaves the tool row in the log, and the asker opens it from that row
+// (`panelIntent`): nothing rides beside the rows. Each row once, in order, and only for a
+// turn this device handed off and still holds open (its placeholder, dispatched from here).
+var _uiDone  = Object.create(null);		// tool row mid -> opened (or being opened) here
+var _uiChain = Object.create(null);		// turn -> the shows still to finish, one at a time
+// How long after a failed show it is tried again, in turn.
+var UI_RETRY_MS = [1000, 2000, 4000, 8000, 15000, 30000];
+
+/// The rows a log read drew first or changed here for `turnId`: open the panels its tool rows
+/// showed, each once its result has landed. A show the runner refused (`outcome` `refused`)
+/// put nothing on the asker's screen, so it is given up, never retried here.
+///
+/// ONE AT A TIME. The Doc and Preview panels share the stage, and the one that comes to the
+/// front is the one whose show finished last, so each show waits for the one before it.
+function onLogRows(chat, turnId, fresh, changed) {
+	var ph = dispatchedPlaceholderIn(chat, turnId);
+	if (!ph || String(ph.dispatchedBy || '') !== selfDeviceId()) return;
+	var owner = String((chat && chat.diamondId) || '');
+	(fresh || []).concat(changed || []).forEach(function (m) {
+		var u = panelIntent(m), id = String((m && m.mid) || '');
+		if (!u || !id || _uiDone[id]) return;
+		var how = String(m.outcome || '');
+		if (!how) return;		// the call is logged before its result: wait for the edit
+		_uiDone[id] = 1;
+		if (how === 'refused') {
+			diag('handoff panel refused', 'turn=' + String(turnId).slice(0, 12) + ' ' + (u.web || u.show));
+			return;
+		}
+		var chain = (_uiChain[turnId] || Promise.resolve()).then(function () { return openIntent(turnId, u, owner); });
+		_uiChain[turnId] = chain;
+		chain.then(function () { if (_uiChain[turnId] === chain) delete _uiChain[turnId]; });
+	});
+}
+
+/// Show one intent, retrying on the ladder; settles once it is shown or given up. A file the
+/// runner has just written may not have reached this device yet (the workspace sync carries
+/// it, 1.6-3.3 s after the claim on world 99), so a failed show is tried again.
+function openIntent(key, u, owner) {
+	return new Promise(function (done) {
+		var tries = 0;
+		(function attempt() {
+			Promise.resolve().then(function () {
+				// A page goes through the Web panel's own door, whose owner rule keeps it for a
+				// conversation not on screen, as a file show is kept.
+				if (u.web) return (window.DaimondWeb && DaimondWeb.open) ? DaimondWeb.open(u.web, owner) : null;
+				return (window.DaimondDoc && DaimondDoc.show) ? DaimondDoc.show(u.show, u.page || undefined, owner) : null;
+			}).then(function () {
+				diag('handoff panel opened', 'turn=' + String(key).slice(0, 12) + ' ' + (u.web || u.show));
+				done();
+			}, function (e) {
+				if (tries >= UI_RETRY_MS.length) {
+					diag('handoff panel lost', 'turn=' + String(key).slice(0, 12) + ' ' + (u.web || u.show) + ': '
+						+ String((e && e.message) || e).slice(0, 120));
+					done();
+					return;
+				}
+				setTimeout(attempt, UI_RETRY_MS[tries++]);
+			});
+		})();
+	});
+}
+
+// ── The hand-off tile's workers (P2.3a5) ─────────────────────────
+//
+// The workers a handed-off turn runs on the other device, read from that device's agents
+// frame (`agents.<device>`, PeerAgents), which names each run's turn.
+
+/// Draw, on a hand-off tile, the workers its turn is running on the other device: each by
+/// name with the status pill this device's own agents list draws (`Workers.pill`). Replaces
+/// the row it drew before; nothing when there are none.
+export function drawHandoffWorkers(tile, key) {
+	var body = tile._body || tile;
+	var old = body.querySelector('.handoff-workers');
+	var list = [];
+	try { list = DaimondPeer.turnWorkers(PeerAgents.list(), String(key || '')); } catch (e) { list = []; }
+	if (!list.length) { if (old) old.remove(); return; }
+	var row = document.createElement('div');
+	row.className = 'handoff-workers';
+	list.forEach(function (w) {
+		var one = document.createElement('span');
+		one.className = 'hw';
+		var nm = document.createElement('span');
+		nm.className = 'hw-name';
+		nm.textContent = w.name;
+		one.appendChild(nm);
+		one.appendChild(Workers.pill(w.status));
+		row.appendChild(one);
+	});
+	if (old) body.replaceChild(row, old);
+	else body.appendChild(row);
+}
+
+/// A peer's agents frame came: redraw the workers on every hand-off tile on screen.
+export function redrawHandoffWorkers() {
+	var out = document.getElementById('chat-output');
+	var tiles = out ? out.querySelectorAll('[data-handoff-turn]') : [];
+	for (var i = 0; i < tiles.length; i++) drawHandoffWorkers(tiles[i], tiles[i].getAttribute('data-handoff-turn'));
+}
+
+/// `c<chat>:<head>`: read a loaded chat whose cursor is below the head.
+function onLogTap(chatId, head) {
+	for (var i = 0; i < pg.chats.length; i++) {
+		var c = pg.chats[i];
+		if (!c || c.id !== chatId) continue;
+		loadLogPlace(c);
+		if ((+head || 0) > logCursor(c)) readChatLog(c);
+		return;
+	}
+}
+
 // ── The streamed view of a handed-off turn ─────────────────
 //
 // WHAT THE OWNER ASKED FOR (2026-09-12): a turn typed HERE and run THERE must
@@ -1893,354 +1989,19 @@ function dispatchedPlaceholderIn(chat, turnId) {
 // 4s expedite pull below stays as the floor for a device whose channel is down, and
 // for the answer itself.
 
-// The CONTENT budget a runner's frame carries -- the sum of the streamed rows'
-// content, passed to `progressTail`. Kept well under the door's own 48 KiB frame
-// guard (sync.js PROGRESS_TAIL_MAX) and the gateway's 64 KiB ceiling, because the
-// rows ride as JSON: the envelope (keys, escaping) is overhead on top of the
-// content, and the door's guard slices the STRING tail, which would corrupt JSON.
-// The content budget does not bound that overhead, nor tool arguments at all, so
-// `frameJson` fits the encoded frame to the door by leaving out whole rows.
-// The FINAL frame carries every row whole when they fit the door, and otherwise names
-// them in content chunks beside a view of this size (`finalPayload`), so the sender
-// never holds a cut answer as its own.
-var PROGRESS_TAIL_MAX  = 28 * 1024;
-var PROGRESS_FINAL_MAX = 36 * 1024;
-// Runner side: the last frame actually sent per turn, so an unchanged frame is not
-// re-sent every two seconds; and the text of each turn currently in flight, which
-// is the only place the answer being produced exists until the turn settles (see
-// the `text` arm of runTurn's onEvent). `_liveMid` is the mid the finished answer
-// WILL carry, minted at turn start, so the streamed live-answer row shares its mid
-// with the message that syncs back and the parcel merge converges by mid.
-var _progressSent = {};
+// Runner side: the text of each turn currently in flight, which is the only place
+// the answer being produced exists until the turn settles (see the `text` arm of
+// runTurn's onEvent). `_liveMid` is the mid the finished answer WILL carry, minted at
+// turn start, so the message that syncs back converges by mid.
 export var _liveTurn = {};
 export var _liveMid = {};
 // And the answer's `prod`, stamped at turn start, so the live row carries the record the
 // final message will: a provisional copy persisted before the parcel lands must not differ.
 export var _liveProd = {};
-// Watcher side: the streamed view per turn (`DaimondPeer.foldProgress` state), and
-// which turns are registered with the sync engine's progress watch.
+// Watcher side: each watched turn's view as its log stands (`{ turn, msgs, final }`), which
+// `DaimondPeer.frameHears` reads; set by `readChatLog`.
 export var _progressView = {};
-export var _progressWatched = {};
 
-/// Append the LIVE ANSWER still arriving to a frame's structured rows. The finished
-/// assistant message is not in `chat.messages` until the turn settles, and a
-/// BACKGROUND runner draws nothing on screen, so the text being produced is in
-/// neither place -- `_liveTurn` is the accumulator that always has it. It rides as an
-/// assistant row under `_liveMid` (the mid the finished message WILL carry), so the
-/// watcher's provisional row and the message that syncs back share a mid and the
-/// parcel merge converges by mid. No-op once the answer is a real row in the frame.
-function withLiveAnswer(rows, turnId, chat) {
-	var id = String(turnId);
-	var text = _liveTurn[id];
-	if (!text) return rows;
-	var amid = String(_liveMid[id] || ('live-' + id));
-	for (var i = 0; i < rows.length; i++) {
-		if (rows[i] && String(rows[i].mid) === amid) return rows;	// already a real row
-	}
-	// A STABLE ts AFTER every message the turn holds (the user turn and the dispatched
-	// placeholder both), so the live answer sorts LAST and a mergeMessages ordering
-	// never swaps it past the placeholder -- the pre-merge order and the sorted order
-	// agree, so the parcel merge is a no-op redraw and not a rebuild. Stable across
-	// pushes (not Date.now()), so an unchanged answer produces a byte-identical frame
-	// and the resend skip holds. `ranOn` is left for the FINAL frame, which reads the
-	// settled message that carries it.
-	var ts = 0;
-	try {
-		var ms = chat && chat.messages;
-		for (var j = 0; ms && j < ms.length; j++) { if (ms[j] && (+ms[j].ts || 0) > ts) ts = +ms[j].ts || 0; }
-	} catch (e) { ts = 0; }
-	ts += 1;
-	var out = rows.slice();
-	// Clipped as every streamed row is (`progressRow`), and never `whole`: it is still
-	// arriving. Unclipped, a long answer made the frame too big to send at all.
-	var cap = (DaimondPeer && DaimondPeer.PROGRESS_MSG_CHARS) || 16384;
-	var live = { mid: amid, role: 'assistant', content: String(text).slice(0, cap), ts: ts };
-	if (_liveProd[id]) live.prod = [_liveProd[id]];
-	out.push(live);
-	return out;
-}
-
-/// A frame's rows as the door's payload -- `{v:1, msgs:[...]}` JSON. The door
-/// carries a string, and the compile hand-off streams a text tail on the same door;
-/// a `v` marks this one as the structured turn payload so a reader tells them apart.
-///
-/// `extra` adds fields beside `msgs`: the panel intents of a turn run for another
-/// device (`runnerUi`), and a final frame's chunk manifest.
-function frameJson(rows, extra) {
-	if (!rows || !rows.length) return '';
-	if (window.DaimondPeer && DaimondPeer.frameJson && window.DaimondSync && DaimondSync.progressWeight) {
-		return DaimondPeer.frameJson(rows, DaimondSync.progressBudget, DaimondSync.progressWeight, extra || null);
-	}
-	try { return JSON.stringify(Object.assign({ v: 1 }, extra || {}, { msgs: rows })); }
-	catch (e) { return ''; }
-}
-
-/// The final frame's payload: the turn's rows whole when they fit the door, and
-/// otherwise the view that fits beside `ref`, the manifest of the whole rows offloaded
-/// as content chunks (`DaimondPeer.refRows`). Where nothing can be offloaded (no chunk
-/// store, a refused upload), the view alone, which stays provisional on the sender
-/// until the runner's parcel lands. '' when the turn has no rows.
-async function finalPayload(chat, turnId) {
-	var whole = DaimondPeer.turnRows(chat.messages, turnId);
-	if (!whole.length) return '';
-	var ui = runnerFrameExtra(turnId);
-	var fit = frameJson(whole, ui);
-	var got = parseFrame(fit);
-	if (got && got.length === whole.length) return fit;		// every row, whole, in the frame
-	var view = DaimondPeer.progressTail(chat.messages, turnId, PROGRESS_FINAL_MAX)
-		.map(function (r) { var c = Object.assign({}, r); delete c.whole; return c; });
-	var ref = null;
-	try {
-		if (window.DaimondChunks && DaimondChunks.offloadBytes) {
-			var body = JSON.stringify({ v: 1, turn: String(turnId), msgs: whole });
-			ref = await DaimondChunks.offloadBytes('final:' + turnId, new TextEncoder().encode(body));
-		}
-	} catch (e) { ref = null; }
-	if (!ref || !Array.isArray(ref.chunks)) {
-		diag('handoff final frame cut', 'turn=' + String(turnId).slice(0, 12) + ' ' + whole.length
-			+ ' rows over the door, no chunk store: the view only');
-		return frameJson(view, ui);
-	}
-	var man = { v: ref.v, size: ref.size, key: ref.key, chunks: ref.chunks };
-	var out = (window.DaimondSync && DaimondSync.progressWeight)
-		? DaimondPeer.frameJson(view, DaimondSync.progressBudget, DaimondSync.progressWeight,
-			Object.assign({ ref: man, n: whole.length }, ui || {}))
-		: '';
-	diag('handoff final frame ref', 'turn=' + String(turnId).slice(0, 12) + ' ' + whole.length
-		+ ' rows whole in ' + ref.chunks.length + ' chunk(s), ' + (ref.size | 0) + 'B');
-	return out;
-}
-
-/// The rows a frame's payload carries, or null when it is not a structured turn
-/// frame (an older build's text tail, or an unparseable blob). Data off the door is
-/// UNTRUSTED: only an object with a `msgs` array is honoured, and each row is read
-/// field by field into the provisional fold -- never spread wholesale.
-function parseFrame(payload) {
-	var f = parseFrameRef(payload);
-	return f ? f.msgs : null;
-}
-
-/// `parseFrame`, with the chunk manifest a final frame larger than the door names
-/// (`finalPayload`): `{ msgs, ref, n }`, `ref` null when there is none.
-function parseFrameRef(payload) {
-	if (!payload || typeof payload !== 'string' || payload.charAt(0) !== '{') return null;
-	var obj;
-	try { obj = JSON.parse(payload); } catch (e) { return null; }
-	if (!obj || obj.v !== 1 || !Array.isArray(obj.msgs)) return null;
-	var ref = (obj.ref && typeof obj.ref === 'object' && Array.isArray(obj.ref.chunks)) ? obj.ref : null;
-	var ws = (window.DaimondPeer && DaimondPeer.frameWorkers) ? DaimondPeer.frameWorkers(obj.workers) : [];
-	return { msgs: obj.msgs, ref: ref, n: obj.n | 0, ui: frameUi(obj.ui), workers: ws };
-}
-
-/// A Web page address a panel intent may carry: http(s) only and at most 2048
-/// characters, or `''`. A runner names pages the asker's panel will navigate to, so a
-/// `javascript:` or `blob:` address (which means nothing on another device) is refused.
-export function uiWebUrl(v) {
-	var u = (typeof v === 'string') ? v.trim() : '';
-	return (u && u.length <= 2048 && /^https?:\/\//i.test(u)) ? u : '';
-}
-
-/// The panel intents a frame carries, read field by field: `[{ n, show, page }]` or
-/// `[{ n, web }]`, in order, each with a positive `n` and a path or an http(s)
-/// address. Untrusted, as all off the door is.
-function frameUi(raw) {
-	if (!Array.isArray(raw)) return [];
-	var out = [];
-	for (var i = 0; i < raw.length && out.length < 32; i++) {
-		var u = raw[i];
-		if (!u || typeof u !== 'object') continue;
-		var n = u.n | 0, path = (typeof u.show === 'string') ? u.show.slice(0, 1024) : '';
-		var web = uiWebUrl(u.web);
-		if (n <= 0 || (!path && !web)) continue;
-		out.push(web ? { n: n, web: web }
-			: { n: n, show: path, page: (u.page | 0) > 0 ? (u.page | 0) : 0 });
-	}
-	return out;
-}
-
-// The highest panel intent taken here, and the shows still to finish, by the watched
-// turn they came from.
-var _uiDone = Object.create(null);
-var _uiChain = Object.create(null);
-
-/// Open, on THIS screen, the panels a turn running on another device asked for
-/// (D-20261006-27): each intent once, in order. Through `DaimondDoc.show`, the very
-/// door a turn running here uses, so the asker's own rule about whose screen it is
-/// holds: a turn of a Diamond the user is not in keeps its file for when they open it.
-///
-/// ONE AT A TIME. The Doc and Preview panels share the stage, and the one that comes
-/// to the front is the one whose show finished last; started together, a note's editor
-/// finishing after the PDF it was asked before put the note in front of the file the
-/// turn showed last. So each show waits for the one before it, as on the runner.
-///
-/// A file the runner has just written may not have reached this device yet: the
-/// account's workspace sync carries it (measured 1.6-3.3 s after the claim on world
-/// 99), so a show that fails is tried again on a short ladder before it is given up.
-function applyFrameUi(key, ui) {
-	if (!ui || !ui.length || !(window.DaimondDoc && DaimondDoc.show)) return;
-	var done = _uiDone[key] | 0;
-	var todo = ui.filter(function (u) { return u.n > done; });
-	if (!todo.length) return;
-	_uiDone[key] = todo[todo.length - 1].n;
-	var ch = dispatchedChat(key);
-	var owner = String((ch && ch.diamondId) || '');
-	var chain = _uiChain[key] || Promise.resolve();
-	todo.forEach(function (u) {
-		chain = chain.then(function () { return openIntent(key, u, owner); });
-	});
-	_uiChain[key] = chain;
-	chain.then(function () { if (_uiChain[key] === chain) delete _uiChain[key]; });
-}
-
-// How long after a failed show it is tried again, in turn.
-var UI_RETRY_MS = [1000, 2000, 4000, 8000, 15000, 30000];
-
-/// Show one intent, retrying on the ladder; settles once it is shown or given up.
-function openIntent(key, u, owner) {
-	return new Promise(function (done) {
-		var tries = 0;
-		(function attempt() {
-			Promise.resolve().then(function () {
-				// A page goes through the Web panel's own door, whose owner rule keeps
-				// it for a conversation not on screen, as a file show is kept.
-				if (u.web) return (window.DaimondWeb && DaimondWeb.open) ? DaimondWeb.open(u.web, owner) : null;
-				return DaimondDoc.show(u.show, u.page || undefined, owner);
-			}).then(function () {
-				diag('handoff panel opened', 'turn=' + String(key).slice(0, 12) + ' ' + (u.web || u.show));
-				done();
-			}, function (e) {
-				if (tries >= UI_RETRY_MS.length) {
-					diag('handoff panel lost', 'turn=' + String(key).slice(0, 12) + ' ' + (u.web || u.show) + ': '
-						+ String((e && e.message) || e).slice(0, 120));
-					done();
-					return;
-				}
-				setTimeout(attempt, UI_RETRY_MS[tries++]);
-			});
-		})();
-	});
-}
-
-/// Fetch the whole rows a final frame names and make them the turn's final frame here,
-/// once per turn. A chunk that cannot be read leaves the view provisional, and the
-/// runner's parcel still brings the real copy.
-var _refFetch = {};
-function fetchFinalRef(turnId, ref, n) {
-	var tid = String(turnId || '');
-	if (!tid || !ref || _refFetch[tid]) return;
-	if (!(window.DaimondChunks && DaimondChunks.materialiseBytes)) return;
-	_refFetch[tid] = 1;
-	(async function () {
-		var rows = null;
-		try {
-			var bytes = await DaimondChunks.materialiseBytes(ref);
-			if (bytes) rows = DaimondPeer.refRows(JSON.parse(new TextDecoder().decode(bytes)), tid, n);
-		} catch (e) { rows = null; }
-		diag('handoff final frame whole', 'turn=' + tid.slice(0, 12) + ' '
-			+ (rows ? rows.length + ' rows from the chunks' : 'unreadable: the view stays provisional'));
-		if (!rows) { delete _refFetch[tid]; return; }
-		var v = _progressView[tid];
-		_progressView[tid] = { turn: tid, seq: (v && v.seq) | 0, msgs: rows, final: true };
-		applyProvisional(tid, rows, true);
-	})();
-}
-
-/// Fold a watched turn's streamed rows into its chat as PROVISIONAL messages and
-/// draw them, so the handed-off turn's tiles appear and GROW like a live local turn
-/// and are never discarded -- the flattened `.handoff-stream` text view this replaced
-/// was exactly the interim view the owner asked be removed. Immutable: a new row is
-/// APPENDED (the append fast path draws it, nothing rebuilt), and a growing assistant
-/// row is patched IN PLACE by mid -- no tile is torn down. The rows carry the mids the
-/// runner will push, so the parcel merge converges by mid with no rebuild.
-export function applyProvisional(turnId, rows, final) {
-	if (!window.DaimondPeer || !DaimondPeer.foldProvisional) return;
-	if (_abiRefused[String(turnId)]) return;	// its runner's frame or report was below the page's min (A2)
-	var chat = finalFrameChat(turnId, final);
-	if (!chat || !chat.messages) return;
-	// A final frame whose every row the runner marked whole (`progressRow`) may become
-	// the answer (`adoptFinalFrame`); a cut one stays provisional until the runner's
-	// own copy replaces it by mid.
-	if (final) {
-		var fm = {};
-		(rows || []).forEach(function (r) { if (r && r.mid) fm[String(r.mid)] = 1; });
-		if (DaimondPeer.frameWhole && DaimondPeer.frameWhole(rows)) {
-			_finalMids[String(turnId)] = fm;
-			_finalRun[String(turnId)] = DaimondPeer.frameRun ? DaimondPeer.frameRun(rows) : '';
-		}
-		else delete _finalMids[String(turnId)];
-	}
-	var prevLen = chat.messages.length;
-	var heldMids = {};		// rows of this turn already here, so only a NEW tile is an arrival (U0)
-	chat.messages.forEach(function (m) { if (m && m.mid && String(m.iturn || '') === String(turnId)) heldMids[String(m.mid)] = 1; });
-	var next = DaimondPeer.foldProvisional(chat.messages, turnId, rows);
-	if (!next) { if (final) adoptFinalFrame(turnId); return; }	// nothing to draw; the frame may still be the answer
-	// No rows added and none moved: only content grew in place. A frame that restores the
-	// runner's order (`foldProvisional`, UNBLOCK-43) is drawn whole, not grown.
-	var grewOnly = next.length === prevLen && next.every(function (m, i) { return m === chat.messages[i]; });
-	var follow = (pg.current && pg.current.id === chat.id) ? followsEnd() : true;	// before the tiles move
-	chat.messages = next;
-	if (!grewOnly) {
-		var tfloor = Date.now() - ARRIVE_FRESH_MS;
-		next.forEach(function (m) {
-			if (m && m.provisional && m.mid && String(m.iturn || '') === String(turnId) && !heldMids[String(m.mid)] && +m.ts > tfloor) {
-				noteArrive('tile', { via: 'frame', cid: chat.id, tid: String(turnId), mid: m.mid, made: +m.ts, role: m.role });
-			}
-		});
-	}
-	// THE FINAL FRAME IS SAVED (2026-09-25). The runner acks its errand on the
-	// strength of this copy (peer.js `runErrand`, step 4: "durable in two places"),
-	// so a copy held only in page memory was one reload from gone, and was on disk
-	// only when some other write happened to follow it. The rows stay provisional:
-	// the runner's parcel still brings the real copy, which replaces them by mid
-	// (`mergeMessages`). A streaming frame is not saved; the next one replaces it.
-	if (final) { touchChat(chat); try { persistChats(); } catch (e) { /* drawn, and the parcel still comes */ } }
-	// Off screen (another chat open, or not this device's chat): the array is updated
-	// and the ordinary open/redraw draws it.
-	if (!(pg.current && pg.current.id === chat.id && ownsChat(chat))) { touchChat(chat); if (final) adoptFinalFrame(turnId); return; }
-	if (grewOnly) {
-		// GROW IN PLACE, by mid, and keep the render bookkeeping in step so a later
-		// store-driven redraw sees nothing changed -- the tile is never rebuilt.
-		growProvisionalTiles(chat.messages, turnId);
-		try { pg._renderedSigs = sigsOf(chat.messages); } catch (e) { /* the rebuild path stays correct */ }
-	} else {
-		// New rows appended after the placeholder: the ordinary renderer's append
-		// fast path draws each once and leaves the tiles already shown alone.
-		renderHistory(chat.messages);
-	}
-	// The last tile's bottom stays in view while he follows; scrolled up, the end button says
-	// there is more (UNBLOCK-45). The asker and every other device draw a frame here.
-	followActivity(follow);
-	touchChat(chat);
-	if (final) adoptFinalFrame(turnId);
-}
-
-/// The mids of each turn's final frame, as folded here: what `adoptFinalFrame` makes real.
-var _finalMids = {};
-var _finalRun = {};		// the run a whole final frame was made by, by turn
-
-/// The chat a frame of `turnId` folds into: the one its dispatched placeholder is in,
-/// and for a FINAL frame, the one holding the turn once the placeholder has gone.
-///
-/// A settled lease drops the placeholder (r52d F2), and a final frame read on the watch's
-/// last read, or fetched whole from the chunks, arrives after that (hand-off QA F4, round
-/// 2): looked up by the placeholder alone it was never folded, and the sender kept the cut
-/// streamed copy as its answer. `foldProvisional` leaves a row whose real copy has merged
-/// alone, so a late frame never overdraws one.
-export function finalFrameChat(turnId, final) {
-	return dispatchedChat(turnId) || (final ? chatHoldingTurn(turnId) : null);
-}
-
-/// THE FINAL FRAME IS THE ANSWER ONCE THE TURN IS DONE (owner, queue item 7,
-/// 2026-09-25). With the `done` report (or a settled lease) and the runner's final
-/// frame both here, the frame's rows are the finished turn: they are saved real, not
-/// provisional, and the placeholder drops as it would for a merged answer. Before
-/// this the answer stayed provisional until the runner's parcel landed, so a parcel
-/// that never did (slowparcel CASE 2, a runner that died after acking) left "Sent to
-/// your other devices" beside the answer for good, and a reload brought it back.
-///
-/// The rows are marked `framed`: the runner's own copy, when it arrives, replaces
-/// each by mid (`mergeMessages`), and a framed copy never stands over a real one.
-/// Only rows still provisional are touched, so a real copy already merged is left.
 // ── A native runner's figures in the chat's totals, derived once per run (RT-C) ──
 //
 // A page runner bills a dispatched turn into its own totals and its record syncs home; a
@@ -2387,244 +2148,15 @@ function foldRunnerTotals(chat, row, ph) {
 	return true;
 }
 
-export function adoptFinalFrame(turnId) {
-	var tid = String(turnId || ''), mids = _finalMids[tid];
-	if (!mids || !handoffDone(tid)) return false;
-	if (_abiRefused[tid]) { delete _finalMids[tid]; delete _finalRun[tid]; return false; }	// never the turn (A2)
-	var chat = finalFrameChat(tid, true);
-	if (!chat || !chat.messages) return false;
-	var moved = 0, newest = 0, real = [];
-	var next = chat.messages.map(function (m) {
-		if (!m || !m.provisional || String(m.iturn || '') !== tid || !mids[String(m.mid)]) return m;
-		var c = {};
-		for (var k in m) { if (Object.prototype.hasOwnProperty.call(m, k) && k !== 'provisional') c[k] = m[k]; }
-		c.framed = 1;
-		real.push(c);
-		moved++;
-		newest = Math.max(newest, +m.ts || 0);
-		return c;
-	});
-	delete _finalMids[tid];
-	var keepRun = _finalRun[tid] || '';
-	delete _finalRun[tid];
-	// THE FRAME IS THE TURN (r545 F-C2-1). What it does not hold of this turn goes: a
-	// streamed row no run finished, and a row of a run the runner lost (`otherRunRows`).
-	// Left, they stood beside the answer for good -- a provisional tile no parcel ever
-	// replaced, and a lost run's tools drawn twice.
-	var was = chat.messages;
-	chat.messages = next;
-	var dropped = dropOtherRunRows(chat, tid, keepRun, mids);
-	next = chat.messages;
-	chat.messages = was;
-	if (!moved && !dropped) return false;
-	if (newest > Date.now() - ARRIVE_FRESH_MS) noteArrive('commit', { via: 'frame', cid: chat.id, tid: tid, rows: moved, made: newest });
-	chat.messages = next;
-	// The mark is read before it is dropped below: it says which road the turn took.
-	var ph = dispatchedPlaceholderIn(chat, tid);
-	real.forEach(function (m) { foldRunnerTotals(chat, m, ph); });
-	touchChat(chat);
-	try { persistChats(); } catch (e) { /* drawn; the runner's parcel still comes */ }
-	diag('handoff final frame adopted', 'turn=' + tid.slice(0, 12) + ' ' + moved + ' rows real');
-	// A run the runner lost comes home as its interrupted answer, which is the turn's
-	// ending: the placeholder's footer must not stand beside its badge.
-	var lost = next.some(function (m) {
-		return isLostRow(m) && String(m.iturn || '') === tid;
-	});
-	if (ph && (lost || dispatchedAnswerPresent(chat, ph))) dropDispatchedPlaceholder(tid);
-	else renderDispatchedBadges();
-	if (dropped && pg.current && pg.current.id === chat.id) renderHistory(chat.messages);
-	return true;
-}
-
-/// Re-render, IN PLACE, the provisional tiles of `turnId` whose content has moved --
-/// found by the `data-mid` the tile carries (set in `appendAssistantText` and
-/// `appendThinking`). Two rows grow from frame to frame: the answer, token by token,
-/// and the thinking, which `logThinking` lengthens in place. The other rows are
-/// complete when they first appear and are left untouched. A render that throws
-/// leaves the tile as it was rather than blanking it -- the immutability rule holds
-/// even on a bad frame.
-function growProvisionalTiles(messages, turnId) {
-	var id = String(turnId);
-	for (var i = 0; i < messages.length; i++) {
-		var m = messages[i];
-		if (!m || !m.provisional || String(m.iturn || '') !== id) continue;
-		if (m.role !== 'assistant' && m.role !== 'think_log') continue;
-		var tile = chatOutput && chatOutput.querySelector('[data-mid="' + cssEsc(String(m.mid)) + '"]');
-		if (!tile) continue;
-		if (m.role === 'think_log') {
-			// As `appendThinking` drew it: the text, unparsed, and the collapsed peek.
-			var body = String(m.content || '');
-			var pre = tile._pre || tile.querySelector('.chat-thinking-body');
-			if (pre && pre.textContent !== body) { pre.textContent = body; tilePeek(tile, body); }
-			continue;
-		}
-		var host = tile.querySelector('.chat-msg-content');
-		if (!host) continue;
-		try {
-			var html = window.DaimondRender ? DaimondRender.md(String(m.content || '')) : String(m.content || '');
-			if (host.innerHTML !== html) host.innerHTML = html;
-		} catch (e) { /* leave the tile standing rather than blank it */ }
+/// Read the log of every chat holding a watched hand-off (P2.3a): the turn's rows and its
+/// end are there, not on a frame.
+function readWatchedLogs() {
+	var seen = Object.create(null);
+	for (var w in _watchIx) {
+		if (!Object.prototype.hasOwnProperty.call(_watchIx, w)) continue;
+		var wc = dispatchedChat(w);
+		if (wc && !seen[wc.id]) { seen[wc.id] = true; try { readChatLog(wc).catch(function () {}); } catch (e) { /* no log reader */ } }
 	}
-}
-
-// The workers each watched turn's newest frame named, by turn.
-var _frameWorkers = Object.create(null);
-
-/// Keep the workers a watched turn's frame named, and redraw them on its hand-off
-/// tile when they moved. A frame naming none leaves the last list standing: a runner
-/// never sends an empty list, so none means an older build or a turn with no workers.
-function setFrameWorkers(key, ws) {
-	if (!ws || !ws.length) return;
-	var sig = JSON.stringify(ws), had = _frameWorkers[key];
-	if (had && had.sig === sig) return;
-	_frameWorkers[key] = { sig: sig, list: ws };
-	var out = document.getElementById('chat-output');
-	var tile = out && out.querySelector('[data-handoff-turn="' + cssEsc(key) + '"]');
-	if (tile) drawHandoffWorkers(tile, key);
-}
-
-/// Draw, on a hand-off tile, the workers its turn is running on the other device:
-/// each by name with the status pill this device's own agents list draws
-/// (`Workers.pill`). Replaces the row it drew before; nothing when there are none.
-export function drawHandoffWorkers(tile, key) {
-	var body = tile._body || tile;
-	var old = body.querySelector('.handoff-workers');
-	var got = _frameWorkers[String(key || '')];
-	if (!got || !got.list.length) { if (old) old.remove(); return; }
-	var row = document.createElement('div');
-	row.className = 'handoff-workers';
-	got.list.forEach(function (w) {
-		var one = document.createElement('span');
-		one.className = 'hw';
-		var nm = document.createElement('span');
-		nm.className = 'hw-name';
-		nm.textContent = w.name;
-		one.appendChild(nm);
-		one.appendChild(Workers.pill(w.status));
-		row.appendChild(one);
-	});
-	if (old) body.replaceChild(row, old);
-	else body.appendChild(row);
-}
-
-/// Fold one frame of a watched turn into its chat as provisional messages.
-///
-/// Called by the sync engine's progress watch, which reads the door when the wake
-/// channel taps it. There is no read loop per turn any more, and nothing here is
-/// ever parked at the gateway: the page holds its one wake channel whatever it
-/// watches (see `DaimondSync.watchProgress`).
-export function onProgressFrame(key, frame) {
-	if (!_progressWatched[key] || !frame) return;
-	// A runner's frame below the page's min is never taken (OWNKEY A2); a refused turn's final
-	// frame still ends it here, so the check comes before the refused turn's stop.
-	if (!frameAbiOk(key, frame)) { if (frame.final || !_abiRefused[key]) refuseAbiFrame(key, frame); return; }
-	if (_abiRefused[key]) return;
-	// The door carries a string; an older build (or the compile hand-off) sends a
-	// text tail this reader does not fold. Only a structured turn frame yields rows.
-	var pf = parseFrameRef(frame.tail), rows = pf ? pf.msgs : null;
-	// The panels first, and whatever the fold makes of the rows: a frame the fold
-	// refuses as stale still carries every intent the turn has queued.
-	if (pf && pf.ui.length) applyFrameUi(key, pf.ui);
-	var next = DaimondPeer.foldProgress(_progressView[key], {
-		turn: key, seq: frame.seq, msgs: rows, final: frame.final });
-	if (!next) return;
-	_progressView[key] = next;
-	if (pf) setFrameWorkers(key, pf.workers);
-	// The finished rows on a final frame, else the streaming rows: fold them into
-	// the transcript as provisional messages and let them draw.
-	var draw = next.final ? next.msgs : (rows || next.msgs);
-	if (draw && draw.length) applyProvisional(key, draw, next.final);
-	if (next.final) diag('handoff final frame seen', 'turn=' + key.slice(0, 12)
-		+ ' ' + (next.msgs ? next.msgs.length : 0) + ' rows, ahead of the parcel' + (pf && pf.ref ? ', the rest in chunks' : ''));
-	// A final frame larger than the door drew its view; the whole turn is in the chunks.
-	if (next.final && pf && pf.ref) fetchFinalRef(key, pf.ref, pf.n);
-}
-
-/// Follow the frames of every WATCHED hand-off and stop following the rest, in step
-/// with `updateExpedite` -- the same `_watchIx` says when a hand-off can still
-/// stream, so the streamed view and the prompt pull begin and end together.
-function updateProgressWatch() {
-	if (!window.DaimondSync || !DaimondSync.watchProgress
-		|| !window.DaimondPeer || !DaimondPeer.foldProgress) return;
-	for (var k in _watchIx) {
-		if (!Object.prototype.hasOwnProperty.call(_watchIx, k)) continue;
-		if (_progressWatched[k]) continue;
-		_progressWatched[k] = true;
-		DaimondSync.watchProgress(k, onProgressFrame.bind(null, k));
-	}
-	// A turn no longer watched: its answer has merged, or nothing can stream it any
-	// more. Stop following it and CLOSE its view. Closed rather than deleted:
-	// `foldProgress` refuses every later frame for a closed turn, so a frame still in
-	// flight cannot draw a stale tail over the answer that replaced it. What is left
-	// is one empty marker per finished hand-off, which draws nothing.
-	for (var j in _progressWatched) {
-		if (!Object.prototype.hasOwnProperty.call(_progressWatched, j)) continue;
-		if (_watchIx[j]) continue;
-		delete _progressWatched[j];
-		delete _progressSent[j];
-		delete _frameWorkers[j];
-		// ONE LAST READ, unless the final frame is already folded. What ends a watch --
-		// the runner's report, its lease released -- comes AFTER its final frame, so
-		// the answer is on the door by now, and on a gateway that does not tap it has
-		// usually not been read (see `DaimondSync.unwatchProgress`).
-		var had = _progressView[j];
-		var last = (had && had.final) ? null : onLastFrame.bind(null, j);
-		try { DaimondSync.unwatchProgress(j, last); } catch (e) { /* sync gone with the page */ }
-		// The marker holds NO rows (UNBLOCK-44b). Closed with the streamed rows as its
-		// `msgs`, it read as a final frame already folded, so the `done` report's own read
-		// (`readReportedFinal`) was skipped, and where the last read found the door empty
-		// (it keeps one frame per account) the answer row never came.
-		var closed = DaimondPeer.foldProgress(had, { turn: j, final: true, msgs: [] });
-		if (closed) _progressView[j] = closed;
-	}
-}
-
-/// The frame a watch's last read found. Only a FINAL frame is folded: it is the
-/// finished turn, and `foldProvisional` leaves any row whose real copy has merged
-/// alone, so it can never overdraw the answer. A streaming frame read this late is
-/// a tail the turn has moved past, and is dropped as the closed view would drop it.
-export function onLastFrame(key, frame) {
-	if (!frame || !frame.final) return;
-	if (!frameAbiOk(key, frame)) { refuseAbiFrame(key, frame); return; }	// OWNKEY A2, as `onProgressFrame`
-	if (_abiRefused[key]) return;
-	var pf = parseFrameRef(frame.tail), rows = pf ? pf.msgs : null;
-	if (pf && pf.ui.length) applyFrameUi(key, pf.ui);
-	if (!rows || !rows.length) return;
-	_progressView[key] = { turn: String(key), seq: frame.seq | 0, msgs: rows, final: true };
-	setFrameWorkers(key, pf.workers);
-	applyProvisional(key, rows, true);
-	diag('handoff final frame seen', 'turn=' + String(key).slice(0, 12)
-		+ ' ' + rows.length + ' rows, on the last read' + (pf.ref ? ', the rest in chunks' : ''));
-	if (pf.ref) fetchFinalRef(key, pf.ref, pf.n);
-}
-
-// The turns whose final frame a `done` report has had read (`readReportedFinal`).
-var _reportRead = {};
-
-/// Read the final frame a `done` report says is on the door (`finalTail`) when this tab has
-/// not folded it, WHETHER OR NOT THE TURN IS STILL WATCHED (NANCY, UNBLOCK-42).
-///
-/// The watch's last read is not enough. A settling report that came before the turn's end
-/// (on 27 Oct an `aborted` from a page that misread a retry's age) ended the watch 49 s
-/// early, its one last read found an empty door, and the real `done` then found nothing
-/// watching: a native runner's rows never come by parcel, so the answer was lost. The
-/// report is the runner's word that the frame is there, so it is read on that word. The
-/// frame is taken through `onLastFrame`, which writes the view itself (a closed view
-/// refuses `foldProgress`) and fetches a chunked one whole; `adoptFinalFrame` takes it once.
-function readReportedFinal(tid, report) {
-	var key = String(tid);
-	if (!report || report.status !== 'done' || !report.finalTail) return false;
-	var had = _progressView[key];
-	if (had && had.final && had.msgs && had.msgs.length) return false;	// folded already
-	if (_reportRead[key]) return false;
-	if (!window.DaimondSync || !DaimondSync.getProgressFrame) return false;
-	_reportRead[key] = 1;
-	diag('handoff final frame read', 'turn=' + key.slice(0, 12) + ' on its done report');
-	DaimondSync.getProgressFrame(key, 0).then(function (frame) {
-		if (frame && frame.final) onLastFrame(key, frame);
-		else delete _reportRead[key];	// not on the door: a re-collected report asks again
-	}, function () { delete _reportRead[key]; });
-	return true;
 }
 
 /// One string safe inside a CSS attribute selector. `CSS.escape` where the engine
@@ -2653,11 +2185,10 @@ export function updateExpedite() {
 	refreshHandoffWatch();
 	var on = false;
 	for (var k in _watchIx) { if (Object.prototype.hasOwnProperty.call(_watchIx, k)) { on = true; break; } }
-	// The streamed view follows the SAME index, and is updated on every reindex --
-	// not only when the expedite flag flips -- because a second hand-off arriving
-	// while the first is outstanding does not change the flag but does need its own
-	// read loop.
-	try { updateProgressWatch(); } catch (e) { /* sync or peer not up on this device */ }
+	// The watched hand-offs' logs follow the SAME index, read on every reindex -- not
+	// only when the expedite flag flips -- because a second hand-off arriving while the
+	// first is outstanding does not change the flag but does need its own read.
+	try { readWatchedLogs(); } catch (e) { /* sync not up on this device */ }
 	if (on === _expediting) return;
 	_expediting = on;
 	try { if (window.DaimondSync && DaimondSync.expedite) DaimondSync.expedite(on); }
@@ -2894,7 +2425,7 @@ export function peerUiStateFor(m) {
 	var ask    = _openAsk[String(m.iturn)] || null;
 	var tid = String(m.iturn);
 	return DaimondPeer.uiState(m, lease, report, selfDeviceId(), leaseClockNow(), ask,
-		_localEnding[tid] ? 'end' : !!_localRecovering[tid]);
+		_localEnding[tid] ? 'end' : !!_localRecovering[tid], turnLogState(tid, ''));
 }
 
 /// Stamp the GLOBAL park count onto a turn's synced dispatched placeholder, so a
@@ -3022,17 +2553,19 @@ export async function peerStopTurn(turnId) {
 }
 
 /// A turn this device sent has just finished running HERE, a local recovery: drop its
-/// placeholder now the answer is in (r545, Q19). Waiting for `runErrand` to return
-/// left "Sending to X… Another device is picking this up" beside the finished answer,
-/// unstamped, for as long as the report, lease and ack writes took, and a hand-back
-/// that raced them left it there. A peer's run is not this: its answer lands with
-/// the final frame or the parcel.
+/// placeholder once its end is in (r545, Q19). Waiting for `runErrand` to return left
+/// "Sending to X… Another device is picking this up" beside the finished answer, for as
+/// long as the report, lease and ack writes took. The end is the TurnView's: folded
+/// already, the placeholder goes now; else the chat's log is read at once, and its end,
+/// folded, drops it (`onLogEnd`). A peer's run is not this: its end comes with the log.
 function dropOwnPlaceholderIfAnswered(turnId) {
 	var tid  = String(turnId || '');
 	var chat = tid ? dispatchedChat(tid) : null;
 	var ph   = chat ? dispatchedPlaceholderIn(chat, tid) : null;
 	if (!ph || String(ph.dispatchedBy || '') !== String(selfDeviceId())) return;
-	if (dispatchedAnswerPresent(chat, ph)) dropDispatchedPlaceholder(tid);
+	var v = turnView(chat, tid);
+	if (v && v.state === 'ended') dropDispatchedPlaceholder(tid);
+	else readChatLog(chat);
 }
 
 /// Drop the empty "dispatched" placeholder for a turn once its answer has merged,
@@ -3115,7 +2648,6 @@ export function dropDispatchedPlaceholder(turnId) {
 	// The placeholder is gone: its index entry goes with it, and any armed
 	// dispatcher-side recovery backstop (Fix B) has nothing left to recover.
 	delete _dispatchedIx[String(turnId)];
-	delete _finalMids[String(turnId)]; delete _finalRun[String(turnId)];
 	try { clearDispatchFallback(turnId); } catch (e) { /* no timer armed */ }
 	if (_after && (_after._queue || []).length) setTimeout(function () { drainAfterHeld(_after); }, 0);
 	// The hand-off is settled: if it was the last one outstanding, the in-flight
@@ -3178,9 +2710,8 @@ function stampDispatchHolders() {
 	if (changed) { try { persistChats(); } catch (e) { /* the in-memory record still renders */ } }
 }
 
-/// Whether an errand's turn is already FINISHED on this device: a done report was
-/// collected, or a non-empty assistant answer is merged under the turn's iturn.
-/// The dispatching-side twin of the runner's D1(b) `finished` guard, read by the
+/// Whether an errand's turn is already FINISHED on this device: its TurnView ended, or
+/// its lease settled (`dispatchedTurnSettled`). The dispatching-side twin of the runner's D1(b) `finished` guard, read by the
 /// recovery decision so a turn a peer already answered is never re-run locally.
 function dispatchedTurnFinished(chat, turnId) {
 	return dispatchedTurnSettled({ turnId: turnId, chatId: (chat && chat.id) || '' });
@@ -3737,12 +3268,11 @@ var _fallbackInFlight = Object.create(null);	// turn id -> a runDispatchFallback
 var _handBackCause    = Object.create(null);	// turn id -> a hand-back's cause, should the placeholder miss it
 export var _abiRefused       = Object.create(null);	// turn id -> its report or a frame was below the page's min (OWNKEY H3, A2)
 
-/// End a turn whose runner's report or final frame is below the page's min (OWNKEY H3, A2):
-/// nothing of it is applied. On the device that sent it, the turn goes down the hand-back path
-/// with cause `abi` (`runDispatchFallback`), as a refused report always has; on any other device
-/// holding its placeholder, which adopts a final frame with no report (`adoptFinalFrame`), it
-/// ends here as the same visible "not run" row with Retry, whose mid is the turn's on every
-/// device. Either way what the progress door drew is taken down first (`dropRefusedTiles`).
+/// End a turn whose runner's report is below the page's min (OWNKEY H3, A2): nothing of it is
+/// applied. On the device that sent it, the turn goes down the hand-back path with cause `abi`
+/// (`runDispatchFallback`), as a refused report always has, and ends as the visible "not run" row
+/// with Retry, whose mid is the turn's on every device. What was drawn of it is taken down first
+/// (`dropRefusedTiles`).
 function refuseAbiTurn(tid, chatId, rep) {
 	_abiRefused[tid] = true;
 	peerReports[tid] = Object.assign({}, rep, { status: 'undeliverable', cause: 'abi', why: '' });
@@ -3751,7 +3281,7 @@ function refuseAbiTurn(tid, chatId, rep) {
 	_handBack[tid] = String(chatId || '');
 	var rc = null;
 	for (var ci = 0; ci < pg.chats.length; ci++) if (pg.chats[ci] && pg.chats[ci].id === _handBack[tid]) { rc = pg.chats[ci]; break; }
-	if (!rc) rc = finalFrameChat(tid, true);
+	if (!rc) rc = dispatchedChat(tid) || chatHoldingTurn(tid);
 	if (dropRefusedTiles(rc, tid)) {
 		touchChat(rc);
 		try { persistChats(); } catch (e) { /* the not-run row persists it */ }
@@ -3766,48 +3296,15 @@ function refuseAbiTurn(tid, chatId, rep) {
 	try { runDispatchFallback(_handBack[tid], tid); } catch (e) { /* the lease re-drive and the backstop remain */ }
 }
 
-/// May this page take a frame of `tid` (OWNKEY A2)? The rule a report meets (`abiOk`), for the
-/// runner the turn's lease names, else the device its placeholder was sent to.
-export function frameAbiOk(tid, frame) {
-	if (!window.DaimondPeer || !DaimondPeer.abiOk) return true;
-	var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(String(tid)) : null;
-	var chat = finalFrameChat(tid, true), ph = chat ? dispatchedPlaceholderIn(chat, tid) : null;
-	var by = (lease && lease.holder) || (ph && ph.toDevice) || '';
-	var snap = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
-	return DaimondPeer.abiOk(frame && frame.abi, by, snap);
-}
-
-/// A frame `frameAbiOk` refused: nothing of it is drawn. A streaming one takes down what the
-/// turn drew and waits for its ending; a final one ends the turn (`refuseAbiTurn`).
-function refuseAbiFrame(tid, frame) {
-	diag('handoff frame refused', 'turn=' + String(tid).slice(0, 12) + ' abi=' + String((frame && frame.abi) || 0)
-		+ ' below the page\'s min' + (frame && frame.final ? ', final' : ''));
-	var chat = finalFrameChat(tid, true);
-	if (frame && frame.final) {
-		refuseAbiTurn(tid, chat && chat.id, { t: 'report', turnId: tid, chatId: chat ? chat.id : '', abi: +frame.abi | 0 });
-		return;
-	}
-	_abiRefused[tid] = true;
-	if (dropRefusedTiles(chat, tid)) {
-		touchChat(chat);
-		try { persistChats(); } catch (e) { /* the turn's ending persists it */ }
-		if (pg.current && pg.current.id === chat.id && ownsChat(chat)) { try { renderHistory(chat.messages); } catch (e) { /* the next draw */ } }
-	}
-}
-
-/// Take down what the progress door drew for a turn whose report was refused (`abi`): its
-/// provisional rows and those a whole final frame adopted, so the "not run" row is the
-/// turn's only ending. The placeholder stays for `endTurnNotRun` to replace. Did any go?
+/// Take down what was drawn for a turn whose report was refused (`abi`): its provisional
+/// rows, so the "not run" row is the turn's only ending. The placeholder stays for `endTurnNotRun` to replace. Did any go?
 /// The caller draws and persists.
 function dropRefusedTiles(chat, tid) {
 	delete _progressView[tid];
-	var fm = _finalMids[tid] || {};
-	delete _finalMids[tid];
-	delete _finalRun[tid];
 	if (!chat || !chat.messages) return false;
 	var kept = chat.messages.filter(function (x) {
 		return !(x && String(x.iturn || '') === tid && x.role !== 'user' && x.why !== 'dispatched'
-			&& (x.provisional || (x.mid && fm[String(x.mid)])));
+			&& x.provisional);
 	});
 	if (kept.length === chat.messages.length) return false;
 	chat.messages = kept;
@@ -3832,7 +3329,12 @@ function endTurnNotRun(chat, m, why, nr) {
 	var tid = String((m && m.iturn) || '');
 	if (!chat || !tid) return;
 	if (_abiRefused[tid]) dropRefusedTiles(chat, tid);	// `answerUnhanded` draws and persists
-	answerUnhanded(chat, tid, String(m.itext || ''), { ok: false, why: why, nr: nr || placeholderNotRun(m) });
+	var cause = nr || placeholderNotRun(m);
+	answerUnhanded(chat, tid, String(m.itext || ''), { ok: false, why: why, nr: cause });
+	// The turn's one `end` (design §5): not_run with its reason, in its chat's log, for every
+	// device. The hand-off's not-run, the `abi` refusal and the backstop's fallback all end
+	// here; first end wins.
+	logEnd(chat.id, tid, notRunEnd(why, cause)).catch(function () { /* the outbox keeps it */ });
 	var ended = (chat.messages || []).some(function (x) {
 		return !!x && String(x.iturn || '') === tid && x.role !== 'user' && x.why !== 'dispatched';
 	});
@@ -4102,7 +3604,7 @@ export function withdrawLostHandoffs() {
 		var m    = chat ? dispatchedPlaceholderIn(chat, tid) : null;
 		if (!m) return;
 		var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(tid) : null;
-		if (!DaimondPeer.withdrawOnLoss(m, lease, snap[String(m.toDevice)], self, now)) return;
+		if (!DaimondPeer.withdrawOnLoss(m, lease, snap[String(m.toDevice)], self, now, turnView(chat, tid))) return;
 		diag('handoff withdraw', 'turn=' + tid + ' runner ' + String(m.toDevice).slice(0, 8) + ' stopped listening unclaimed');
 		runDispatchFallback(chat.id, tid, { notRun: 'withdrawn: runner ' + String(m.toDevice).slice(0, 8) + ' stopped listening, unclaimed', cause: 'gone' });
 	});
@@ -4220,6 +3722,21 @@ export function install() { // page-split: install
 	// Registered on unlock, by which point every peer module is loaded; idempotent,
 	// so re-registering on a later unlock simply replaces the handler.
 	try { window.addEventListener('daimond:unlock', registerPeerRunner); } catch (e) { /* no window */ }
+	// The chat log's taps (P2.3a): sync.js may load after this module, so on unlock too.
+	function hearLog() { try { if (window.DaimondSync && DaimondSync.onLog) DaimondSync.onLog(onLogTap); } catch (e) { /* no sync */ } }
+	hearLog();
+	try { window.addEventListener('daimond:unlock', hearLog); } catch (e) { /* no window */ }
+	// An end this device's detector wrote is tapped to the others only (turnwrite.js `landed`):
+	// read it here as a tap would. A head of 0 (a 409's) is unknown, so the chat is read.
+	try {
+		window.addEventListener('daimond:turnlog-landed', function (ev) {
+			var d = (ev && ev.detail) || {};
+			onLogTap(String(d.chat || ''), +d.head || Number.MAX_SAFE_INTEGER);
+		});
+	} catch (e) { /* no window */ }
+	try { window.addEventListener('daimond:unlock', function () { readLogsAtBoot().catch(function () {}); }); } catch (e) { /* no window */ }
+	// The one dead-writer detector asks the reader before it ends a turn (P2.3c1).
+	readerEnded(chatLogEnded);
 	// page-split: install 29
 
 	/// On return to a foregrounded tab: learn the latest, then RESCUE any orphan.

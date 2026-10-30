@@ -73,6 +73,7 @@ pub mod store_opfs;
 pub mod pending;
 pub mod transcript;
 pub mod pty;
+pub mod errand;
 pub mod seal;
 pub mod shot;
 pub mod social;

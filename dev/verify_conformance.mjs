@@ -459,7 +459,11 @@ function forgeBase() {
 		const host = /"forge_host"\s*:\s*"([^"]+)"/.exec(jdat);
 		const port = /"forge_port"\s*:\s*"([^"]+)"/.exec(jdat);
 		if (host && port) {
-			return { url: `http://${host[1]}:${port[1]}`, from: 'gateway/app.jdat' };
+			// The port is `{env:DAIMOND_FORGE_PORT:8430}` since the test net (D-20261006-24):
+			// resolve it as the gateway does, the variable first and then its default.
+			const env = (v) => v.replace(/\{env:([A-Z0-9_]+)(?::([^}]*))?\}/g,
+				(_, n, d) => process.env[n] || d || '');
+			return { url: `http://${env(host[1])}:${env(port[1])}`, from: 'gateway/app.jdat' };
 		}
 	} catch (e) { /* fall through to the failure below */ }
 	console.error('No ORE_FORGE, and gateway/app.jdat names no forge_host and forge_port. '

@@ -1900,9 +1900,8 @@ var refusedNoted = {};	// the refusals `applyChats` has put in the trail this pa
 //
 // A tile or edit that lands on THIS device from another one is told to
 // `DEBUG_SHARE.arrive`, with the origin's own `made` stamp, so `dev/lens.mjs latency`
-// can say how long it took. Three doors deliver: the live progress frame
-// (`applyProvisional`), the final frame's adoption (`adoptFinalFrame`) and the
-// parcel merge (`applyChats`). Only rows made inside `ARRIVE_FRESH_MS` count: a
+// can say how long it took. Two doors deliver: the chat log's rows (handoff.js)
+// and the parcel merge (`applyChats`). Only rows made inside `ARRIVE_FRESH_MS` count: a
 // device catching up on a day away is the L4 question and would swamp this one.
 export var ARRIVE_FRESH_MS = 600000;
 

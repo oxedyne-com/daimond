@@ -10,8 +10,10 @@
 // 1: the errand as of runnerweb-rb, KT-2 `limits`, OWNKEY `keys` and `abi`.
 // 2: + the report's `alerts` (KT-5d) and `words`, the seed's and the ask's `words` (U2); min stays
 //    1, as each is optional and an ABI-1 peer reads the rest as before.
-pub const ENGINE_ABI: u32 = 2;      // the contract this build speaks
-pub const ENGINE_ABI_MIN: u32 = 1;  // the oldest peer contract it still accepts
+// 3: P2, digest-signed envelopes (sigv 2, v1 refused) and the turn written to the chat log as
+//    sealed rows, the progress frame and its chunked answer gone; min 3, a single cut-over.
+pub const ENGINE_ABI: u32 = 3;      // the contract this build speaks
+pub const ENGINE_ABI_MIN: u32 = 3;  // the oldest peer contract it still accepts
 pub const WORDS_ABI: u32 = 2;       // the first page to file the words a runner stages home (U2)
 
 /// Does a peer speaking `abi`, accepting nothing older than `min`, work with this build?
