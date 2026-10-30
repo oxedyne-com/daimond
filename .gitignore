@@ -46,3 +46,6 @@ gateway/o3db.stale.*/
 
 # Research agents once downloaded network pricelists in here; keep them out.
 gateway/*.pdf
+
+# The Ore replica: its store and bookkeeping.
+/.ore/
