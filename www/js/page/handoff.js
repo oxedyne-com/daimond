@@ -16,7 +16,7 @@ import { errandModelOf, storedEffort, storedPre, turnEffortOf } from './rating.j
 import { _electionTrace, _handoffStart, answerUnhanded, autoLogHandoffLatency, continueTurn,
 	notRunCause, presenceTick, renderSeatSwitch, seatReason, seatSwitchFor } from './sourcemenu.js';
 import { diag, toast } from './passkey_phrase.js';
-import { logCursor, panelIntent, readChat, turnEnded, turnView, viewMessages } from './turnlog.js';
+import { logCursor, panelIntent, readChat, transcriptWhole, turnEnded, turnView, viewMessages } from './turnlog.js';
 import { cutAccount, dispatchedAnswerPresent, followActivity, followsEnd, handoffTargetLabel,
 	isLostRow, renderHistory, sigsOf, tilePeek } from './turns.js';
 import { _openAsk, _peerStopping, _runnerCtx, _runnerParked, adoptRemoteGrant, busyForChat,
@@ -1790,9 +1790,10 @@ export async function readChatLog(chat) {
 	if (_logBusy[chat.id]) { _logAgain[chat.id] = true; return null; }
 	_logBusy[chat.id] = true;
 	try {
-		// A tap or a watch reads a chat the rail holds only as a summary: its transcript
-		// first, so the log folds under it (turnlog.js `readChat` refuses one not loaded).
-		if (chat._loaded === false) await loadChatMessages(chat);
+		// The transcript first, so the log folds under it: a chat the rail holds only as a
+		// summary, one that never said, or one a cold store answered short (REL-1n). Still
+		// not whole, `readChat` holds and the cursor stays for the read after it settles.
+		if (!transcriptWhole(chat)) await loadChatMessages(chat);
 		if (window.DaimondGateway && DaimondGateway.account) pg.member = DaimondGateway.account() || pg.member;
 		var out;
 		do {

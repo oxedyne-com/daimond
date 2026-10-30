@@ -17,6 +17,10 @@
              `messages` the empty placeholder) is not folded: the log drawn
              over nothing became the whole chat on screen, and its first
              line ("@err 500") its rail title (REL-1pg, webkit by-role)
+     WHOLE   the log folds only onto a transcript a load proved whole:
+             not a chat with no loaded flag, and not one a cold store
+             answered empty (`failed`), which `loadChatMessages` marks
+             `_short` and reads again (REL-1n)
      ENDS    a turn's end draws from its end row: done and stopped add
              nothing; interrupted marks the turn's answer as the runner-lost
              tile (or adds an empty one); not_run adds the "not run" row
@@ -85,7 +89,7 @@ function doorOf(rows, low) {
 // ── FOLD ──
 const user = { mid: 'u1', role: 'user', content: 'hi', ts: 900, iturn: 'T1' };
 const tile = { mid: 'ph1', role: 'assistant', content: '', why: 'dispatched', iturn: 'T1', ts: 901 };
-const chat = { id: 'c1', messages: [user, tile] };
+const chat = { id: 'c1', _loaded: true, messages: [user, tile] };
 const ends = [];
 const log = [];
 const D = deps((s) => doorOf(log)(s), ends);
@@ -125,7 +129,7 @@ check('REREAD folds nothing twice', JSON.stringify(chat.messages) === before && 
 // ── GAP ──
 seq = 40;
 const late = [wire('T2', 1, 'msg', { mid: 'u2', role: 'user', text: 'again' })];
-const g = { id: 'c2', messages: [], logSeq: 3 };
+const g = { id: 'c2', _loaded: true, messages: [], logSeq: 3 };
 const r = await TL.readChat(g, deps(doorOf(late, 41), []));
 check('GAP resets and re-reads', r.ok && TL.logCursor(g) === 41 && g.messages.length === 1, JSON.stringify(r) + ' ' + g.logSeq);
 
@@ -139,7 +143,7 @@ check('JOIN one copy either order', JSON.stringify(j1) === JSON.stringify(j2), J
 
 // ── MEMBER ──
 seq = 60;
-const m = { id: 'c3', messages: [] };
+const m = { id: 'c3', _loaded: true, messages: [] };
 await TL.readChat(m, deps(doorOf([wire('T3', 1, 'msg', { mid: 'u3', role: 'user', text: 'x' }, 'bob')]), []));
 check('MEMBER stamped on the row', m.messages[0] && m.messages[0].member === 'bob');
 
@@ -147,7 +151,7 @@ check('MEMBER stamped on the row', m.messages[0] && m.messages[0].member === 'bo
 const isNotRun = (m) => !!m && !!m.interrupted && (!!m.notRun || m.why === 'notrun');
 async function ended(status, rows, extra, ch) {
 	seq = 100;
-	const c = ch || { id: 'e1', messages: [{ mid: 'u5', role: 'user', content: 'q', ts: 1, iturn: 'T5' }] };
+	const c = ch || { id: 'e1', _loaded: true, messages: [{ mid: 'u5', role: 'user', content: 'q', ts: 1, iturn: 'T5' }] };
 	const w = rows.map((r, i) => wire('T5', i + 1, 'msg', r));
 	w.push(wire('T5', rows.length + 1, 'end', Object.assign({ status, totals: null, alerts: [], undo: null, tried: ['dev9'] }, extra || {})));
 	await TL.readChat(c, deps(doorOf(w), []));
@@ -170,10 +174,10 @@ a = e.messages[e.messages.length - 1];
 check('ENDS not_run adds the not-run row', isNotRun(a) && a.mid === 'T5-nr' && a.why === 'runner' && a.itext === 'q'
 	&& a.notRun.why === 'sig:v1-refused' && a.notRun.cause === 'abi' && a.notRun.name === 'iphone' && !('said' in a.notRun),
 	JSON.stringify(a));
-e = await ended('not_run', [], null, { id: 'e2', diamondId: 'd1', messages: [] });
+e = await ended('not_run', [], null, { id: 'e2', diamondId: 'd1', _loaded: true, messages: [] });
 a = e.messages[e.messages.length - 1];
 check('ENDS not_run in a Diamond is tagged notrun', isNotRun(a) && a.why === 'notrun' && a.notRun.why, JSON.stringify(a));
-const had = { id: 'e3', messages: [{ mid: 'T5-nr', role: 'assistant', content: '', interrupted: true, why: 'runner', iturn: 'T5', notRun: { why: 'old' }, ts: 2 }] };
+const had = { id: 'e3', _loaded: true, messages: [{ mid: 'T5-nr', role: 'assistant', content: '', interrupted: true, why: 'runner', iturn: 'T5', notRun: { why: 'old' }, ts: 2 }] };
 e = await ended('not_run', [], null, had);
 check('ENDS not_run joins a row already held', e.messages.filter((m) => m.mid === 'T5-nr').length === 1, JSON.stringify(e.messages));
 
@@ -193,6 +197,37 @@ check('ENDS not_run joins a row already held', e.messages.filter((m) => m.mid ==
 	await TL.readChat(cold, deps(doorOf(rlog), []));
 	check('RESIDENT once loaded it folds under the transcript', cold.messages.map((m) => m.mid).join() === 'j1,u9',
 		cold.messages.map((m) => m.mid).join());
+}
+
+// ── WHOLE ──
+// REL-1n: the log adds to a transcript and never stands for one, so it folds only onto a
+// transcript a load proved whole. Two ways the joinery chat still met it with none there.
+{
+	const wlog = [wire('T8', 1, 'msg', { mid: 'u8', role: 'user', text: '@err 500' }, 'acct')];
+	const mids = (c) => c.messages.map((x) => x.mid).join();
+	// A chat that never said whether its transcript is loaded.
+	const bare = { id: 'n2', messages: [] };
+	const r = await TL.readChat(bare, deps(doorOf(wlog), []));
+	check('WHOLE a chat with no loaded flag folds nothing', bare.messages.length === 0, mids(bare));
+	check('WHOLE its cursor does not move', TL.logCursor(bare) === 0 && r && r.resident === false, String(bare.logSeq));
+	// The paired WebKit device: its cold store answers the open with an empty, `failed` read,
+	// and the real `loadChatMessages` makes the chat resident all the same.
+	const { liftSource } = await import('../../dev/syncprobe.mjs');
+	let store = { messages: [], session: null, failed: true };
+	const byTs = (a, b) => (a.ts || 0) - (b.ts || 0);
+	const load = new Function('ChatStore', 'mergeMessages',
+		liftSource(['loadChatMessages'], ['ChatStore', 'mergeMessages']).src + '\nreturn loadChatMessages;')(
+		{ loadMessages: async () => store },
+		(a, b) => { const by = {}; a.concat(b).forEach((x) => { by[x.mid] = x; }); return Object.values(by).sort(byTs); });
+	const paired = { id: 'n3', name: '', _loaded: false, messages: [], msgCount: 182 };
+	await load(paired);
+	await TL.readChat(paired, deps(doorOf(wlog), []));
+	check('WHOLE a cold read folds nothing', paired.messages.length === 0, mids(paired));
+	check('WHOLE a cold read keeps the cursor', TL.logCursor(paired) === 0, String(paired.logSeq));
+	store = { messages: [{ mid: 'j1', role: 'user', content: 'Compare the three joinery quotes', ts: 500 }], session: null };
+	await load(paired);
+	await TL.readChat(paired, deps(doorOf(wlog), []));
+	check('WHOLE once the store settles it folds under the transcript', mids(paired) === 'j1,u8', mids(paired));
 }
 
 if (failures) { console.log(failures + ' failed'); process.exit(1); }

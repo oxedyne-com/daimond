@@ -2109,15 +2109,22 @@ export function threadStarted(c) {
 /// chat already loaded. The store copy is UNIONED under any turns that landed on the
 /// live array between the call and its return, so a turn racing the open is never
 /// dropped -- the same append-only rule the store keeps.
+///
+/// A read the store could not settle (`failed`: a cold WebKit store answered empty for a
+/// chat its summary says holds messages) still makes the chat resident for its callers, but
+/// marks it `_short`: it is not the transcript, so no log folds onto it (turnlog.js
+/// `transcriptWhole`) and the next call reads it again (REL-1n).
 export async function loadChatMessages(c) {
-	if (!c || !c.id || c._loaded) return c;
+	if (!c || !c.id || (c._loaded && !c._short)) return c;
 	var got = await ChatStore.loadMessages(c.id);
-	if (c._loaded) return c;                       // another caller won the race
+	if (c._loaded && !c._short) return c;          // another caller won the race
 	var live = Array.isArray(c.messages) ? c.messages : [];
 	c.messages = live.length ? mergeMessages(got.messages, live, c.id) : got.messages;
 	if (got.session && !c.session) c.session = got.session;
 	c.msgCount = c.messages.length;
 	c._loaded = true;
+	if (got.failed) c._short = true;
+	else delete c._short;
 	return c;
 }
 

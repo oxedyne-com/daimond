@@ -251,20 +251,30 @@ export function turnEnded(chat, turn) {
 	return !!(chat && ((chat.logEnds && chat.logEnds[t]) || (v && v.state === 'ended')));
 }
 
+/// May the log fold onto `chat`? The log carries only the turns since its cut and the rows the
+/// gateway still holds, so it adds to a transcript and never stands for one. Only a load of the
+/// transcript that settled proves it whole (`loadChatMessages`: `_loaded` true, no `_short`):
+/// not a summary's placeholder (`_loaded` false), not a chat that never said (no `_loaded`),
+/// and not a read a cold store answered empty (`_short`, REL-1n).
+export function transcriptWhole(chat) {
+	return !!chat && chat._loaded === true && !chat._short && Array.isArray(chat.messages);
+}
+
 /// Read `chat`'s log above its cursor and fold it, page after page while the door says
 /// there is more. A `gap` (the cursor is below what the gateway still holds) resets the
 /// cursor to just under `low` and reads again, once: what lies below came with the
 /// parcel. Answers `{ok, ended, bad}`.
 ///
 /// `deps`: `read(chat, since)` (`DaimondSync.readLog`), `unwrap`, and `foldRows`'s.
-/// A chat whose transcript is not loaded is not read: `{ok: false, resident: false}`.
+/// A chat whose transcript is not proved whole (`transcriptWhole`) is not read:
+/// `{ok: false, resident: false}`.
 export async function readChat(chat, deps) {
 	var ended = [], bad = 0, gaps = 0;
-	// NOT RESIDENT (`_loaded` false): `messages` is the empty placeholder, not the transcript.
-	// Folded, the log's rows became the whole chat and its first line the rail's title
-	// (REL-1pg: "@err 500" on a paired WebKit device). The cursor stays, so the read after
-	// `loadChatMessages` folds the same rows under the real transcript.
-	if (chat && chat._loaded === false) return { ok: false, ended: ended, bad: bad, resident: false };
+	// Folded over a transcript that is not all there, the log's rows became the whole chat
+	// and its first line the rail's title (REL-1pg, REL-1n: "@err 500" on a paired WebKit
+	// device). The cursor stays, so the read after the transcript settles folds the same
+	// rows under it.
+	if (!transcriptWhole(chat)) return { ok: false, ended: ended, bad: bad, resident: false };
 	for (;;) {
 		var since = logCursor(chat);
 		var got = await deps.read(chat.id, since);

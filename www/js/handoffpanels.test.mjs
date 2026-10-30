@@ -68,7 +68,7 @@ const deps = {
 	onRows: (chat, t, ms, ch) => { fresh.push([t, ms.map((m) => m.mid).join(',')]); changed.push([t, (ch || []).map((m) => m.mid).join(',')]); },
 	read: async (_id, since) => ({ ok: true, rows: log.filter((r) => r.seq > since), more: false }),
 };
-const chat = { id: 'c1', messages: [{ mid: 'u1', role: 'user', content: 'hi', ts: 900, iturn: 'T1' },
+const chat = { id: 'c1', _loaded: true, messages: [{ mid: 'u1', role: 'user', content: 'hi', ts: 900, iturn: 'T1' },
 	{ mid: 'ph1', role: 'assistant', content: '', why: 'dispatched', iturn: 'T1', ts: 901 }] };
 log.push(wire('T1', 1, 'msg', { mid: 'u1', role: 'user', text: 'hi' }));
 log.push(wire('T1', 2, 'msg', { mid: 's1', role: 'tool_log', text: '{"shown":false}', meta: { name: 'file_show', args: '{"path":"a.md"}' } }));
@@ -108,8 +108,8 @@ if (lifted.every(Boolean)) {
 		+ 'var DaimondDoc = window.DaimondDoc, DaimondWeb = window.DaimondWeb;\n'
 		+ lifted.join('\n') + '\nreturn { onLogRows: onLogRows };')(S, W);
 	const settle = () => new Promise((r) => setTimeout(r, 30));
-	const mine = { id: 'cA', diamondId: 'D1', messages: [{ mid: 'pA', role: 'assistant', content: '', why: 'dispatched', iturn: 'TA', dispatchedBy: 'ASKER' }] };
-	const theirs = { id: 'cB', messages: [{ mid: 'pB', role: 'assistant', content: '', why: 'dispatched', iturn: 'TB', dispatchedBy: 'OTHER' }] };
+	const mine = { id: 'cA', diamondId: 'D1', _loaded: true, messages: [{ mid: 'pA', role: 'assistant', content: '', why: 'dispatched', iturn: 'TA', dispatchedBy: 'ASKER' }] };
+	const theirs = { id: 'cB', _loaded: true, messages: [{ mid: 'pB', role: 'assistant', content: '', why: 'dispatched', iturn: 'TB', dispatchedBy: 'OTHER' }] };
 	fail = 1;		// the file has not synced here yet: the show is tried again
 	const ok = (mid) => ({ mid, content: '{"shown":false,"asker":"A"}', outcome: 'done' });
 	api.onLogRows(mine, 'TA', [tool('file_show', { path: 'n.md', page: 2 }, ok('r1')),
