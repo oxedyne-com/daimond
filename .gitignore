@@ -49,3 +49,6 @@ gateway/*.pdf
 
 # The Ore replica: its store and bookkeeping.
 /.ore/
+
+# Agent settings and worktrees: never client source.
+.claude/
