@@ -257,8 +257,14 @@ export function turnEnded(chat, turn) {
 /// parcel. Answers `{ok, ended, bad}`.
 ///
 /// `deps`: `read(chat, since)` (`DaimondSync.readLog`), `unwrap`, and `foldRows`'s.
+/// A chat whose transcript is not loaded is not read: `{ok: false, resident: false}`.
 export async function readChat(chat, deps) {
 	var ended = [], bad = 0, gaps = 0;
+	// NOT RESIDENT (`_loaded` false): `messages` is the empty placeholder, not the transcript.
+	// Folded, the log's rows became the whole chat and its first line the rail's title
+	// (REL-1pg: "@err 500" on a paired WebKit device). The cursor stays, so the read after
+	// `loadChatMessages` folds the same rows under the real transcript.
+	if (chat && chat._loaded === false) return { ok: false, ended: ended, bad: bad, resident: false };
 	for (;;) {
 		var since = logCursor(chat);
 		var got = await deps.read(chat.id, since);

@@ -1781,8 +1781,8 @@ function isStateTile(m, turnId) {
 		&& !(m.content && m.content.trim());
 }
 
-/// Read and draw `chat`'s log above its cursor. Single-flight per chat: a tap during a
-/// read reads once more after it.
+/// Read and draw `chat`'s log above its cursor, its transcript loaded first. Single-flight
+/// per chat: a tap during a read reads once more after it.
 export async function readChatLog(chat) {
 	if (!chat || !chat.id || !chat.messages || !window.DaimondSync || !DaimondSync.readLog
 		|| !window.DaimondSeal || !window.DaimondIdentity || !DaimondIdentity.unwrapBytesAad
@@ -1790,6 +1790,9 @@ export async function readChatLog(chat) {
 	if (_logBusy[chat.id]) { _logAgain[chat.id] = true; return null; }
 	_logBusy[chat.id] = true;
 	try {
+		// A tap or a watch reads a chat the rail holds only as a summary: its transcript
+		// first, so the log folds under it (turnlog.js `readChat` refuses one not loaded).
+		if (chat._loaded === false) await loadChatMessages(chat);
 		if (window.DaimondGateway && DaimondGateway.account) pg.member = DaimondGateway.account() || pg.member;
 		var out;
 		do {

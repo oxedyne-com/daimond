@@ -13,6 +13,10 @@
      JOIN    a parcel copy and a log copy of one mid are one message,
              ordered by the log (`msgJoin`, the real message law)
      MEMBER  each drawn row carries the member the gateway stamped
+     RESIDENT a chat whose transcript is not loaded (`_loaded` false, its
+             `messages` the empty placeholder) is not folded: the log drawn
+             over nothing became the whole chat on screen, and its first
+             line ("@err 500") its rail title (REL-1pg, webkit by-role)
      ENDS    a turn's end draws from its end row: done and stopped add
              nothing; interrupted marks the turn's answer as the runner-lost
              tile (or adds an empty one); not_run adds the "not run" row
@@ -172,6 +176,24 @@ check('ENDS not_run in a Diamond is tagged notrun', isNotRun(a) && a.why === 'no
 const had = { id: 'e3', messages: [{ mid: 'T5-nr', role: 'assistant', content: '', interrupted: true, why: 'runner', iturn: 'T5', notRun: { why: 'old' }, ts: 2 }] };
 e = await ended('not_run', [], null, had);
 check('ENDS not_run joins a row already held', e.messages.filter((m) => m.mid === 'T5-nr').length === 1, JSON.stringify(e.messages));
+
+// ── RESIDENT ──
+// REL-1pg: the paired WebKit device's joinery chat, not resident, read on a tap. Folded, the
+// log's one turn was all its `messages` held, so the rail named it "@err 500" and the pass
+// that opens it by name never found it.
+{
+	const rlog = [wire('T9', 1, 'msg', { mid: 'u9', role: 'user', text: '@err 500' }, 'acct')];
+	const cold = { id: 'n1', _loaded: false, messages: [] };
+	const r = await TL.readChat(cold, deps(doorOf(rlog), []));
+	check('RESIDENT a chat not loaded folds nothing', cold.messages.length === 0, JSON.stringify(cold.messages));
+	check('RESIDENT its cursor does not move', TL.logCursor(cold) === 0, String(cold.logSeq));
+	check('RESIDENT the read says so', r && r.ok === false && r.resident === false, JSON.stringify(r));
+	cold._loaded = true;
+	cold.messages = [{ mid: 'j1', role: 'user', content: 'Compare the three joinery quotes', ts: 500 }];
+	await TL.readChat(cold, deps(doorOf(rlog), []));
+	check('RESIDENT once loaded it folds under the transcript', cold.messages.map((m) => m.mid).join() === 'j1,u9',
+		cold.messages.map((m) => m.mid).join());
+}
 
 if (failures) { console.log(failures + ' failed'); process.exit(1); }
 console.log('turnlog: all passed');
