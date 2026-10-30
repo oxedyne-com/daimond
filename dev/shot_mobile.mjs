@@ -40,11 +40,11 @@ const shot = async (p) => {
 
 await shot('shots/mobile-1-floor.png');
 
-// The drawer.
-await page.evaluate(() => document.getElementById('drawer-btn').click());
+// The home page: the rail, the Stack's floor (A2 retired the drawer and its scrim).
+await page.evaluate(() => DaimondShell.home());
 await sleep(400);
-await shot('shots/mobile-2-drawer.png');
-await page.evaluate(() => document.getElementById('scrim').click());
+await shot('shots/mobile-2-home.png');
+await page.evaluate(() => DaimondShell.turn());
 await sleep(400);
 
 // A message, risen as a sheet at its half detent — the thing beside the daimon.

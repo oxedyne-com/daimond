@@ -1119,7 +1119,7 @@ export function turnModelsOfRun(chat, sent) {
 	return { daimon: sent.daimon, workers: sent.workers, images: sent.images || sent.workers };
 }
 
-// ── A Diamond has two faces ──────────────────────────────────────
+// ── A Diamond has two faces (a phone, three) ──────────────────────────────────────
 //
 // Notes2, in the user's own words: *"The idea of just having a prompt box and
 // hiding the chat sequence doesn't work. We need to reconceptualise Daimond as
@@ -1154,14 +1154,17 @@ function diamondViews() { return readJson(DIAMOND_VIEW_KEY, {}) || {}; }
 /// the Diamond's name. The rule it has to satisfy is the one the whole
 /// Simple view is built on: hide information, never the affordance. A reader
 /// who wants to say something can see, without hunting, where to go.
+///
+/// A phone adds `'files'` (Stack A4): the Diamond's Workspace tree in the crystal's place.
 export function diamondView(id) {
-	return diamondViews()[id] === 'chat' ? 'chat' : 'crystal';
+	var v = diamondViews()[id];
+	return (v === 'chat' || v === 'files') ? v : 'crystal';
 }
 
 export function setDiamondView(id, view) {
 	if (!id) return;
 	var all = diamondViews();
-	all[id] = (view === 'chat') ? 'chat' : 'crystal';
+	all[id] = (view === 'chat' || view === 'files') ? view : 'crystal';
 	try { localStorage.setItem(DIAMOND_VIEW_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 	// The face this TAB is on, for its own reload. See TAB_VIEW_KEY.
 	if (pg.currentDiamond && pg.currentDiamond.id === id) tabViewSet({ face: all[id] });

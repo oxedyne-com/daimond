@@ -52,8 +52,6 @@
 	'copy.what_handle':        '你的公开名称',
 
 	// ── 顶栏 ───────────────────────────────────────────────────
-	'topbar.menu':        '菜单',
-	'topbar.open_menu':   '打开菜单',
 	'topbar.brand':       'Daimond，daimond.app 主页',
 	'topbar.made_by': '由 Oxedyne 制作',
 	'topbar.made_with_ai': '代码主要由 AI 编写',
@@ -4247,5 +4245,21 @@
 	'settings.group_help_what': '\u65b0\u529f\u80fd\u3001\u62a5\u544a\u3001\u8bca\u65ad',
 	'rel.whats_new': '\u65b0\u529f\u80fd',
 	'rel.about': '\u5173\u4e8e',
+	'composer.placeholder': '消息',
+	'composer.steer_diamond': '向 {name} 提问或指引',
+	'dictate.mic': '听写',
+	'dictate.listening': '正在听…',
+	'dictate.cancel': '取消',
+	'dictate.keep': '保留',
+	'dictate.check': '来自你的语音：检查后再发送',
+	'dictate.slide_cancel': '滑动以取消',
+	'dictate.release_stop': '松开以停止',
+	'camera.add_title': '添加到此对话',
+	'camera.camera': '相机',
+	'camera.photos': '照片',
+	'camera.files': '文件',
+	'stack.back': '返回',
+	'diamond.files': '文件',
+	'settings.title': '设置',
 	});
 })();

@@ -77,7 +77,8 @@ const snap = () => page.evaluate(() => {
 		st: history.state && history.state.dlayers || 0,
 		depth: Ly ? Ly.depth() : -1,
 		top: Ly ? Ly.top() : null,
-		drawer: document.body.classList.contains('drawer-open'),
+		// The phone Stack's page (Stack A0-A4): context only, it is not a layer.
+		page: window.DaimondStack && DaimondStack.started() ? DaimondStack.top() + '@' + DaimondStack.depth() : null,
 		sheet: document.body.classList.contains('sheet-open'),
 		pops: ['settings-menu', 'panel-gallery', 'help-menu', 'chead-more-menu', 'hand-mode-pop'].filter(hid),
 		palette: hid('palette'),
@@ -86,7 +87,7 @@ const snap = () => page.evaluate(() => {
 		chats: !!document.querySelector('.railhead-menu'),
 	};
 });
-const visCount = (x) => (x.drawer ? 1 : 0) + (x.sheet ? 1 : 0) + (x.pops.length ? 1 : 0) + (x.palette ? 1 : 0) + x.modals + (x.admin ? 1 : 0) + (x.chats ? 1 : 0);
+const visCount = (x) => (x.sheet ? 1 : 0) + (x.pops.length ? 1 : 0) + (x.palette ? 1 : 0) + x.modals + (x.admin ? 1 : 0) + (x.chats ? 1 : 0);
 async function agree(sec, what) {
 	await wait(400);
 	const x = await snap();
@@ -101,13 +102,15 @@ await wait(800);
 const s0 = await agree('0', 'at nought, nothing up');
 
 // ── B-1. a reload with layers up is one load, and the entry becomes the start ───────────────────
-await page.click('#drawer-btn');
+// The chat head's ⋯ menu is the layer under the dialog: a popover with an entry of its own, on
+// the home page a phone opens at (the drawer this used is gone with the Stack, D-20261029-01).
+await page.tap('#chead-more');
 await wait(200);
 // Never awaited, and the reload destroys its context: that rejection is the expected end of it.
 page.evaluate(() => DaimondCore.confirm('QA reload?', 'OK', { title: 'QA' })).catch(() => {});
 await wait(400);
 const before = await snap();
-check('R1 drawer and dialog up before the reload', before.st === 2 && before.depth === 2, JSON.stringify(before));
+check('R1 the ⋯ menu and a dialog up before the reload', before.st === 2 && before.depth === 2, JSON.stringify(before));
 loads = 0;
 await page.reload();
 await wait(4000);
@@ -118,12 +121,12 @@ loads = 0;
 await page.evaluate(() => history.forward()).catch(() => {});		// a Forward that loads a page destroys this context
 await wait(2500);
 check('R4 Forward after it loads nothing', loads === 0, 'loads=' + loads);
-await page.click('#drawer-btn');
-await agree('R5', 'a drawer opened after the reload has its entry');
+await page.tap('#chead-more');
+await agree('R5', 'a ⋯ menu opened after the reload has its entry');
 await back();
 await wait(600);
 const r6 = await snap();
-check('R6 one Back closes it', !r6.drawer && r6.depth === 0 && r6.st === 0, JSON.stringify(r6));
+check('R6 one Back closes it', !r6.pops.length && r6.depth === 0 && r6.st === 0, JSON.stringify(r6));
 
 // ── X. a MOUSE press on the sheet's x closes it (the x sits in the grab bar, whose pointerdown takes pointer capture) ──
 // Every other close here is a tap or a DOM `.click()`, and neither goes through a captured pointer: a mouse press did
@@ -157,20 +160,20 @@ async function sheetCase(tag, browse) {
 		await wait(2800);										// past the stack's stale-traversal window
 		const closed = await snap();
 		check(tag + 'b the sheet closed by its x leaves history and layers at nought', !closed.sheet && closed.st === 0 && closed.depth === 0 && closed.url.startsWith(APP), JSON.stringify(closed));
-		await page.click('#drawer-btn');
+		await page.tap('#chead-more');
 		await wait(400);
 		const dr = await snap();
-		check(tag + 'c a drawer opened after it has an entry', dr.drawer && dr.st === 1 && dr.depth === 1, JSON.stringify(dr));
+		check(tag + 'c a ⋯ menu opened after it has an entry', dr.pops.join() === 'chead-more-menu' && dr.st === 1 && dr.depth === 1, JSON.stringify(dr));
 		await back();
 		await wait(700);
 		const gone = await snap();
-		check(tag + 'd ONE Back closes the drawer', !gone.drawer && gone.st === 0 && gone.depth === 0 && gone.url.startsWith(APP), JSON.stringify(gone));
+		check(tag + 'd ONE Back closes the menu', !gone.pops.length && gone.st === 0 && gone.depth === 0 && gone.url.startsWith(APP), JSON.stringify(gone));
 	} catch (e) {
 		check(tag + 'x the case ran to its end', false, String((e && e.message) || e).split('\n')[0]);
 	}
 	// Whatever a failed case left up, the next one starts from the app at nought.
 	const x = await snap().catch(() => null);
-	if (!x || x.depth !== 0 || x.st !== 0 || x.sheet || x.drawer) { await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}); await wait(4000); }
+	if (!x || x.depth !== 0 || x.st !== 0 || x.sheet) { await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}); await wait(4000); }
 }
 
 // Our own guide, in the frame: two links followed.
@@ -282,7 +285,7 @@ async function kcase(tag, fn) {
 	catch (e) { check(tag + 'x the case ran to its end', false, String((e && e.message) || e).split('\n')[0]); }
 	// Whatever a failed case left up, the next one starts from the app at nought with nothing holding the keyboard.
 	const x = await snap().catch(() => null);
-	if (!x || x.depth !== 0 || x.st !== 0 || visCount(x) !== 0 || x.sheet || x.drawer) { await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}); await wait(4000); }
+	if (!x || x.depth !== 0 || x.st !== 0 || visCount(x) !== 0 || x.sheet) { await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}); await wait(4000); }
 	await page.evaluate(() => { const a = document.activeElement; if (a && a.blur) a.blur(); }).catch(() => {});
 }
 
@@ -290,15 +293,14 @@ async function kcase(tag, fn) {
 await kcase('K1', async () => {
 	await page.evaluate(() => { window.DaimondPanels.hide('web'); window.DaimondPanels.show('web'); });
 	await wait(700);
-	// A phone parks Settings in Help's popover, so it is reached as a person reaches it: Help, then the row.
+	// Appearance is a page of Settings on a phone (Stack A3), so the popover over the sheet is Help's own menu.
 	const h = await pressFrom('#help-btn');
-	await wait(300);
-	const r = await pressFrom('#settings-menu-btn');
+	const r = true;
 	await wait(500);
 	const b = await snap();
 	const a = await esc();
 	const f = await held();
-	check('K1 Escape closes the Settings menu over the sheet and leaves the sheet up', h && r && b.sheet && b.pops.join() === 'settings-menu' && b.top === 'pop' && b.depth === 2
+	check('K1 Escape closes Help\'s menu over the sheet and leaves the sheet up', h && r && b.sheet && b.pops.join() === 'help-menu' && b.top === 'pop' && b.depth === 2
 		&& dropped(b, a) && a.sheet && !a.pops.length && a.top === 'sheet' && heldOk(f), JSON.stringify({ h, r, b, a, f }));
 });
 
@@ -334,32 +336,30 @@ await kcase('K3', async () => {
 
 // K4. The palette: Escape closes it and gives the keyboard back to the control it was opened from.
 await kcase('K4', async () => {
-	await page.evaluate(() => document.getElementById('drawer-btn').focus());
+	await page.evaluate(() => document.getElementById('chead-more').focus());
 	await page.keyboard.press('Control+k');
 	await wait(500);
 	const b = await snap();
 	const a = await esc();
-	const f = await held('#drawer-btn');
+	const f = await held('#chead-more');
 	check('K4 Escape closes the palette and returns the keyboard to what opened it', b.palette && b.top === 'palette' && b.depth === 1
 		&& dropped(b, a) && !a.palette && a.top === null && heldOk(f), JSON.stringify({ b, a, f }));
 });
 
-// K5. The Chats menu over the drawer: Escape closes the menu and leaves the drawer up.
+// K5. The Chats menu on the home page (on the Stack it is over nothing): Escape closes it and gives the keyboard back.
 await kcase('K5', async () => {
-	const d = await pressFrom('#drawer-btn');
-	await wait(300);
 	const m = await pressFrom('#chats-menu-btn');
 	await wait(500);
 	const b = await snap();
 	const a = await esc();
 	const f = await held('#chats-menu-btn');
-	check('K5 Escape closes the Chats menu over the drawer and leaves the drawer up', d && m && b.drawer && b.chats && b.top === 'chatsmenu' && b.depth === 2
-		&& dropped(b, a) && a.drawer && !a.chats && a.top === 'drawer' && heldOk(f), JSON.stringify({ d, m, b, a, f }));
+	check('K5 Escape closes the Chats menu and gives the keyboard back to its button', m && b.chats && b.top === 'chatsmenu' && b.depth === 1
+		&& dropped(b, a) && !a.chats && a.top === null && heldOk(f), JSON.stringify({ m, b, a, f }));
 });
 
 // K6. The graph's link mode, inside the sheet, is a claim: the first Escape leaves the mode and not the sheet, the second leaves the sheet.
 await kcase('K6', async () => {
-	await page.evaluate(() => document.getElementById('drawer-btn').focus());
+	await page.evaluate(() => document.getElementById('chead-more').focus());
 	await page.evaluate(() => window.DaimondPanels.show('graph'));
 	await wait(900);
 	await page.evaluate(() => window.DaimondGraph.linkMode(true));
@@ -376,15 +376,15 @@ await kcase('K6', async () => {
 		&& dropped(a, z) && !z.sheet && z.top === null && heldOk(f), JSON.stringify({ l0, b, l1, a, z, f }));
 });
 
-// K7. Escape and Back leave the same stack, one layer at a time: the drawer with a dialog over it, and with the Chats menu over it.
+// K7. Escape and Back leave the same stack, one layer at a time: the Web sheet with a dialog over it, and with Help's menu over it.
 await kcase('K7', async () => {
-	const core = (x) => JSON.stringify({ st: x.st, depth: x.depth, top: x.top === null ? null : x.top.replace(/#\d+$/, '#'), drawer: x.drawer, sheet: x.sheet,
+	const core = (x) => JSON.stringify({ st: x.st, depth: x.depth, top: x.top === null ? null : x.top.replace(/#\d+$/, '#'), sheet: x.sheet,
 		pops: x.pops, palette: x.palette, modals: x.modals, admin: x.admin, chats: x.chats });
 	const build = async (kind) => {
-		await pressFrom('#drawer-btn');
-		await wait(300);
+		await page.evaluate(() => { window.DaimondPanels.hide('web'); window.DaimondPanels.show('web'); });
+		await wait(700);
 		if (kind === 'dialog') { page.evaluate(() => DaimondCore.confirm('QA agree?', 'OK', { title: 'QA' })).catch(() => {}); await wait(500); }
-		else { await pressFrom('#chats-menu-btn'); await wait(500); }
+		else { await pressFrom('#help-btn'); await wait(500); }
 		return snap();
 	};
 	const rows = [];
@@ -399,8 +399,8 @@ await kcase('K7', async () => {
 		await back();
 		await wait(900);
 		const k2 = await snap();
-		rows.push({ kind, built: b.depth === 2 && c.depth === 2 && core(b) === core(c), inner: core(e1) === core(k1) && e1.depth === 1 && e1.drawer,
-			rest: core(e2) === core(k2) && e2.depth === 0 && e2.st === 0 && !e2.drawer, urls: e1.url.startsWith(APP) && k1.url.startsWith(APP) && e2.url.startsWith(APP) && k2.url.startsWith(APP),
+		rows.push({ kind, built: b.depth === 2 && c.depth === 2 && core(b) === core(c), inner: core(e1) === core(k1) && e1.depth === 1 && e1.sheet,
+			rest: core(e2) === core(k2) && e2.depth === 0 && e2.st === 0 && !e2.sheet, urls: e1.url.startsWith(APP) && k1.url.startsWith(APP) && e2.url.startsWith(APP) && k2.url.startsWith(APP),
 			e1: core(e1), k1: core(k1), e2: core(e2), k2: core(k2) });
 		const x = await snap();
 		if (x.depth !== 0) { await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}); await wait(4000); }
@@ -408,7 +408,7 @@ await kcase('K7', async () => {
 	check('K7 Escape and Back agree on which layer is innermost, then on the next', rows.every((r) => r.built && r.inner && r.rest && r.urls), JSON.stringify(rows));
 });
 
-// K8. An opener alone gets the keyboard back from Escape: the drawer's burger and Help (phone width), the panel gallery's chip (a width that has one).
+// K8. An opener alone gets the keyboard back from Escape: the chat head's ⋯ and Help (phone width), the panel gallery's chip (a width that has one).
 await kcase('K8', async () => {
 	const rows = [];
 	async function one(sel) {
@@ -420,7 +420,7 @@ await kcase('K8', async () => {
 		const f = await held(sel);
 		rows.push({ sel, up, in: b.depth, out: a.depth, st: a.st, id: f.id, shown: f.shown, is: f.is });
 	}
-	await one('#drawer-btn');
+	await one('#chead-more');
 	await one('#help-btn');
 	await atWidth(WIDE, async () => { await spare(); await one('#panel-more'); });
 	check('K8 each opener, alone, has the keyboard back after Escape', rows.length === 3 && rows.every((r) => r.up && r.in === 1 && r.out === 0 && r.st === 0 && r.shown && r.is), JSON.stringify(rows));
@@ -432,7 +432,7 @@ await kcase('K8', async () => {
 // the dialog (or the palette) up.
 const linkOn = () => page.evaluate(() => { const g = document.getElementById('graph-body'); return !!g && g.classList.contains('linking'); });
 async function k9(tag, what, raise, isUp, topWant) {
-	await page.evaluate(() => document.getElementById('drawer-btn').focus());
+	await page.evaluate(() => document.getElementById('chead-more').focus());
 	await page.evaluate(() => window.DaimondPanels.show('graph'));
 	await wait(900);
 	await page.evaluate(() => window.DaimondGraph.linkMode(true));

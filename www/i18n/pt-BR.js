@@ -48,8 +48,6 @@
 	'copy.what_handle':        'o seu nome público',
 
 	// ── The top bar ────────────────────────────────────────────
-	'topbar.menu': 'Menu',
-	'topbar.open_menu': 'Abrir o menu',
 	'topbar.brand': 'Daimond, a página inicial de daimond.app',
 	'topbar.made_by': 'Feito pela Oxedyne',
 	'topbar.made_with_ai': 'Código feito majoritariamente com IA',
@@ -4216,5 +4214,21 @@
 	'settings.group_help_what': 'Novidades, relat\u00f3rios, diagn\u00f3stico',
 	'rel.whats_new': 'Novidades',
 	'rel.about': 'Sobre',
+	'composer.placeholder': 'Mensagem',
+	'composer.steer_diamond': 'Pergunte ou oriente {name}',
+	'dictate.mic': 'Ditar',
+	'dictate.listening': 'Ouvindo…',
+	'dictate.cancel': 'Cancelar',
+	'dictate.keep': 'Manter',
+	'dictate.check': 'Da sua voz: confira e depois Enviar',
+	'dictate.slide_cancel': 'Deslize para cancelar',
+	'dictate.release_stop': 'Solte para parar',
+	'camera.add_title': 'Adicionar a esta conversa',
+	'camera.camera': 'Câmera',
+	'camera.photos': 'Fotos',
+	'camera.files': 'Arquivos',
+	'stack.back': 'Voltar',
+	'diamond.files': 'Arquivos',
+	'settings.title': 'Ajustes',
 	});
 })();

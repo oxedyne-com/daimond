@@ -554,7 +554,78 @@ function crystalBar(data) {
 	if (edit) bar.appendChild(edit);
 	bar.appendChild(pageBtn);
 	bar.appendChild(hist); bar.appendChild(tagsBtn);
+	paintStackActs(edit, [pageBtn, hist, tagsBtn]);
 	return bar;
+}
+
+// fixed: icon geometry, the 24-unit grid every topbar icon is drawn on.
+var PENCIL_SVG = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 4.5l4 4L8 20H4v-4z"/><path d="M13.5 6.5l4 4"/></svg>';
+var DOTS_SVG = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" stroke="none"/>'
+	+ '<circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.7" fill="currentColor" stroke="none"/></svg>';
+
+/// The crystal's toolbar, as a phone's Diamond page carries it (Stack A4, b4): Edit as the
+/// bar's ✎, and the rest under the bar's ⋯. The bar's controls press the toolbar's own
+/// buttons, so the two can never do different things; CSS shows them on a phone alone.
+function paintStackActs(edit, rest) {
+	var acts = document.getElementById('stack-acts');
+	if (!acts) return;
+	acts.textContent = '';
+	if (edit) {
+		var pen = document.createElement('button');
+		pen.type = 'button';
+		pen.className = 'icon-btn';
+		pen.innerHTML = PENCIL_SVG;
+		pen.title = edit.textContent;
+		pen.setAttribute('aria-label', edit.textContent);
+		pen.addEventListener('click', function () { edit.click(); });
+		acts.appendChild(pen);
+	}
+	var more = document.createElement('button');
+	more.type = 'button';
+	more.className = 'icon-btn';
+	more.innerHTML = DOTS_SVG;
+	more.title = t('chat.more');
+	more.setAttribute('aria-label', t('chat.more'));
+	more.setAttribute('aria-haspopup', 'menu');
+	more.setAttribute('aria-expanded', 'false');
+	// `DaimondLayers.done` only takes the menu off the layer stack, so every way out runs `close`,
+	// which removes it and then says so.
+	var shut = null;
+	more.addEventListener('click', function (e) {
+		e.stopPropagation();
+		if (shut) { shut(); return; }
+		var pop = document.createElement('div');
+		pop.className = 'railhead-menu stack-acts-menu';
+		pop.setAttribute('role', 'menu');
+		var close = function () {
+			pop.remove();
+			document.removeEventListener('click', outside, true);
+			more.setAttribute('aria-expanded', 'false');
+			shut = null;
+			DaimondLayers.done('stackacts');
+		};
+		// The ⋯ itself is left to its own handler, which closes; closing here as well would reopen.
+		var outside = function (ev) { if (!pop.contains(ev.target) && !more.contains(ev.target)) close(); };
+		// Full screen too: its head control gives way to the bar on a phone's Diamond page.
+		var full = document.getElementById('crystal-full-btn');
+		rest.concat(full ? [full] : []).forEach(function (b) {
+			var row = document.createElement('button');
+			row.type = 'button';
+			row.setAttribute('role', 'menuitem');
+			row.textContent = b.textContent.trim() || b.getAttribute('aria-label') || b.title;
+			row.addEventListener('click', function () { close(); b.click(); });
+			pop.appendChild(row);
+		});
+		DaimondLayers.hang(pop, 'stackacts', close, more);
+		shut = close;
+		var r = more.getBoundingClientRect();
+		pop.style.top = (r.bottom + 4) + 'px';
+		pop.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+		more.setAttribute('aria-expanded', 'true');
+		if (pop.firstChild) pop.firstChild.focus({ preventScroll: true });
+		setTimeout(function () { document.addEventListener('click', outside, true); }, 0);
+	});
+	acts.appendChild(more);
 }
 
 /// How many objectives and how many unticked tasks a Diamond's `REQUIREMENTS.md` holds.

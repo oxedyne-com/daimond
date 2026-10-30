@@ -234,10 +234,10 @@ function canFocus(el) {
 function onScreen(el) { return canFocus(el); }
 
 /// Where the keyboard goes once the gate is gone: the first candidate that can take
-/// the focus. On a phone with no chat, New Chat is inside the closed drawer, which is
-/// hidden, so the burger that opens the drawer takes it (S1MF-live).
+/// the focus. On a phone with no chat, New Chat is on the home page, which is in view
+/// (Stack A2: the drawer and its burger are gone).
 export function handOverTarget() {
-	return ['chat-input', 'new-session-btn', 'new-diamond-btn', 'drawer-btn']
+	return ['chat-input', 'new-session-btn', 'new-diamond-btn']
 		.map(function (id) { return document.getElementById(id); })
 		.filter(canFocus)[0] || null;
 }

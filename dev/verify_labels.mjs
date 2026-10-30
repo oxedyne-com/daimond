@@ -109,7 +109,7 @@ async function fresh(page, cfg, look) {
 const SURFACES = {
 	page:   async () => {},
 	help:   async (page) => { await page.evaluate(() => document.getElementById('help-btn').click()); await sleep(400); },
-	drawer: async (page) => { await page.evaluate(() => { const b = document.getElementById('drawer-btn'); if (b && b.getClientRects().length) b.click(); }); await sleep(500); },
+	drawer: async (page) => { await page.evaluate(() => DaimondShell.home()); await sleep(500); },	// the rail is the Stack's home page (A2)
 };
 
 async function run(cfg, look) {

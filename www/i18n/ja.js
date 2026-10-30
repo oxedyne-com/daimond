@@ -53,8 +53,6 @@
 	'copy.what_handle':        '公開名',
 
 	// ── 上部バー ───────────────────────────────────────────────
-	'topbar.menu':        'メニュー',
-	'topbar.open_menu':   'メニューを開く',
 	'topbar.brand':       'Daimond、daimond.app のホームページ',
 	'topbar.made_by': 'Oxedyne 制作',
 	'topbar.made_with_ai': 'コードはほとんど AI で作られています',
@@ -4259,5 +4257,21 @@
 	'settings.group_help_what': '\u65b0\u6a5f\u80fd\u3001\u30ec\u30dd\u30fc\u30c8\u3001\u8a3a\u65ad',
 	'rel.whats_new': '\u65b0\u7740\u60c5\u5831',
 	'rel.about': '\u3053\u306e\u30a2\u30d7\u30ea\u306b\u3064\u3044\u3066',
+	'composer.placeholder': 'メッセージ',
+	'composer.steer_diamond': '{name} に質問・指示',
+	'dictate.mic': '音声入力',
+	'dictate.listening': '聞き取り中…',
+	'dictate.cancel': 'キャンセル',
+	'dictate.keep': '残す',
+	'dictate.check': '音声から入力しました。確認してから送信',
+	'dictate.slide_cancel': 'スライドしてキャンセル',
+	'dictate.release_stop': '離して停止',
+	'camera.add_title': 'このチャットに追加',
+	'camera.camera': 'カメラ',
+	'camera.photos': '写真',
+	'camera.files': 'ファイル',
+	'stack.back': '戻る',
+	'diamond.files': 'ファイル',
+	'settings.title': '設定',
 	});
 })();

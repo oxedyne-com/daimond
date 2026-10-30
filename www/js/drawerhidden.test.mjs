@@ -1,4 +1,7 @@
-// drawerhidden.test.mjs -- the phone drawer, put away, is out of Tab and VoiceOver.
+// drawerhidden.test.mjs -- the phone rail, off its home page, is out of Tab and VoiceOver.
+//
+// Stack A2 (30 Oct 2026) retired the drawer: the rail is now the stack's home page, and
+// the same hiding applies whenever another page is on top.
 //
 //	node --test www/js/drawerhidden.test.mjs
 //
@@ -38,16 +41,19 @@ function rule(src, sel) {
 	return m ? m[2] : null;
 }
 
-test('on a phone the closed drawer is hidden and the open one is not', () => {
+test('on a phone the rail is hidden under another page and shown at home', () => {
 	const ph = phoneBlock();
-	const closed = rule(ph, 'body:not(.drawer-open) .panel.rail');
-	assert.ok(closed && /visibility:\s*hidden/.test(closed),
-		'the closed drawer is off screen and must leave Tab and VoiceOver');
-	const open = rule(ph, 'body.drawer-open .panel.rail');
-	assert.ok(open && /translateX\(0\)/.test(open), 'the open drawer slides in');
-	assert.ok(/visibility 0s(?!\s*\.)/.test(open), 'the open drawer unhides at once, or it slides in unseen');
+	const away = rule(ph, '#app:not([data-stack="home"]) .panel.rail');
+	assert.ok(away && /visibility:\s*hidden/.test(away),
+		'the rail under another page is off screen and must leave Tab and VoiceOver');
+	// The rail is the stack's floor, not a drawer slid in (a9f9374c7 retired the slide): home draws it in place, at once.
+	const HOME = readPage(path.join(HERE, '..', 'css', 'phone', 'home.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+	const at = HOME.indexOf('.home-page > #panel-rail {');
+	const home = at >= 0 ? HOME.slice(at, HOME.indexOf('}', at)) : null;
+	assert.ok(home && /visibility:\s*visible/.test(home), 'the home page shows the rail');
+	assert.ok(/transform:\s*none/.test(home) && /transition:\s*none/.test(home), 'the home page draws the rail in place, at once');
 	const base = rule(ph, '.panel.rail');
-	assert.ok(base && /visibility 0s \.28s/.test(base), 'the close slide is seen before the drawer hides');
+	assert.ok(base && !/visibility|transform/.test(base), 'no slide or delayed hide is left on the rail frame');
 });
 
 test('a widened window has a live rail at once: no script makes the rail inert', () => {
@@ -107,20 +113,20 @@ test('a dialog closed over Admin on a phone leaves the focus in Admin, not on th
 	assert.equal(doc.activeElement.id, 'admin-ok', 'the focus was left on ' + (doc.activeElement.id || 'the body'));
 });
 
-test('the unlock on a phone hands the keyboard to the burger, not into the hidden drawer', () => {
+test('the unlock on a phone hands the keyboard to New Chat on the home page, not a hidden control', () => {
 	const { el, api } = page();
 	assert.ok(api.handOverTarget, 'daimond.js has no handOverTarget');
-	el('chat-input', false); el('new-session-btn', false); el('drawer-btn', true);
+	el('chat-input', false); el('new-session-btn', true); el('stack-back', true);
 	const next = api.handOverTarget();
-	assert.equal(next && next.id, 'drawer-btn');
+	assert.equal(next && next.id, 'new-session-btn');
 });
 
 test('a dialog closed with nothing standing behind it hands the keyboard to the page, not the body', () => {
 	const { doc, el, api } = page();
-	// K3 on a phone: Admin was opened inside the closed drawer, so it too is hidden.
+	// K3 on a phone: Admin was opened from the rail, now under another page, so it too is hidden.
 	const row = el('user-row', false), rail = el('rail', false, [row]);
 	doc.cards = [el('admin-card', false, [el('admin-ok', false)])];
-	el('chat-input', false); el('new-session-btn', false); el('drawer-btn', true);
+	el('chat-input', true); el('new-session-btn', false);
 	api.refocus(doc.body, rail);
-	assert.equal(doc.activeElement.id, 'drawer-btn', 'the focus was left on ' + (doc.activeElement.id || 'the body'));
+	assert.equal(doc.activeElement.id, 'chat-input', 'the focus was left on ' + (doc.activeElement.id || 'the body'));
 });

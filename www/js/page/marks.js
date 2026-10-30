@@ -917,6 +917,10 @@ export async function renderArtefacts() {
 	// file fits under the bound the stylesheet gives (`--crystal-files-cap`).
 	var cap = parseInt(getComputedStyle(list).getPropertyValue('--crystal-files-cap'), 10);
 	var wsOpen = crystalFilesOpen(diamondId, links.length, cap);
+	// On a phone the group is headed, not folded (Stack b4): the list's own head names it
+	// and carries its +, and the Diamond's Files face holds the whole tree when it is long.
+	var headed = !!(window.DaimondShell && DaimondShell.isPhone && DaimondShell.isPhone());
+	if (headed) { strip.style.display = 'none'; wsOpen = true; }
 	strip.setAttribute('aria-expanded', wsOpen ? 'true' : 'false');
 	if (!wsOpen) { list.style.display = 'none'; return; }
 	list.style.display = '';
@@ -988,7 +992,7 @@ export async function renderArtefacts() {
 				renderArtefacts();
 			},
 		};
-	}));
+	}), headed ? { title: t('diamond.files'), view: false } : undefined);
 
 	// The collapsed group, appended after the ordinary tiles. Its own header
 	// (count and toggle) plus a "Drop all" that removes every link in it the
@@ -2414,9 +2418,9 @@ function attachBody(items, o) {
 /// The tiles go in their own scrolling box rather than the footer itself
 /// scrolling, so the toggle and the `+` stay put while the stack moves
 /// under them -- chrome that scrolls away is chrome nobody finds twice.
-function renderAttachFooter(box, items) {
+function renderAttachFooter(box, items, head) {
 	box.innerHTML = '';
-	box.appendChild(attachFooterHead());
+	box.appendChild(attachFooterHead(head));
 	var body = attachBody(items);
 	box.appendChild(body);
 	return body;

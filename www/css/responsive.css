@@ -66,15 +66,10 @@
 
 	/* Desktop-only machinery disappears. */
 	.phandle { display: none !important; }
+	/* The rail's too: it was the exception while the rail was the drawer, but on a
+	   phone it is the stack's home page now (Stack A1), the floor, with nothing to
+	   close to (QA ccp29: its closer showed on "Pause all" and pushed the turn). */
 	.panel-close { display: none !important; }
-	/* Except the RAIL's. Every other panel is a destination reached from the
-	   bottom bar and has nothing to be closed back to, but the rail here is the
-	   DRAWER, and the drawer covers 335 of a 390px screen. Its only dismissals
-	   were a tap on the 55px of scrim beside it and the hamburger — which the
-	   drawer itself is drawn on top of. A surface that big needs a way out on
-	   the surface. The click is caught in mobile.js and closes the drawer, not
-	   the panel. */
-	.panel.rail .panel-close { display: flex !important; }
 	/* The chip row is not in the header here -- it IS the footer (see .mnav in
 	   css/mobile.css, and `placeChips` in js/mobile.js, which moves the one row
 	   between the two). It used to be hidden on a phone altogether. */
@@ -154,8 +149,7 @@
 	   phone breakpoint on purpose -- 40px each would burst the Workspace
 	   panel's six-button head in a 260px dock column on a tablet. */
 	.top-actions .icon-btn,
-	.top-actions .update-chip,
-	#drawer-btn { min-width: 36px; min-height: 36px; }
+	.top-actions .update-chip { min-width: 36px; min-height: 36px; }
 	/* A word cannot live in a 40px square. The thumb target is kept in the
 	   HEIGHT, which is what a finger misses in a row of this shape, and the width
 	   is whatever the word needs. */
@@ -330,8 +324,7 @@
 	   is what a thumb lands on; it is only the air between them that goes. */
 	.top-actions { gap: 2px; }
 	.top-actions .icon-btn,
-	.top-actions .update-chip,
-	#drawer-btn { min-width: 34px; min-height: 34px; }
+	.top-actions .update-chip { min-width: 34px; min-height: 34px; }
 	/* The unlock lockup, at 54px, is 240px wide -- which is the entire content
 	   width of a 90vw card on a 320px phone, so it ran to both padding edges and
 	   over them. 40px is 177px, and leaves the card its margins back. */

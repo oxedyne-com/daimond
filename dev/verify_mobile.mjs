@@ -1,8 +1,8 @@
 // gateway: none
-// verify_mobile.mjs — the phone shell: chat floor, left drawer, thing-sheet.
+// verify_mobile.mjs — the phone shell: chat floor, home page, thing-sheet.
 //
 // Drives the real page at a phone viewport (390×844) and checks the paradigm:
-// the rail opens as a left drawer, a stage guest rises as a bottom sheet over
+// the rail is the home page under the chat (Stack A2: the drawer is gone), a stage guest rises as a bottom sheet over
 // the chat (never taking a bar slot), the ask pill forwards to the one
 // composer, closing the sheet returns the guest to the stage, and growing back
 // to desktop reseats everything with the chat still whole.
@@ -146,16 +146,18 @@ await page.addStyleTag({ content: '*,*::before,*::after{transition:none!importan
 await sleep(400);
 
 // A chat must exist for the floor to be the conversation.
-await page.evaluate(() => { try { document.getElementById('new-session-btn').click(); } catch (e) {} });
+// Real presses, as a thumb gives them: a DOM click sends no pointerdown (gate 50).
+await page.click('#new-session-btn', { timeout: 8000 });
 await sleep(300);
-await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find(x => /^Start$/.test(x.textContent.trim())); if (b) b.click(); });
+const startBtn = page.locator('button', { hasText: /^\s*Start\s*$/ });
+if (await startBtn.count()) await startBtn.first().click({ timeout: 5000 });
 await sleep(500);
 
 // ── 1. Boot clean on a phone ───────────────────────────────
 check('boot: no console errors', realErrs().length === 0, realErrs().slice(0, 3).join(' | '));
 check('boot: shell present', await page.evaluate(() => !!window.DaimondSheet && !!window.DaimondShell));
-check('boot: hamburger visible', await page.evaluate(() => {
-	const b = document.getElementById('drawer-btn'); return b && getComputedStyle(b).display !== 'none';
+check('boot: stack bar, no hamburger', await page.evaluate(() => {
+	const t = document.getElementById('stack-title'); return !!t && !document.getElementById('drawer-btn') && !document.getElementById('scrim');	// keeps: drawer-btn gone with the drawer (A2) // keeps: scrim gone with it
 }));
 // THE BAR IS THE CHIP ROW NOW, and this asked for the four hard-wired
 // destinations it replaced -- Chat, Email, Files, Agents, four of the seventeen
@@ -187,49 +189,63 @@ check('boot: floor is the chat', await page.evaluate(() => document.body.dataset
 
 // ── 1b. The strip's chips reach, and say where you are ─────
 // A strip that scrolls is only useful if the chip you press comes to you: the
-// last four panels are off the end of a 390px screen, and a chip you have to
+// row runs well past a 390px screen, so the chip its edge cuts is pressed, and a chip you have to
 // find again after every tap is a chip you stop using.
 {
+	// The strip is the turn page's (it lies under home, Stack A2); the New Chat of the boot above put that page up.
+	check('strip: the turn page, where the strip is, is the page in view', await page.evaluate(() => window.DaimondStack.top()) === 'turn');
 	await page.evaluate(() => { const r = document.getElementById('panel-tags'); r.scrollLeft = 0; r.dispatchEvent(new Event('scroll')); });
 	await sleep(250);
+	// The press lands on the part of the chip that is on screen: Playwright's own click would scroll
+	// it into view first, and that scroll is the very thing being asked of the page.
 	const before = await page.evaluate(() => {
 		const r = document.getElementById('panel-tags');
-		const c = r.querySelector('.ptag[data-panel="social"]');
-		return { left: Math.round(r.scrollLeft), off: c.getBoundingClientRect().right > window.innerWidth };
+		const c = [...r.querySelectorAll('.ptag[data-panel]')].find((x) => { const q = x.getBoundingClientRect(); return q.right > window.innerWidth && q.left < window.innerWidth; });
+		if (!c) return { left: Math.round(r.scrollLeft), off: false, at: null, id: null };
+		const b = c.getBoundingClientRect();
+		const x0 = Math.max(b.left, 0), x1 = Math.min(b.right, window.innerWidth);
+		return { left: Math.round(r.scrollLeft), off: b.right > window.innerWidth, id: c.dataset.panel,
+			at: x1 - x0 >= 4 ? { x: (x0 + x1) / 2, y: b.top + b.height / 2 } : null };
 	});
-	await page.evaluate(() => document.querySelector('#panel-tags .ptag[data-panel="social"]').click());
+	check('strip: the chip the screen\'s edge cuts shows enough of itself to be pressed', !!before.at, JSON.stringify(before));
+	if (before.at) await page.mouse.click(before.at.x, before.at.y);
 	await sleep(600);
-	const after = await page.evaluate(() => {
+	const after = await page.evaluate((id) => {
 		const r = document.getElementById('panel-tags');
-		const c = r.querySelector('.ptag[data-panel="social"]');
+		const c = id && r.querySelector(`.ptag[data-panel="${id}"]`);
+		if (!c) return { left: Math.round(r.scrollLeft), onScreen: false, lit: [...r.querySelectorAll('.ptag.on')].map(x => x.dataset.panel) };
 		const b = c.getBoundingClientRect();
 		return { left: Math.round(r.scrollLeft), onScreen: b.left >= 0 && b.right <= window.innerWidth,
 			lit: [...r.querySelectorAll('.ptag.on')].map(x => x.dataset.panel) };
-	});
-	check('strip: the last chip starts off the end of the screen', before.off);
+	}, before.id);
+	check('strip: and it starts off the end of the screen', before.off);
 	check('strip: pressing it brings it into view', after.onScreen && after.left > before.left,
 		JSON.stringify(after));
 	check('strip: and it is the only chip filled in — where you are, not what is open',
-		after.lit.length === 1 && after.lit[0] === 'social', after.lit.join(','));
+		after.lit.length === 1 && after.lit[0] === before.id, before.id + ': ' + after.lit.join(','));
 	// Back to the floor, so the sections below start where they expect to.
-	await page.evaluate(() => document.querySelector('#panel-tags .ptag[data-panel="ai"]').click());
+	await page.click('#panel-tags .ptag[data-panel="ai"]');
 	await sleep(500);
 }
 
-// ── 2. The drawer ──────────────────────────────────────────
-await page.evaluate(() => document.getElementById('drawer-btn').click());
+// ── 2. Home and back (Stack A2: the rail is the home page, not a drawer) ──
+await page.evaluate(() => window.DaimondShell.home());
 await sleep(350);
-check('drawer: opens on hamburger', await page.evaluate(() => document.body.classList.contains('drawer-open')));
-check('drawer: rail is on screen', await page.evaluate(() => {
+check('home: the stack shows home', await page.evaluate(() => document.getElementById('app').dataset.stack === 'home'));
+check('home: rail is on screen', await page.evaluate(() => {
 	const r = document.getElementById('panel-rail'); if (!r) return false;
-	const x = r.getBoundingClientRect().left; return x > -5;			// slid in from the left
+	const b = r.getBoundingClientRect(); return b.left > -5 && b.width > 0 && getComputedStyle(r).display !== 'none';
 }));
-check('drawer: scrim is catching taps', await page.evaluate(() => {
-	const sc = document.getElementById('scrim'); return sc && getComputedStyle(sc).pointerEvents === 'auto';
-}));
-await page.evaluate(() => document.getElementById('scrim').click());
+await page.evaluate(() => window.DaimondShell.turn());
 await sleep(350);
-check('drawer: scrim tap closes it', await page.evaluate(() => !document.body.classList.contains('drawer-open')));
+check('home: Back is offered on the turn page', await page.evaluate(() => {
+	const b = document.getElementById('stack-back'); return !!b && !b.hidden && document.getElementById('app').dataset.stack === 'turn';
+}));
+await page.click('#stack-back');
+await sleep(450);
+check('home: Back returns to home', await page.evaluate(() => document.getElementById('app').dataset.stack === 'home'));
+await page.evaluate(() => window.DaimondShell.turn());
+await sleep(350);
 
 // ── 3. A thing rises as a sheet ────────────────────────────
 await raise('web');
@@ -288,16 +304,13 @@ check('close: engine marks it closed', await page.evaluate(() => !window.Daimond
 
 // ── 6. The ask pill forwards to the one composer ───────────
 await raise('web');
-const asked = await page.evaluate(async () => {
-	const before = document.querySelectorAll('.chat-msg-user').length;
-	const q = document.getElementById('msheet-ask-input');
-	q.value = 'what is this page';
-	q.dispatchEvent(new Event('input', { bubbles: true }));		// the pill is disabled until the field says it has a question
-	document.getElementById('msheet-ask-send').click();
-	await new Promise(r => setTimeout(r, 600));
-	const after = document.querySelectorAll('.chat-msg-user').length;
-	return { before, after, parkedH: document.getElementById('msheet').style.height };
-});
+const askedBefore = await page.evaluate(() => document.querySelectorAll('.chat-msg-user').length);
+await page.fill('#msheet-ask-input', 'what is this page');		// the pill is disabled until the field says it has a question
+await page.click('#msheet-ask-send');
+await sleep(600);
+const asked = await page.evaluate((before) => ({ before,
+	after: document.querySelectorAll('.chat-msg-user').length,
+	parkedH: document.getElementById('msheet').style.height }), askedBefore);
 check('ask: pill posts a user message to the chat', asked.after === asked.before + 1, JSON.stringify(asked));
 
 // ── 6a. Every panel a phone can ask for arrives on screen ──

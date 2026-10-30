@@ -1,0 +1,3 @@
+/* css/phone/composer.css -- phone Stack (D-20261029-01): the composer capsule and the + sheet (B2, frames b3, b8).
+   Phone only: every rule sits under the phone media query, so nothing changes at >= 761 px.
+   Empty until its unit lands (Stack A0 lays the files down). */

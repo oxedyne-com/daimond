@@ -1,6 +1,6 @@
 // gateway: none
-// verify_railmobile.mjs — the rail drawer's SECTIONS on a phone, and the desktop
-// rail proving it paid nothing for them.
+// verify_railmobile.mjs — the rail as the phone's HOME PAGE (Stack A1, 30 Oct 2026;
+// until then the drawer's sections), and the desktop rail proving it paid nothing for it.
 //
 // Owner's report, 2026-09-14, from the iPhone home-screen PWA: "the height of the
 // diamond and chat sections in the rail in mobile view is impractically small, see
@@ -106,13 +106,46 @@ async function world({ name, browser, width, height }) {
 	return { s, diamonds };
 }
 
-/// Open the drawer and let it settle. The transition is on `transform`, which
-/// moves nothing this file measures, but a layout mid-slide is a layout read
-/// twice for no reason.
-async function drawer(p) {
-	await p.evaluate(() => window.DaimondShell && DaimondShell.openDrawer());
+/// Bring the home page to the top and let it settle: A2's `DaimondShell.home()` once
+/// the stack has a history, and before that the page opens on it.
+async function home(p) {
+	await p.evaluate(() => {
+		if (window.DaimondShell && DaimondShell.home) DaimondShell.home();
+		else if (window.DaimondStack && DaimondStack.top() !== 'home') DaimondStack.push('home');
+	});
 	await p.waitForTimeout(400);
 }
+
+/// The home page's own parts: where the rail sits, the stack's top, the head, the
+/// group heads, the tray acts drawn and the pools.
+const homeSurvey = (p) => p.evaluate(() => {
+	const rail = document.getElementById('panel-rail');
+	const page = document.querySelector('#phone-stack > [data-page="home"]');
+	const shown = (e) => {
+		if (!e) return false;
+		const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
+		return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none';
+	};
+	const rect = (e) => { const r = e.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom) }; };
+	const acts = [...document.querySelectorAll('#home-head .home-act')].map((b) => Math.round(Math.min(b.offsetWidth, b.offsetHeight)));
+	const tray = [...document.querySelectorAll('#diamond-list .session-box :is(.tile-cog, .tile-x), #session-list .session-box :is(.tile-cog, .tile-x)')];
+	return {
+		inHome:    !!(page && rail && page.contains(rail)),
+		pageShown: shown(page) || shown(rail),
+		top:       window.DaimondStack ? DaimondStack.top() : null,
+		head:      { drawn: shown(document.getElementById('home-head')) },
+		lockup:    shown(document.querySelector('#home-head .home-lockup')),
+		acts,
+		heads:     [...document.querySelectorAll('#panel-rail .railhead > span:first-child')].filter(shown).map((e) => e.textContent.trim()),
+		newActs:   [...document.querySelectorAll('#panel-rail .railhead > .railbtn')].filter(shown).length,
+		foldsDrawn: [...document.querySelectorAll('#panel-rail .railhead > .rail-fold')].some(shown),
+		trayAll:   tray.length,
+		trayShown: tray.filter(shown).filter((b) => { const r = b.getBoundingClientRect(); return r.left < innerWidth; }).length,
+		openRows:  document.querySelectorAll('#panel-rail .session-box[data-swipe="open"]').length,
+		findShown: shown(document.querySelector('#panel-rail .diamond-find')),
+		pools:     [...document.querySelectorAll('#admin .evp')].filter(shown).map(rect),
+	};
+});
 
 /// Everything this file asserts on, read in one pass so the numbers all describe
 /// the same layout.
@@ -233,6 +266,10 @@ const sessions = [];
 try {
 
 // ── The engine the owner runs, at the width he runs it ───────────────────────
+// Stack A1 (30 Oct 2026): the drawer is gone from the phone. The rail IS the home page,
+// the stack's root: full screen, the Diamonds and Chats lists each a window of its own,
+// the status line and the pools pinned at its foot, no fold, and each row's cog and
+// Delete in a tray that a swipe or a hold opens.
 {
 	const { s } = await world({ name: 'railwk390', browser: 'webkit', width: 390, height: 844 });
 	sessions.push(s);
@@ -240,111 +277,83 @@ try {
 	const ua = await p.evaluate(() => navigator.userAgent);
 	check('the phone context is WebKit, the engine an iPhone runs',
 		/WebKit/.test(ua) && !/Chrome\//.test(ua), ua.slice(0, 48));
-	await drawer(p);
+	await home(p);
 	let m = await survey(p);
-	check('and the drawer is the full 390x844 screen', m.vw === 390 && m.rail.h === 844);
+	const h = await homeSurvey(p);
+	check('the rail is the home page, the root of the stack, with nothing under it to open',
+		h.inHome && h.top === 'home' && h.pageShown, JSON.stringify({ inHome: h.inHome, top: h.top, shown: h.pageShown }));
+	check('and it is the full 390x844 screen', m.vw === 390 && m.rail.top === 0 && m.rail.h === 844, `${m.rail.top} ${m.rail.h}px`);
+	check('its head draws the lockup, search and compose at 44 px a touch',
+		h.head.drawn && h.lockup && h.acts.length === 2 && h.acts.every((a) => a >= 44), JSON.stringify(h.acts));
+	check('no section fold is drawn on the home page; a page has room',
+		!h.foldsDrawn, JSON.stringify(m.folds));
+	check('the group heads read Diamonds and Chats, with their New acts',
+		h.heads.length >= 2 && h.newActs >= 2, JSON.stringify(h.heads) + ' ' + h.newActs);
+	check('every row is at least 44 px tall',
+		m.diamondRowH === 0 || m.diamondRowH >= 44 && m.chatRowH >= 44, `diamond ${m.diamondRowH}, chat ${m.chatRowH}`);
+	check('no row shows a cog or a Delete until it is swiped or held',
+		h.trayShown === 0, `${h.trayShown} of ${h.trayAll} tray acts visible`);
+	check('the Chats list is a window of at least five whole rows and scrolls inside itself',
+		m.chatsWhole >= 5 && m.sessionList.scroll > m.sessionList.client,
+		`${m.chatsWhole} whole of ${m.chats}, list ${m.sessionList.client}/${m.sessionList.scroll}`);
+	check('the identity row is pinned on screen at the foot, the only door to Settings',
+		m.userRow.drawn && m.userRow.h >= 34 && m.userRow.bottom <= m.vh, `${m.userRow.top}-${m.userRow.bottom} of ${m.vh}`);
+	check('and the pools, when there are any, sit on screen under it',
+		h.pools.every((b) => b.bottom <= m.vh && b.top >= m.userRow.top), `${h.pools.length} pools`);
+	check('the search box waits behind the magnifier', !h.findShown, 'find drawn before the tap');
+	await tap(p, '#home-search-btn');
+	check('and the magnifier opens it', (await homeSurvey(p)).findShown);
+	await tap(p, '#home-search-btn');
+	await p.screenshot({ path: path.join(SHOTS, 'railmobile-wk390-home.png') });
 
-	check('the drawer opens with Diamonds and Chats open and the status rows away',
-		!!m.state && m.state.diamonds === true && m.state.chats === true && m.state.status === false,
-		JSON.stringify(m.state));
-	// st-S1x (D-20261015-15): folded is the identity row, any exception rows, the calm
-	// line and the tally -- no diagnostic row.
-	check('a folded status section draws its header, exceptions, calm line and tally, nothing more',
-		m.idRow.drawn && !m.modelRow.drawn && m.admin.h <= m.idRow.h + m.needs.h + m.calm.h + m.spend.h + 20,
-		`identity ${m.idRow.h}px, needs ${m.needs.h}px, calm ${m.calm.h}px, tally ${m.spend.h}px, #astat-model ${m.modelRow.h}px, #admin ${m.admin.h}px`);
-	check('and the identity row survives that fold, which is the only route to Settings',
-		m.userRow.drawn && m.userRow.h >= 34, m.userRow.h + 'px');
-	// UNBLOCK-30 (2026-10-20): each list is a window of at least five whole tiles and
-	// the DRAWER scrolls for what the two windows push below the screen. Until then this
-	// asked for a drawer that never scrolled and lists sharing 65% of it, which is the
-	// design that let every row added to the rail come out of the lists.
-	check('each list is bounded and scrolls inside itself, and the drawer scrolls for the rest',
-		m.sessionList.scroll > m.sessionList.client,
-		`chats ${m.sessionList.client}/${m.sessionList.scroll}, drawer ${m.scroller.client}/${m.scroller.scroll}`);
-	check('the Chats list is a window of at least five whole tiles (UNBLOCK-30)',
-		m.chatsWhole >= 5, `${m.chatsWhole} whole of ${m.chats}, list ${m.sessionList.h}px`);
-	check('with both sections open the Chats list has room for three tiles (it had 1.5)',
-		m.sessionList.client >= 3 * m.chatRowH,
-		`${m.sessionList.client}px at ${m.chatRowH}px a tile`);
-	await p.screenshot({ path: path.join(SHOTS, 'railmobile-wk390-defaults.png') });
+	// ── The tray, by a finger's swipe in the real engine ─────────────────
+	const row = p.locator('#session-list .session-box').nth(1);
+	const box = await row.boundingBox();
+	if (box) {
+		const y = box.y + box.height / 2;
+		await p.mouse.move(box.x + box.width - 40, y);
+		await p.mouse.down();
+		for (let i = 1; i <= 8; i++) { await p.mouse.move(box.x + box.width - 40 - i * 15, y); await p.waitForTimeout(16); }
+		await p.mouse.up();
+		await p.waitForTimeout(400);
+	}
+	const sw = await homeSurvey(p);
+	check('a swipe left opens that row\'s tray, its cog and Delete, and only its own',
+		sw.openRows === 1 && sw.trayShown === 2, `${sw.openRows} open, ${sw.trayShown} acts`);
+	check('and the swipe opened no chat', sw.top === 'home', sw.top);
+	await p.screenshot({ path: path.join(SHOTS, 'railmobile-wk390-tray.png') });
+	await tap(p, '#session-list .session-box:nth-child(2) .tile-label');
+	const shut = await homeSurvey(p);
+	check('a tap on the open row shuts the tray rather than opening the chat',
+		shut.openRows === 0 && shut.top === 'home', `${shut.openRows} open, top ${shut.top}`);
+	await tap(p, '#session-list .session-box .tile-label');
+	check('a tap on a shut row opens its chat, a page pushed over home',
+		(await homeSurvey(p)).top === 'turn');
+	await home(p);
 
-	// ── Tapping a HEADING folds its section ──────────────────────────────
-	const tappedHead = await tap(p, '.railhead:has(.rail-fold[data-fold="diamonds"]) > span[role="heading"]');
-	m = await survey(p);
-	check('tapping the Diamonds heading folds the section',
-		tappedHead && m.folds.diamonds && m.folds.diamonds.expanded === false
-			&& !m.diamondList.drawn && m.headD.drawn,
-		`list ${m.diamondList.h}px, header ${m.headD.h}px`);
-	check('and the Chats section then has room for six tiles, and shows six of twenty-five',
-		m.sessionList.client >= 6 * m.chatRowH && m.chatsWhole >= 6,
-		`${m.sessionList.client}px at ${m.chatRowH}px a tile, ${m.chatsWhole} whole of ${m.chats}`);
-	await p.screenshot({ path: path.join(SHOTS, 'railmobile-wk390-diamonds-folded.png') });
-
-	await p.reload({ waitUntil: 'domcontentloaded' });
-	await signInAs(s, s.name);
-	await p.waitForTimeout(1200);
-	await drawer(p);
-	m = await survey(p);
-	check('the fold is remembered across a reload, on this device',
-		!!m.state && m.state.diamonds === false && !m.diamondList.drawn, JSON.stringify(m.state));
-
-	const tappedChev = await tap(p, '.rail-fold[data-fold="diamonds"]');
-	m = await survey(p);
-	check('tapping the chevron opens it again',
-		tappedChev && m.state && m.state.diamonds === true && m.diamondList.drawn
-			&& m.folds.diamonds && m.folds.diamonds.expanded === true);
-
-	// ── The other way round, and the status strip unfolded ───────────────
-	await p.evaluate(() => { if (DaimondShell.setFold) DaimondShell.setFold('chats', false); });
-	await p.waitForTimeout(250);
-	m = await survey(p);
-	check('folding Chats instead gives the Diamonds section 70% of the rail\'s top half',
-		!m.sessionList.drawn && m.diamondList.h / m.railTop.h >= 0.70,
-		`${m.diamondList.h} of ${m.railTop.h} = ` + Math.round(100 * m.diamondList.h / m.railTop.h) + '%');
-	await p.evaluate(() => { if (DaimondShell.setFold) { DaimondShell.setFold('chats', true); DaimondShell.setFold('status', true); } });
-	await p.waitForTimeout(250);
-	const railDetailOpen = await openStatusDetail(p);
-	m = await survey(p);
-	// D-20261015-15: the diagnostic rows live in Settings > This device now, so unfolding
-	// the strip brings back no row; it must still stay bounded.
-	check('unfolding the status strip adds no diagnostic row and stays inside its bound',
-		!railDetailOpen && !m.modelRow.drawn && m.status.h <= Math.round(0.45 * m.rail.h) + 2,
-		`#astat-model ${m.modelRow.h}px, strip ${m.status.h}px of ${m.rail.h}`);
-	await p.evaluate(() => { if (DaimondShell.setFold) DaimondShell.setFold('status', false); });
-	await p.waitForTimeout(250);
-
-	// ── The hardware the drawer has to hold itself off ───────────────────
-	m = await survey(p);
-	const before = { top: m.rail.top, bottom: m.rail.bottom, chats: m.sessionList.h };
+	// ── The hardware the page has to hold itself off ─────────────────────
 	await p.addStyleTag({ content: ':root { --safe-t: 44px; --safe-b: 34px; --safe-l: 12px; }' });
 	await p.waitForTimeout(250);
-	const insets = await p.evaluate(() => {
-		// The drawer's scroller holds the insets: the frame no longer scrolls (FIRE ublk30b).
+	const ins = await p.evaluate(() => {
+		const hd = document.getElementById('home-head').getBoundingClientRect();
 		const r = document.getElementById('rail-scroll');
-		const cs = getComputedStyle(r);
-		// The drawer's last content, with the drawer scrolled to its end.
 		r.scrollTop = r.scrollHeight;
 		const last = document.getElementById('admin').getBoundingClientRect();
-		const out = { padT: cs.paddingTop, padB: cs.paddingBottom, padL: cs.paddingLeft,
-			listBottom: Math.round(last.bottom), vh: innerHeight };
+		const out = { headPad: getComputedStyle(document.getElementById('home-head')).paddingTop,
+			headTop: Math.round(hd.top), foot: Math.round(last.bottom), vh: innerHeight };
 		r.scrollTop = 0;
 		return out;
 	});
-	check('the drawer holds its content off the notch and the home indicator',
-		insets.padT === '52px' && insets.padB === '42px' && insets.padL === '20px',
-		`${insets.padT} / ${insets.padB} / ${insets.padL}`);
-	check('and nothing runs under the indicator when it does',
-		insets.listBottom <= insets.vh - 34,
-		`drawer's foot at its scroll end ${insets.listBottom}, screen ${insets.vh}`);
+	check('the head clears the notch', ins.headPad === '44px', ins.headPad);
+	check('and nothing runs under the home indicator', ins.foot <= ins.vh - 34, `foot ${ins.foot}, screen ${ins.vh}`);
 
 	// ── The keyboard, which `100dvh` does not shrink for ─────────────────
 	await p.evaluate(() => document.documentElement.style.setProperty('--vvh', '500px'));
 	await p.waitForTimeout(250);
 	const kb = await survey(p);
-	// The lists keep their five-tile windows and the shortened drawer scrolls to them.
-	check('a raised keyboard shortens the drawer, which scrolls rather than cutting a list',
-		kb.rail.h === 500 && kb.sessionList.h >= before.chats - 1 && kb.scroller.scroll > kb.scroller.client,
-		`drawer ${kb.rail.h}px scroll ${kb.scroller.client}/${kb.scroller.scroll}, chats ${kb.sessionList.h}px (was ${before.chats}px)`);
+	check('a raised keyboard shortens the page, which scrolls rather than cutting a list',
+		kb.rail.h === 500 && kb.scroller.scroll > kb.scroller.client,
+		`page ${kb.rail.h}px scroll ${kb.scroller.client}/${kb.scroller.scroll}`);
 	await p.evaluate(() => document.documentElement.style.removeProperty('--vvh'));
 
 	consoleClean(s, 'WebKit 390x844');
@@ -355,48 +364,32 @@ try {
 	const { s } = await world({ name: 'railwk375', browser: 'webkit', width: 375, height: 667 });
 	sessions.push(s);
 	const p = s.page;
-	await drawer(p);
-	let m = await survey(p);
-	check('at 375x667 the defaults hold too',
-		!!m.state && m.state.diamonds === true && m.state.chats === true && m.state.status === false,
-		JSON.stringify(m.state));
-	check('and each list has more than twice the height it had (100px and 96px)',
-		m.diamondList.h >= 200 && m.sessionList.h >= 190,
-		`${m.diamondList.h} and ${m.sessionList.h}`);
-	await p.screenshot({ path: path.join(SHOTS, 'railmobile-wk375-defaults.png') });
-	await tap(p, '.rail-fold[data-fold="diamonds"]');
-	m = await survey(p);
-	check('folding Diamonds shows four whole chat tiles on that screen, where none fitted before',
-		m.chatsWhole >= 4, `${m.chatsWhole} whole of ${m.chats}, list ${m.sessionList.client}px`);
-	await p.screenshot({ path: path.join(SHOTS, 'railmobile-wk375-diamonds-folded.png') });
+	await home(p);
+	const m = await survey(p);
+	check('at 375x667 the home page fills the screen and the Chats list shows three whole rows',
+		m.rail.h === 667 && m.chatsWhole >= 3, `${m.rail.h}px, ${m.chatsWhole} whole of ${m.chats}`);
+	check('and the identity row is still on screen', m.userRow.drawn && m.userRow.bottom <= m.vh, `${m.userRow.bottom} of ${m.vh}`);
+	await p.screenshot({ path: path.join(SHOTS, 'railmobile-wk375-home.png') });
 	consoleClean(s, 'WebKit 375x667');
 }
 
-// ── The Diamonds row counts, which WebKit cannot hold ────────────────────────
+// ── The Diamonds rows, which WebKit cannot hold ──────────────────────────────
 {
 	const { s, diamonds } = await world({ name: 'railcr390', browser: 'chromium', width: 390, height: 844 });
 	sessions.push(s);
 	const p = s.page;
 	check('the Chromium phone context really holds the Diamonds (WebKit has no OPFS here)',
 		diamonds >= 8, diamonds + ' in the store');
-	await drawer(p);
-	let m = await survey(p);
-	check('the Diamonds section shows five whole rows with both sections open (it showed two)',
+	await home(p);
+	const m = await survey(p);
+	check('the Diamonds list shows five whole rows, as the mock does',
 		m.diamondsWhole >= 5, `${m.diamondsWhole} whole of ${m.diamonds}, list ${m.diamondList.client}px`);
-	check('and the Chats section two whole tiles beside it (it showed one)',
-		m.chatsWhole >= 2, `${m.chatsWhole} whole of ${m.chats}`);
-	await p.screenshot({ path: path.join(SHOTS, 'railmobile-cr390-defaults.png') });
-	await tap(p, '.rail-fold[data-fold="chats"]');
-	m = await survey(p);
-	check('folding Chats puts every Diamond on screen at once',
-		m.diamondsWhole === m.diamonds && m.diamonds >= 8,
-		`${m.diamondsWhole} of ${m.diamonds}`);
-	check('and the folded Chats list is drawn at all — header only, nothing to scroll',
-		!m.sessionList.drawn && m.headC.drawn, `list ${m.sessionList.h}px, header ${m.headC.h}px`);
-	await p.screenshot({ path: path.join(SHOTS, 'railmobile-cr390-chats-folded.png') });
+	check('each a row of at least 44 px', m.diamondRowH >= 44, m.diamondRowH + 'px');
+	check('and no Diamond row shows its cog or Delete',
+		(await homeSurvey(p)).trayShown === 0);
+	await p.screenshot({ path: path.join(SHOTS, 'railmobile-cr390-home.png') });
 	consoleClean(s, 'Chromium 390x844');
 }
-
 // ── The desktop, which must not have paid for any of it ──────────────────────
 {
 	const s = await open({ name: 'raildesk', browser: 'chromium', connect: false });
@@ -410,6 +403,9 @@ try {
 	check('a desktop\'s status section is its identity row, exceptions, calm line and tally alone',
 		m0.idRow.drawn && !m0.modelRow.drawn && m0.admin.h <= m0.idRow.h + m0.needs.h + m0.calm.h + m0.spend.h + 20,
 		`identity ${m0.idRow.h}px, needs ${m0.needs.h}px, calm ${m0.calm.h}px, tally ${m0.spend.h}px, #admin ${m0.admin.h}px`);
+	const hd = await homeSurvey(p);
+	check('the desktop rail stays in #main, with no home head and its own cog and Delete',
+		!hd.inHome && !hd.head.drawn && hd.trayAll > 0 && hd.openRows === 0, JSON.stringify({ inHome: hd.inHome, head: hd.head.drawn }));
 	const deskDetailOpen = await openStatusDetail(p);
 	const m = await survey(p);
 	// No fold is drawn on a desktop: the status chevron went with its rows (lead, 16 Oct).

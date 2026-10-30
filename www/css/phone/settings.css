@@ -1,0 +1,126 @@
+/* css/phone/settings.css -- phone Stack (D-20261029-01): the Settings page with Appearance moved in (A3, frame b5).
+   Phone only: every rule sits under the phone media query, so nothing changes at >= 761 px.
+   Settings and each of its groups are pages of the stack (admin.js, settingsgroups.js): a large title,
+   then grouped inset rows of an icon tile, a title and a one-line subtitle, in iOS's Settings idiom. */
+@media (max-width: 760px) {
+	/* Appearance lives in Settings now: the top bar's door to it goes (Help folds it in below 760 px). */
+	#settings-menu-btn { display: none !important; }
+
+	/* A Settings page fills the stack's page frame under its bar (stack.css), which carries Back. */
+	.phone-page.sg-page {
+		-webkit-overflow-scrolling: touch;
+		color: var(--text-primary);
+		padding: 0 16px calc(32px + var(--safe-b, 0px));
+		box-sizing: border-box;
+	}
+	.phone-page.sg-page[hidden] { display: none; }
+
+	/* The drawer's body, moved onto the page: no longer a floating card. */
+	.sg-page > .admin-body {
+		display: flex; position: static; max-height: none; margin: 0;
+		background: transparent; border: 0; border-radius: 0; box-shadow: none; overflow: visible;
+	}
+	.sg-page .admin-scroll { overflow: visible; padding: 0; }
+	/* The head: the large title alone; the drawer's cross gives way to the stack bar's Back. */
+	.sg-page .admin-drawer-head { border-bottom: 0; padding: 0; }
+	/* Anchored on the stack's host: Daylight's `:root[data-skin] :is(…, .admin-title)` (0,3,1)
+	   draws every Admin title at 15 px and outranks a class-only rule. */
+	#phone-stack > .sg-page .admin-title {
+		font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 41px;
+		color: var(--text-primary); padding: 6px 4px 14px;
+	}
+	.sg-page #admin-close { display: none; }
+	/* The bar over a Settings page carries Back alone (b5): no brand, no shell controls. */
+	#app:is([data-stack="settings"], [data-stack="settings-group"]) .topbar :is(.brand-group, .top-actions) { visibility: hidden; }
+
+	/* An inset group: one rounded card, its rows split by hairlines from the text's edge. */
+	.sg-page .sg-inset {
+		background: var(--bg-secondary); border-radius: 14px; overflow: hidden;
+		margin: 0 0 16px; padding: 0;
+	}
+	.sg-page .sg-door {
+		display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px;
+		padding: 6px 14px 6px 12px; margin: 0; box-sizing: border-box; position: relative;
+		background: transparent; border: 0; border-radius: 0; text-align: left; color: var(--text-primary);
+	}
+	.sg-page .sg-doors .sg-door + .sg-door::before {
+		content: ""; position: absolute; top: 0; right: 0; left: 52px; border-top: 1px solid var(--border);
+	}
+	.sg-page .sg-words { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; gap: 2px; }
+	.sg-page .sg-name { font-size: 17px; line-height: 20px; color: var(--text-primary); }
+	.sg-page .sg-what {
+		font-size: 13px; line-height: 16px; color: var(--text-secondary);
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+	}
+	.sg-page .sg-chev { flex: none; width: 18px; height: 18px; color: var(--text-muted); }
+	/* The icon tile: the group's mark on a soft square of its own colour. */
+	.sg-page .sg-tile {
+		flex: none; width: 30px; height: 30px; border-radius: 8px;
+		display: inline-flex; align-items: center; justify-content: center;
+	}
+	.sg-page .sg-tile .ic { width: 18px; height: 18px; stroke-width: 1.8; }
+	.sg-page .sg-tile-models  { background: color-mix(in srgb, #E5484D 24%, transparent); color: #F2878A; }
+	.sg-page .sg-tile-tools   { background: color-mix(in srgb, #3E7BDA 26%, transparent); color: #8DB4F0; }
+	.sg-page .sg-tile-prompts { background: color-mix(in srgb, #8E5BD8 26%, transparent); color: #BFA0F0; }
+	.sg-page .sg-tile-data    { background: color-mix(in srgb, #3E9B63 26%, transparent); color: #86CFA0; }
+	.sg-page .sg-tile-help    { background: color-mix(in srgb, #C9922E 26%, transparent); color: #E5BE74; }
+	/* The member's row: a round initial, a larger name. */
+	.sg-page .sg-ident { min-height: 52px; gap: 14px; }
+	.sg-page .sg-avatar {
+		flex: none; width: 40px; height: 40px; border-radius: 50%;
+		display: inline-flex; align-items: center; justify-content: center;
+		background: var(--accent-soft); color: var(--accent-text); font-size: 20px; font-weight: 600;
+	}
+	.sg-page .sg-ident .sg-name { font-size: 17px; line-height: 20px; }
+
+	/* A group's heading: the mock's capitals (Stack review fix 4). */
+	.sg-page .sg-head {
+		font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+		color: var(--text-secondary); padding: 6px 4px 8px;
+	}
+
+	/* Appearance: the menu's own node, drawn as rows of a label and its control. */
+	.sg-page #settings-menu[data-host="settings"] {
+		position: static; display: block; inset: auto; width: auto; max-width: none; max-height: none;
+		margin: 0; padding: 6px 0 8px; background: transparent; border: 0; box-shadow: none;
+		border-radius: 0; overflow: visible; transform: none;
+	}
+	.sg-page #settings-menu .ap-row {
+		display: flex; align-items: center; justify-content: space-between; gap: 12px;
+		min-height: 52px; padding: 4px 14px;
+	}
+	.sg-page #settings-menu .ap-label { font-size: 17px; color: var(--text-primary); flex: none; }
+	.sg-page #settings-menu .ap-row .seg,
+	.sg-page #settings-menu .ap-row .size-row {
+		flex: 0 1 auto; flex-wrap: nowrap; gap: 2px; padding: 3px; margin: 0;
+		background: var(--bg-tertiary); border-radius: 10px;
+	}
+	.sg-page #settings-menu .ap-row .seg button,
+	.sg-page #settings-menu .ap-row .size-row button {
+		flex: 0 0 auto; min-width: 0; font-size: 16px; height: 38px; min-height: 38px; padding: 0 12px;
+	}
+	/* The chosen segment is a raised pill on the track (b5), not a darker well. */
+	#phone-stack > .sg-page #settings-menu .ap-row .seg button { border-radius: 8px; background: transparent; box-shadow: none; }
+	#phone-stack > .sg-page #settings-menu .ap-row .seg button[aria-pressed="true"] {
+		background: var(--bg-primary); color: var(--text-primary); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+	}
+	/* The reading-size A's set their glyphs inline from these two (workspace.js), so the phone's 16px floor is
+	   given here, where the inline sizes read them, and the larger A stays the larger. */
+	.sg-page #settings-menu .size-row { --fs-xs: 16px; --fs-2xl: 22px; }
+	.sg-page #settings-menu .size-row .sample { font-size: 16px; font-weight: 600; padding: 0 4px; }
+	.sg-page #settings-menu .size-row .pct { display: none; }
+	.sg-page #settings-menu .ap-swatches { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 14px 10px; }
+	.sg-page #settings-menu .ap-swatch {
+		width: 44px; height: 44px; border-radius: 50%; padding: 0;
+		border: 1px solid var(--border-2); box-shadow: inset 0 0 0 3px var(--bg-secondary);
+	}
+	.sg-page #settings-menu .ap-swatch[aria-pressed="true"] { border: 2px solid var(--accent); }
+	/* The rows the popover drew under headings (language, currency, calendar) keep them. */
+	.sg-page #settings-menu .pop-head { padding: 10px 14px 4px; }
+	.sg-page #settings-menu .set-pick,
+	.sg-page #settings-menu .pop-note { padding-left: 14px; padding-right: 14px; }
+	.sg-page #settings-menu select { font-size: 16px; min-height: 44px; }
+
+	/* Lock, Log out and Forget at the foot, as before. */
+	.sg-page .sg-foot { margin-top: 8px; }
+}

@@ -24,6 +24,7 @@ import { clearDiamondFilters, renderDiamondList, retitleDoc } from './agentspane
 import { crystalFull, notePrunes, readCrystalAsset, setCrystalFull, syncCrystalFullBtn } from './crystal.js';
 import { renderArtefacts, renderChatAttachments } from './marks.js';
 import { tOr } from './settingsui.js';
+import { DaimondStack } from './phone_stack.js';
 // page-split: end imports
 export let WakeLock, mobileMq, DaimondPanels; // page-split: hoisted
 let SKIN_AS_FOUND; // page-split: hoisted
@@ -509,7 +510,11 @@ var MOBILE_GUESTS = {
 	// the phone. It rises as a sheet instead.
 	tracker: 1,
 };
-export function mshow(name) {
+/// `opts.restore`: boot redrawing the panel it was on. It moves no page: the stack is
+/// what history holds (a reload on Settings stays on Settings, QA ccp29 F6), and a
+/// fresh start is the home page.
+export function mshow(name, opts) {
+	var restore = !!(opts && opts.restore);
 	// A phone showing something other than the conversation is a phone that is
 	// not showing the crystal, and full screen must not outlive it -- the
 	// control that ends the mode is in the AI panel's own header. Anything
@@ -519,21 +524,20 @@ export function mshow(name) {
 	// A menu hangs on the body and would stay over whatever is shown in its place
 	// (UNBLOCK-24 r3, OWNKEY-PG): the stack puts it away.
 	DaimondLayers.leave();
-	// The rail is reached through the hamburger drawer, not the bar.
+	// On a phone the rail is the stack's home page, not a destination on the floor.
 	if (name === 'rail') {
-		if (window.DaimondShell) DaimondShell.openDrawer();
+		if (DaimondStack.started() && !restore) DaimondStack.push('home');
 		DaimondPanels.reflow();
 		return;
 	}
-	// SHOWING A DESTINATION ENDS THE DRAWER'S JOB. The drawer is where a person
-	// picks a chat or a Diamond; once the floor shows what they asked for it is
-	// only in the way, and it covered the composer after New Chat. Done here, at
-	// the one seam, so every route in is covered -- the buttons, the footer chips
-	// and the callers nobody listed -- rather than each button closing it.
-	// BEFORE THE GUESTS, which return early: a sheet rose over a still-open drawer
-	// when the close was below them (an Admin "Edit the ... prompt" row, gatefix
-	// 16 Oct), against the rule this comment states.
-	if (window.DaimondShell) DaimondShell.closeDrawer();
+	// SHOWING A DESTINATION PUSHES THE TURN PAGE. Home is where a person picks a
+	// chat or a Diamond; once the floor is to show what they asked for, it is the
+	// page in view (Stack A2; this was the drawer's close). Done here, at the one
+	// seam, so every route in is covered -- the buttons, the footer chips and the
+	// callers nobody listed. BEFORE THE GUESTS, which return early: a sheet rose
+	// over the rail when it was below them (an Admin "Edit the ... prompt" row,
+	// gatefix 16 Oct).
+	if (DaimondStack.started() && isMobile() && !restore) DaimondStack.push('turn');
 	// A guest rises as a sheet; the floor beneath it stays the conversation.
 	if (MOBILE_GUESTS[name] && window.DaimondSheet) {
 		document.body.dataset.mpanel = 'ai';
@@ -819,11 +823,11 @@ var agentsPushedAway = false;
 
 export function revealAgents() {
 	if (agentsPushedAway) return;
-	// A fan-out lands in the middle of a turn, so it can land while a person is in
-	// the phone's drawer choosing another chat. The panel still opens, but the
-	// floor and the drawer are theirs: only a tap of their own moves either, and
+	// A fan-out lands in the middle of a turn, so it can land while a person is on
+	// the phone's home page choosing another chat. The panel still opens, but the
+	// floor and the page are theirs: only a tap of their own moves either, and
 	// `show` is told to leave the floor alone because it reaches `mshow` itself.
-	var held = isMobile() && document.body.classList.contains('drawer-open');
+	var held = isMobile() && DaimondStack.started() && DaimondStack.top() === 'home';
 	if (!DaimondPanels.isOpen('agents')) DaimondPanels.show('agents', { quiet: held }); else DaimondPanels.reflow();
 	if (isMobile() && !held) mshow('agents');
 }

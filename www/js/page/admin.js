@@ -19,6 +19,7 @@ import { buildForm, closerFor, confirmDialog, dialog, noticeDialog, promptDialog
 import { Pending, Prompts, proBuyLabel, proHasEnded, proPaused, proTermLine, renderCredits } from './pending.js';
 import { relTime } from './diamonds.js';
 import { openCredits, openSettings, renderLimitRows, tOr } from './settingsui.js';
+import { DaimondStack } from './phone_stack.js';
 // page-split: end imports
 export let DaimondAdmin; // page-split: hoisted
 
@@ -208,9 +209,13 @@ export function install() { // page-split: install
 		var curView = null;
 		var escaper = null;      // the current form's key handler
 
-		/// Is the rail actually on screen? Not "is it open" — the rail folds
-		/// itself away below 1280px, and on a phone it is one tab of four.
+		/// Has the drawer a place on screen? Not "is it open". On a phone its place
+		/// is the Settings page of the stack (Stack A3), so every opener pushes that
+		/// page and none puts up the modal over home, which the stack does not know
+		/// of and no thumb can close (A4h). Elsewhere it is the rail, which folds
+		/// itself away below 1280px.
 		function available() {
+			if (onPhone()) return true;
 			var el = document.getElementById('panel-rail');
 			return !!el && el.offsetParent !== null;
 		}
@@ -314,13 +319,20 @@ export function install() { // page-split: install
 		var drawerOpener = null;		// what to give the keyboard back to
 
 		function showDrawer(title, formMode, key) {
-			// On a phone the panel's home is the drawer, so the drawer comes first:
-			// opened while the drawer was put away, the panel rode the closed drawer
-			// off the left edge and under its `visibility: hidden`, and Back with it
-			// (FIRE ublk30b, flow backlog of 18 Oct). Opening it here puts the drawer
-			// layer under Admin's, which is where Back from Admin lands anyway.
-			if (window.DaimondShell && DaimondShell.isPhone && DaimondShell.isPhone()
-				&& !document.body.classList.contains('drawer-open')) DaimondShell.openDrawer();
+			// On a phone the panel is the Settings page of the stack (Stack A3), so every
+			// opener brings that page up, over whatever page stood; a group page over it
+			// stays. (Before A3 the panel rode the rail, and the home page was pushed
+			// instead: FIRE ublk30b, Stack A2. Pushing home now popped Settings itself.)
+			if (onPhone()) {
+				// Taken first: pushing Settings draws its home (followStack), which puts views away.
+				var top = DaimondStack.top(), v = formMode ? null : curView;
+				if (!isSettings(top)) pushPhoneSettings();
+				// A view (Credits, Models, What's new...) is a page of its own over the page it
+				// was opened from: drawn on Settings it stood under a group page, and the tap
+				// that asked for it showed nothing (A4j). Home is Settings' own page.
+				if (v) { curView = v; showPhoneView(v, title, key); }
+				else if (top === 'settings-view') DaimondStack.push('settings');
+			}
 			if (adminWrap) {
 				adminWrap.classList.add('admin-open');
 				adminWrap.classList.toggle('admin-form-mode', !!formMode);
@@ -337,15 +349,19 @@ export function install() { // page-split: install
 			if (!drawerOpen) {
 				drawerOpen = true;
 				// Back does what the form's own × does when a form is up, so the caller's promise is answered.
-				DaimondLayers.open('admin', function () { if (escaper) cancelForm(); else closeAdmin(); });
+				// On a phone Settings is pages of the stack, and the stack alone keeps its history:
+				// a layer's entry as well put two owners on one Back (QA ccp29 F2). Escape is the
+				// stack's Back there, through the claim registerPhonePages holds.
+				if (!onPhone()) DaimondLayers.open('admin', function () { if (escaper) cancelForm(); else closeAdmin(); });
 				// What had the keyboard when the drawer went up, so its closer can
 				// give it back. Only on the way IN: switching from Home to Models is
 				// not a new opening, and taking the reading again there would make
 				// the drawer's own last-clicked row the thing focus went home to.
 				drawerOpener = document.activeElement;
-				// Defer, so the very click that opened the drawer does not close it.
-				setTimeout(function () {
-					if (drawerOpen) document.addEventListener('mousedown', outsideClose, true);
+				// Defer, so the very click that opened the drawer does not close it. A phone's
+				// Settings is a whole page, with nothing outside it to press (QA ccp29 F1).
+				if (!onPhone()) setTimeout(function () {
+					if (drawerOpen && !onPhone()) document.addEventListener('mousedown', outsideClose, true);
 				}, 0);
 			}
 		}
@@ -363,8 +379,13 @@ export function install() { // page-split: install
 		/// Nor is a model list (`.mp-pop`, models.js). It too is drawn on the body, so a
 		/// press on a row of the Models panel's drafting pulldown, or the add-provider
 		/// form's, shut the drawer under it before the row could be chosen.
+		///
+		/// Nor is the drawer's body where it stands now: on a phone it moves onto the
+		/// Settings page, out of #admin (QA ccp29 F1).
 		function outsideClose(e) {
 			if (!adminWrap || adminWrap.contains(e.target)) return;
+			var body = document.getElementById('admin-body');
+			if (body && body.contains(e.target)) return;
 			if (e.target && e.target.closest && e.target.closest('.modal, .pair-scrim, .pal-scrim, .mp-pop')) return;
 			closeAdmin();
 		}
@@ -379,6 +400,7 @@ export function install() { // page-split: install
 			curView = null;
 			if (adminWrap) adminWrap.classList.remove('admin-open', 'admin-form-mode');
 			drawerOpen = false;
+			leavePhoneSettings();
 			DaimondLayers.done('admin');
 			document.removeEventListener('mousedown', outsideClose, true);
 			// The keyboard goes back to whatever opened the drawer -- the identity
@@ -589,7 +611,9 @@ export function install() { // page-split: install
 		/// they backed out. The options are a dialog's options, so the fallback
 		/// is the dialog itself.
 		function form(opts) {
-			if (!available()) return dialog(opts);
+			// A phone asks in a dialog, as it did before Settings was a page: a form
+			// asked from a chat must not push Settings over it.
+			if (!available() || onPhone()) return dialog(opts);
 			var opener = document.activeElement;   // captured before anything moves it
 			toPanel();
 			showDrawer(opts.title || t('admin.settings'), true);
@@ -722,9 +746,141 @@ export function install() { // page-split: install
 			renderHomeBodyInner();
 			mountStatusDetail();
 			// Settings opens on the weekly stop and six doors (D-20261024-16): settingsgroups.js
-			// regroups what was just drawn, by intent.
-			if (window.DaimondSettingsGroups) DaimondSettingsGroups.apply(homeView, titleEl);
+			// regroups what was just drawn, by intent. On a phone it is a page of the stack.
+			if (window.DaimondSettingsGroups) {
+				DaimondSettingsGroups.apply(homeView, titleEl, onPhone() ? phoneHost : null);
+			}
 		}
+
+		// ── Settings on a phone: pages of the stack (Stack A3, frame b5) ──
+		// Settings is a pushed page, and each of its groups a page pushed over it. The drawer's
+		// body MOVES onto the Settings page, views and all, so there is one Settings in the
+		// document wherever it stands; every view and painter keeps reaching it by id.
+		function onPhone() {
+			return !!(window.DaimondShell && DaimondShell.isPhone && DaimondShell.isPhone());
+		}
+		var groupHead = null, groupBody = null, groupBack = null;	// the group page's parts
+		var phoneRegistered = false;
+		function registerPhonePages() {
+			if (phoneRegistered) return;
+			phoneRegistered = true;
+			DaimondStack.on('settings', function (page) {
+				page.classList.add('sg-page');
+				seatBody();
+			});
+			// Back is the stack bar's (#stack-back), the edge swipe's or the browser's: none in the page.
+			DaimondStack.on('settings-view', function (page) {
+				page.classList.add('sg-page', 'sg-view-page');
+				viewHead = el('div', 'admin-title sg-large');
+				viewBody = el('div', 'sg-view');
+				page.appendChild(viewHead);
+				page.appendChild(viewBody);
+			});
+			DaimondStack.on('settings-group', function (page) {
+				page.classList.add('sg-page', 'sg-group-page');
+				groupHead = el('div', 'admin-title sg-large');
+				groupBody = el('div', 'sg-group');
+				page.appendChild(groupHead);
+				page.appendChild(groupBody);
+			});
+			// Every way back (and forward) moves the stack without a word to this module, so
+			// the top page says where the user went: off a group, the group is let go; off
+			// Settings, the Settings close path runs, as the drawer's cross ran it; onto
+			// Settings or a group with nothing drawn (Forward, a reload, a narrower window),
+			// it is drawn (QA ccp29 F3, F6).
+			var was = null;
+			DaimondStack.watch(function (top, depth, o) {
+				var from = was;
+				was = top;
+				topOpts = o;
+				seatBody();
+				if (from === 'settings-view' && top !== 'settings-view' && isSettings(top) && drawerOpen) homeContent();
+				if (from === 'settings-group' && DaimondStack.pages().indexOf('settings-group') < 0 && groupBack) {
+					var left = groupBack;
+					groupBack = null;
+					left();
+				}
+				if (isSettings(from) && !isSettings(top) && drawerOpen) closeAdmin();
+				if (isSettings(top)) followStack(top, o);
+			});
+			// Escape on a phone is the stack's Back, as the bar's is: a group goes back to
+			// Settings, Settings to the page under it. A form up answers its caller first.
+			DaimondLayers.claim('settings-page', function () {
+				if (!drawerOpen || !onPhone() || !isSettings(DaimondStack.top())) return false;
+				if (escaper) cancelForm(); else DaimondStack.pop();
+			}, function () { return drawerOpen && onPhone() && isSettings(DaimondStack.top()); });
+			// The body goes home when the window widens (QA ccp29 F5).
+			var mq = window.matchMedia ? window.matchMedia('(max-width: 760px)') : null;
+			if (mq && mq.addEventListener) mq.addEventListener('change', seatBody);
+			else if (mq && mq.addListener) mq.addListener(seatBody);
+		}
+		function isSettings(n) { return n === 'settings' || n === 'settings-group' || n === 'settings-view'; }
+		/// Put view `v` on the view page, pushed over Settings or the group it was opened
+		/// from, and named there. `toPanel` brings it back into the drawer's body.
+		var viewHead = null, viewBody = null;	// the view page's parts
+		function showPhoneView(v, title, key) {
+			registerPhonePages();
+			DaimondStack.push('settings-view', { view: v.id });
+			if (!viewBody) return;
+			if (key) DaimondI18n.bind(viewHead, '', key);
+			else mark(viewHead, '', title || t('admin.settings'));
+			if (v.parentNode !== viewBody) { viewBody.innerHTML = ''; viewBody.appendChild(v); }
+			v.style.display = '';
+		}
+		/// The drawer's body stands on the Settings page while a phone's stack holds it, and in
+		/// #admin otherwise, so the desktop drawer is never left empty after a phone width.
+		var bodySeat = null;	// where #admin-body stands in #admin
+		function seatBody() {
+			var body = document.getElementById('admin-body');
+			if (!body) return;
+			if (!bodySeat && body.parentNode) {
+				bodySeat = document.createComment(' #admin-body\'s seat off the phone (admin.js) ');
+				body.parentNode.insertBefore(bodySeat, body);
+			}
+			var page = document.querySelector('#phone-stack > .phone-page[data-page="settings"]');
+			var phone = onPhone() && page && DaimondStack.pages().indexOf('settings') >= 0;
+			if (phone && body.parentNode !== page) page.appendChild(body);
+			else if (!phone && bodySeat && bodySeat.nextSibling !== body) bodySeat.parentNode.insertBefore(body, bodySeat.nextSibling);
+		}
+		/// Settings, or one of its groups, is the top page: draw it if nothing is drawn. Before
+		/// init (a reload's stack is restored by phone_home.js first) init draws it instead.
+		var group = '';		// the group page's group, while one is drawn
+		var topOpts = null;	// the top page's opts, as the stack last said
+		function followStack(top, o) {
+			if (!adminWrap || !onPhone()) return;
+			if (!drawerOpen) home();
+			var want = top === 'settings-group' && o && o.group ? o.group : '';
+			if (want && want !== group && phoneHost.show) phoneHost.show(want);
+		}
+		function pushPhoneSettings() {
+			registerPhonePages();
+			DaimondStack.push('settings');
+		}
+		/// Take the Settings pages off the stack, down to what was under them, in one move
+		/// (a page lower down pushed is gone back to).
+		function leavePhoneSettings() {
+			if (!phoneRegistered || !isSettings(DaimondStack.top())) return;
+			var ps = DaimondStack.pages(), at = ps.indexOf('settings');
+			if (at > 0) DaimondStack.push(ps[at - 1]);
+			else if (at === 0) {
+				// Settings is the root while no home page is pushed under it: hide it instead.
+				var root = document.querySelector('.phone-page[data-page="settings"]');
+				if (root) root.hidden = true;
+			}
+		}
+		// What settingsgroups.js draws a phone's group page through.
+		var phoneHost = {
+			group: function (title, frag, onBack, id) {
+				group = id || '';
+				groupBack = function () { group = ''; if (onBack) onBack(); };
+				if (!groupBody) return;		// no group page yet: it is built on its first push
+				groupHead.textContent = title;
+				groupBody.innerHTML = '';
+				if (frag) groupBody.appendChild(frag);
+			},
+			push: function (id) { registerPhonePages(); DaimondStack.push('settings-group', { group: id }); },
+			show: null,	// settingsgroups.js: draw group `id` on the group page without a push
+		};
 		function renderHomeBodyInner() {
 			if (!homeView) return;
 			homeView.innerHTML = '';
@@ -2479,7 +2635,18 @@ export function install() { // page-split: install
 				// Carry the heading's key across the move, or a drawer that has been
 				// dragged narrow and back stops following a language change.
 				var key      = titleEl ? titleEl.getAttribute('data-i18n') : null;
-				if (available()) {
+				if (onPhone()) {
+					// Into a phone's width with the drawer up, Settings becomes the page on top
+					// of the stack, so a phone booting with it open stands on that page and not
+					// on home under it (A4h). After the task: the resize comes before the media
+					// query's change, and the stack takes the phone (home as its floor,
+					// phone_home.js) only on that change.
+					setTimeout(function () {
+						if (!drawerOpen && modal.style.display === 'none') return;
+						if (!onPhone()) return;
+						toPanel(); showDrawer(title, formOpen, key);
+					}, 0);
+				} else if (available()) {
 					if (inModal) { toPanel(); showDrawer(title, formOpen, key); }
 				} else if (!inModal) {
 					toModal(title, formOpen, key);
@@ -2511,10 +2678,14 @@ export function install() { // page-split: install
 			// narrow-window modal counts as standing open, since the same view is
 			// what it is holding.
 			window.addEventListener('daimond:handle', refreshHome);
-			closeAdmin();   // the drawer starts hidden; only the Status strip shows
+			// The drawer starts hidden, and only the Status strip shows, unless a phone's
+			// reload restored the stack onto Settings (QA ccp29 F6): then it is drawn there.
+			if (onPhone() && isSettings(DaimondStack.top())) followStack(DaimondStack.top(), topOpts);
+			else closeAdmin();
 			status();
 		}
 
+		registerPhonePages();	// at install, so a reload's stack keeps Settings (QA ccp29 F6); each mounts on first push
 		return {
 			init: init, available: available, settings: settings, credits: credits,
 			release: release, push: push,

@@ -7,21 +7,20 @@
    draggable bottom SHEET over it, and at its half detent you see
    the thing AND the tail of the chat at once — the daimon still
    beside the thing, only stacked instead of splayed. Diamonds and
-   Chats live in a left DRAWER; the four dwellable destinations
-   (Chat, Email, Files, Agents) sit on the bottom bar.
+   Chats are the stack's home page (Stack A1-A2, D-20261029-01);
+   the panel chip row is the bottom bar.
 
-   This file owns the drawer, the sheet and the hamburger. The
+   This file owns the home page's frame and the sheet. The
    plain rearranging (one destination at a time, touch targets)
    stays in responsive.css. Everything here is confined to the
    phone breakpoint so desktop is untouched.
    ============================================================ */
 
-/* The hamburger, the sheet and the section folds exist only on a phone. The
+/* The sheet and the section folds exist only on a phone. The
    status section's chevron was drawn on a desktop too (D-20261008-14) until its
    rows moved to Settings > This device (D-20261015-15): folded or not, the rail
    shows identity, exceptions, the calm line and the tally (st-S1x), so on a
    desktop it had nothing to unfold and is gone. */
-#drawer-btn { display: none; }
 .rail-fold  { display: none; }
 /* Pointing down when the section is open, at its heading when it is not. The
    chevron turns with the state at every width, so it is outside the breakpoint. */
@@ -42,7 +41,6 @@
 	.panel.rail .admin-status > *:not(.astat-id):not(.astat-needs):not(.astat-summary) { display: none !important; }
 }
 #msheet     { display: none; }
-#scrim      { display: none; }
 
 @media (max-width: 760px) {
 
@@ -52,69 +50,22 @@
 		min-height: 44px;
 	}
 
-	/* ── The hamburger ─────────────────────────────────────────
-	   Far left of the top bar, within thumb reach is less important
-	   here than convention: the menu lives where a menu lives. */
-	#drawer-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 36px;
-		height: 36px;
-		margin-right: 2px;
-		padding: 0;
-		background: none;
-		border: none;
-		border-radius: var(--radius);
-		color: var(--text-secondary);
-		cursor: pointer;
-		/* Bar-icon's own 36px box (G16), with the touch floor held the same
-		   way as every other shrunk control this pass (R3/R9/R12): an
-		   invisible 44px overlay, not the box itself. */
-		position: relative;
-	}
-	#drawer-btn::after {
-		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
-	}
-	#drawer-btn .ic { width: 16px; height: 16px; }
-	#drawer-btn:active { background: var(--accent-soft); }
 
-	/* ── The left drawer: Diamonds + Chats + Admin ─────────────────
-	   The whole rail, slid in from the left over a scrim. It keeps
-	   its own internal split (Diamonds/Chats above, Admin below), so
-	   nothing about the rail's contents changes — only where it is. */
+	/* ── The home page's frame: Diamonds + Chats + status ─────────
+	   The rail is the stack's floor page (Stack A1-A2): fixed to the screen,
+	   opaque, home.css sizing it to the full width. The frame never scrolls;
+	   `.rail-scroll` below does, holding the hardware insets off its content
+	   (FIRE ublk30b), and the money foot and status section pin under it. */
 	.panel.rail {
 		position: fixed !important;
 		z-index: 80;
 		top: 0;
 		bottom: 0;
 		left: 0;
-		width: min(86vw, 344px) !important;
-		max-width: 344px;
 		height: 100dvh !important;
 		margin: 0;
-		/* Opaque, or the drawer is see-through: a desktop rail column never
-		   needed a background, but a floating drawer does. */
 		background: var(--bg-primary);
-		border-right: 1px solid var(--border);
-		/* The drawer is fixed to the viewport, so it is outside #app's frame and
-		   has to hold the hardware off its own contents: installed, its first
-		   control sat under the status bar and its last under the home
-		   indicator. `.rail-scroll` below holds them, as the drawer's scroller;
-		   the home indicator's inset is the frame's, under the pinned money foot. */
 		padding: 0 0 var(--safe-b);
-		transform: translateX(-100%);
-		transition: transform .28s cubic-bezier(.32, .72, 0, 1), visibility 0s .28s;
-		box-shadow: 0 0 40px rgba(0, 0, 0, .45);
-		will-change: transform;
-		/* The FRAME, which never scrolls: `.rail-scroll` below does (FIRE ublk30b).
-		   The slide's `transform` makes this box the containing block of the fixed
-		   Admin panel, so the panel is placed against whatever box this is -- and
-		   while it was also the scroller, the panel opened at the top of the
-		   scrolled content. With the drawer at its foot that put Settings' Back
-		   430px above the screen (ublk30's crawls, TRAPPED admin: home). The frame
-		   keeps the slide, the scrim's edge and the panel's anchor; its content
-		   scrolls one box in, past which the fixed panel is not carried. */
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
@@ -156,42 +107,6 @@
 	.panel.rail:not([data-fold-status="on"]) #admin-status > .astat-id > #user-row { height: 43px; min-height: 43px; box-sizing: border-box; }
 	.panel.rail:not([data-fold-status="on"]) .astat-needs > .astat-need:not([data-need="bypass"]) { display: none; }
 	.panel.rail:not([data-fold-status="on"]) .admin-status > .astat-needs:not(:has(> [data-need="bypass"])) { display: none; }
-	/* The drawer is the scroller, and nothing inside it may be. Two competing
-	   scroll regions inside a 100dvh column meant the lists absorbed every
-	   shortfall instead of overflowing: at 320x568 the Diamonds list came out
-	   15px tall and the Chats list 2px, with three Diamonds in the store and not
-	   one complete row visible in either. In landscape it was worse -- the
-	   search box and the two rail buttons were pushed ABOVE the drawer's top
-	   edge, unreachable, with scrollHeight equal to clientHeight so there was
-	   nothing to scroll back to.
-
-	   One column, its natural height, scrolled by the drawer. That is the phone
-	   idiom anyway, and it retires the rail-split handle here: there are no
-	   longer two regions for it to divide. */
-	/* The Admin panel rises from the identity row, which is right on a desktop
-	   where the rail is a full-height column and there is room above it. In the
-	   drawer there is not: at 390x844 the identity row sits ~310px down and the
-	   panel is `min(70vh, 540px)` tall, so it grew UPWARDS off the screen and its
-	   own head -- the title and the × -- landed 214px above the top edge, out of
-	   reach with no way to scroll to it. Measured, not guessed.
-
-	   Pinned to the top of the drawer instead, and capped to the drawer's own
-	   height. The rail carries a `transform`, which makes it the containing block
-	   for a fixed descendant, so these insets resolve against the drawer's
-	   padding box rather than the viewport -- the panel is the drawer's width and
-	   moves in and out with it. */
-	.panel.rail .admin-body {
-		position: fixed;
-		/* Where the rail's own padding puts its content, which holds the hardware off:
-		   at 0 the drawer's head and Close lay under the status bar, out of reach
-		   (crawl, D-20261003-07). The max-height below already allowed for both insets. */
-		top: calc(8px + var(--safe-t));
-		bottom: auto;
-		left: 0;
-		right: 0;
-		margin-bottom: 0;
-		max-height: calc(var(--rail-h, 100dvh) - 16px - var(--safe-t) - var(--safe-b));
-	}
 	/* ── EACH LIST SCROLLS, AS IT DOES ON A DESKTOP ───────────────────
 	   These three rules used to say the opposite -- `overflow: visible` on both
 	   lists and `flex: none` on the top half -- which made the drawer one long
@@ -359,35 +274,13 @@
 		height: var(--rail-h) !important;
 	}
 
-	/* The drawer hides by transform, so a closed one would keep its controls in
-	   the Tab order and read to VoiceOver off the left edge. It is hidden here,
-	   in the query that slides it, as #msheet is: the `.28s` delay above holds
-	   `visibility: hidden` back until the close slide ends, and the open rule
-	   unhides at once. A script's `inert` lagged a widened window by its resize
-	   debounce and left the desktop rail dead for that beat (GATEFIX, r568). */
-	body.drawer-open .panel.rail {
-		transform: translateX(0);
-		transition: transform .28s cubic-bezier(.32, .72, 0, 1), visibility 0s;
-	}
-	body:not(.drawer-open) .panel.rail { visibility: hidden; }
-	@media (prefers-reduced-motion: reduce) {
-		.panel.rail,
-		body.drawer-open .panel.rail { transition: none; }
-	}
+	/* Off the home page the rail keeps its controls out of the Tab order and away
+	   from VoiceOver (Stack A2). Hidden in CSS, not by a script's `inert`, which
+	   lagged a widened window by its resize debounce (GATEFIX, r568). */
+	#app:not([data-stack="home"]) .panel.rail { visibility: hidden; }
+	/* A page's lists do not fold (Stack A2): only the status section keeps its chevron. */
+	.rail-fold:is([data-fold="diamonds"], [data-fold="chats"]) { display: none; }
 
-	/* The scrim dims and catches the tap that closes the drawer. The
-	   sheet has NO scrim on purpose — the chat above it stays live. */
-	#scrim {
-		display: block;
-		position: fixed;
-		inset: 0;
-		z-index: 70;
-		background: rgba(0, 0, 0, .38);
-		opacity: 0;
-		pointer-events: none;
-		transition: opacity .28s ease;
-	}
-	body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 
 	/* ── The sheet: a thing, over the chat ─────────────────────
 	   Anchored to the bottom, ABOVE the bar, so the bar is always

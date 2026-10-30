@@ -3,9 +3,12 @@
    ------------------------------------------------------------
    Two surfaces beyond the chat floor and the bottom bar:
 
-     the DRAWER   the rail (Diamonds / Chats / Admin), slid in from
-                  the left. Opened by the hamburger, closed by a
-                  tap on the scrim, a swipe, or picking a chat.
+     the STACK    whole-screen pages (Stack A2, D-20261029-01): the
+                  rail (Diamonds / Chats / Admin) is the floor page,
+                  `home`; the conversation and its destinations are
+                  the `turn` page pushed over it. Back is the bar's
+                  chevron, the browser's Back, or (installed) a
+                  left-edge swipe. The stack is page/phone_stack.js.
 
      the SHEET    a "thing" (Web, Doc, Message, Compose, Tools)
                   raised over the chat at three detents. `half`
@@ -15,9 +18,9 @@
                   the thing can be talked over without leaving it.
 
    `daimond.js` routes here: a stage guest reaching mshow() opens
-   the sheet; the rail opens the drawer. This file exposes
+   the sheet; the rail goes home. This file exposes
    window.DaimondSheet (open/close/onEngineHide) and
-   window.DaimondShell (openDrawer/closeDrawer).
+   window.DaimondShell (home/turn/onHome).
    ============================================================ */
 (function () {
 	'use strict';
@@ -91,28 +94,58 @@
 		return signals >= 3;
 	}
 
-	// ── The drawer ─────────────────────────────────────────────
-	function openDrawer() {
-		document.body.classList.add('drawer-open');
-		DaimondLayers.open('drawer', leaveDrawer);
+	// ── The page stack (Stack A2) ──────────────────────────────
+	// The drawer is retired on a phone: the rail is the floor page, `home`, and the
+	// conversation the `turn` page over it. Both are registered, and the stack
+	// begun, by page/phone_home.js (Stack A1) at a phone's width; every page with
+	// content of its own (Settings, a Diamond) by its own module. This file keeps
+	// the bar, the edge swipe and the shell's doors, each a no-op until the stack
+	// has begun.
+	function stk() {
+		var s = window.DaimondStack;
+		return s && s.started() ? s : null;
 	}
-	function closeDrawer() {
-		document.body.classList.remove('drawer-open');
-		DaimondLayers.done('drawer');
-	}
-	/// The drawer put away by a key, a cross or Back: the keyboard goes back to what opened it. It is the layer's own
-	/// closer, because the drawer hides by transform and so the stack's Escape can never tell it is not on screen.
-	function leaveDrawer() {
-		closeDrawer();
-		var burger = document.getElementById('drawer-btn');
-		if (burger) { try { burger.focus(); } catch (x) { /* not on screen */ } }
-	}
-	function toggleDrawer() {
-		if (document.body.classList.contains('drawer-open')) closeDrawer();
-		else openDrawer();
+	/// Back to the floor: the rail, Diamonds and Chats.
+	function goHome() { var s = stk(); if (s) s.push('home'); }
+	/// The conversation and its destinations, over the floor.
+	function goTurn() { var s = stk(); if (s && isPhone()) s.push('turn'); }
+	/// Is the home page what a phone shows?
+	function onHome() { var s = stk(); return !!(s && isPhone() && s.top() === 'home'); }
+
+	// The bar follows the top page: Back while there is a page behind it, the
+	// page's title when it gives one (the brand otherwise), and its one trailing
+	// control, which is Help's "more" (js/workspace.js foldOverflow).
+	function paintBar(top, depth, opts) {
+		var back  = document.getElementById('stack-back');
+		var title = document.getElementById('stack-title');
+		if (back) back.hidden = depth < 2;
+		if (!title) return;
+		title.textContent = '';
+		if (opts && opts.title) {
+			var main = document.createElement('span');
+			main.className = 'stack-title-main';
+			main.textContent = opts.title;
+			title.appendChild(main);
+			if (opts.sub) {
+				var sub = document.createElement('span');
+				sub.className = 'stack-title-sub';
+				sub.textContent = opts.sub;
+				title.appendChild(sub);
+			}
+		}
 	}
 
-	// ── The drawer's sections ──────────────────────────────────
+	function bindStack() {
+		var s = window.DaimondStack;
+		if (!s) return;
+		s.watch(paintBar);
+		s.watch(function () { markHere(); });
+		// Installed, there is no browser back swipe, so the stack binds its own;
+		// in a Safari tab the browser's does it and none is bound (no double pop).
+		s.bindEdgeBack(isPhone);
+	}
+
+	// ── The rail's sections ──────────────────────────────────
 	//
 	// Reported from an iPhone PWA on 2026-09-14: the Diamonds and Chats sections
 	// are "impractically small". Measured at 390x844 with ten Diamonds and
@@ -135,6 +168,10 @@
 	var FOLD_DEF  = { diamonds: true, chats: true, status: false };
 	var folds     = null;
 
+	// Diamonds and Chats are the home page's own lists since Stack A2, and a page's
+	// lists do not fold: only the status section does. Their stored state is read
+	// past, so an old "folded" on this device cannot hide the home page's lists.
+	var FOLD_FIXED = { diamonds: true, chats: true };
 	function foldState() {
 		if (folds) return folds;
 		folds = { diamonds: FOLD_DEF.diamonds, chats: FOLD_DEF.chats, status: FOLD_DEF.status };
@@ -142,7 +179,7 @@
 			var raw = JSON.parse(localStorage.getItem(FOLD_KEY) || 'null');
 			if (raw && typeof raw === 'object') {
 				Object.keys(folds).forEach(function (k) {
-					if (typeof raw[k] === 'boolean') folds[k] = raw[k];
+					if (typeof raw[k] === 'boolean' && !(k in FOLD_FIXED)) folds[k] = raw[k];
 				});
 			}
 		} catch (e) { /* private mode, or a key somebody hand-edited */ }
@@ -184,7 +221,7 @@
 
 	function setFold(k, open) {
 		var st = foldState();
-		if (!(k in st)) return;
+		if (!(k in st) || (k in FOLD_FIXED)) return;
 		st[k] = !!open;
 		try { localStorage.setItem(FOLD_KEY, JSON.stringify(st)); } catch (e) { /* nothing to remember with */ }
 		applyFold();
@@ -340,12 +377,12 @@
 	/// floor with nothing over it.
 	///
 	/// Three surfaces can be the answer and the phone shows one of them at a
-	/// time: the drawer (the rail), the sheet (a guest), and the destination on
+	/// time: the home page (the rail), the sheet (a guest), and the destination on
 	/// the floor. Exported because the chip row's renderer has to fill in the
 	/// same chip this marks, and two answers to "where am I" would show as two
 	/// chips filled at once.
 	function here() {
-		if (document.body.classList.contains('drawer-open')) return 'rail';
+		if (onHome()) return 'rail';
 		// The FACE, not the guest: with the Pages tab selected the thing on screen is
 		// the Preview, and its chip is the one that should be filled in.
 		if (guest) return (FACES[guest] && face) ? face : guest;
@@ -372,7 +409,7 @@
 		});
 		// SCROLLED TO ONLY WHEN IT CHANGES. This runs on every attribute change to
 		// `body` -- and `class` alone carries `resizing`, `sheet-open` and
-		// `drawer-open` -- so a scroll on every call would drag the strip back to
+		// formerly `drawer-open` -- so a scroll on every call would drag the strip back to
 		// wherever the user already is each time anything at all happened, while
 		// their thumb was on it looking for something else.
 		if (on && id !== _here && on.scrollIntoView) {
@@ -406,8 +443,8 @@
 	/// open and clicking it puts the panel away, which reads correctly because
 	/// you can see both states at once. Here the thing it would put away is the
 	/// whole screen -- and for the rail it is worse than that: `hide('rail')`
-	/// sets `display: none` on the element the drawer IS, and the hamburger only
-	/// toggles a class, so the drawer would never open again. See the capture
+	/// sets `display: none` on the element the home page IS, and nothing would
+	/// bring it back. See the capture
 	/// handler further down, which exists for the same trap on the rail's own
 	/// closer.
 	function goTo(id) {
@@ -1049,46 +1086,38 @@
 		var watch = new MutationObserver(markHere);
 		watch.observe(document.body, { attributes: true, attributeFilter: ['data-mpanel', 'class'] });
 
-		// The drawer's own accordion, and the keyboard fit that goes with it.
+		// The rail's own accordion, and the keyboard fit that goes with it.
 		bindFolds();
 		bindFit();
 		fitVisual();
 
-		// The hamburger and the scrim.
-		var burger = document.getElementById('drawer-btn');
-		if (burger) burger.addEventListener('click', toggleDrawer);
-		var scrim = document.getElementById('scrim');
-		if (scrim) scrim.addEventListener('click', closeDrawer);
+		// The page stack, and the bar's Back.
+		bindStack();
+		var back = document.getElementById('stack-back');
+		if (back) back.addEventListener('click', function () { var s = stk(); if (s) s.pop(); });
 
-		// Picking a chat or a Diamond is "go work on this" — the drawer's job
-		// is done, so it steps out of the way.
+		// Picking a chat or a Diamond is "go work on this": the turn page is
+		// pushed over home.
 		var rail = document.getElementById('panel-rail');
 		if (rail) rail.addEventListener('click', function (e) {
-			if (e.target.closest('.session-box, .diamond-box')) closeDrawer();
+			if (e.target.closest('.session-box, .diamond-box')) goTurn();
 		});
 
-		// The rail's own closer, which responsive.css leaves on screen here alone
-		// (see the note beside `.panel.rail .panel-close`). On a desktop it hides
-		// the rail panel; on a phone the rail IS the drawer, so it closes the
-		// drawer instead — a cross closes the ONE thing it sits on, and here that
-		// thing is the drawer.
+		// The rail's own closer, which responsive.css hides on a phone with every
+		// panel's (QA ccp29), so this catch is a guard only. On a desktop it hides
+		// the rail panel; on a phone the rail is the home page, so it goes to the
+		// conversation instead.
 		//
 		// Caught in the CAPTURE phase and stopped, because the panel engine binds
 		// every `[data-close]` on the bubble: left to reach it, `hide('rail')`
-		// would set `display: none` on the drawer, and the hamburger — which only
-		// toggles `body.drawer-open` — would then open nothing at all.
+		// would set `display: none` on the home page, and nothing would bring it back.
 		if (rail) rail.addEventListener('click', function (e) {
 			var b = e.target.closest && e.target.closest('.panel-close');
 			if (!b || !isPhone()) return;
 			e.stopPropagation();
 			e.preventDefault();
-			leaveDrawer();
+			goTurn();
 		}, true);
-
-		// A left-edge swipe opens the drawer; a swipe on the open drawer's
-		// scrim is caught by the scrim tap. Gesture, always paired with the
-		// visible hamburger — never gesture-only.
-		bindEdgeSwipe();
 
 		// Keep the sheet honest across a keyboard show/hide and rotation.
 		if (window.visualViewport) {
@@ -1129,25 +1158,8 @@
 		// comes before the desktop-only restore below it.
 		placeChips();
 		if (window.innerWidth <= 760) return;
-		closeDrawer();
 		if (guest) teardown();
 		if (window.DaimondPanels) DaimondPanels.reflow();
-	}
-
-	/// A drag that begins within 24px of the left edge opens the drawer.
-	function bindEdgeSwipe() {
-		var x0 = 0, y0 = 0, live = false;
-		document.addEventListener('touchstart', function (e) {
-			if (!isPhone() || document.body.classList.contains('drawer-open')) return;
-			var t = e.touches[0];
-			if (t.clientX <= 24) { live = true; x0 = t.clientX; y0 = t.clientY; }
-		}, { passive: true });
-		document.addEventListener('touchmove', function (e) {
-			if (!live) return;
-			var t = e.touches[0];
-			if (t.clientX - x0 > 46 && Math.abs(t.clientY - y0) < 40) { openDrawer(); live = false; }
-		}, { passive: true });
-		document.addEventListener('touchend', function () { live = false; }, { passive: true });
 	}
 
 	window.DaimondSheet = {
@@ -1161,12 +1173,13 @@
 		caretRect: caretRect,
 	};
 	window.DaimondShell = {
-		openDrawer: openDrawer, closeDrawer: closeDrawer, toggleDrawer: toggleDrawer,
+		/// The phone's two shell pages: home (the rail) and the conversation over it.
+		home: goHome, turn: goTurn, onHome: onHome,
 		/// What a footer chip does, and where the chip row's renderer asks which
 		/// chip to fill in. See `goTo` and `here`.
 		goTo: goTo, here: here, markHere: markHere,
 		isPhone: isPhone,
-		/// The drawer's accordion, published for `dev/verify_railmobile.mjs`: a
+		/// The rail's accordion, published for `dev/verify_railmobile.mjs`: a
 		/// verifier that set the storage key by hand would be measuring its own
 		/// idea of the format rather than the one `setFold` writes.
 		foldState: function () { var st = foldState(); return { diamonds: st.diamonds, chats: st.chats, status: st.status }; },

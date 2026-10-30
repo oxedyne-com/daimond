@@ -99,6 +99,11 @@ function makeTab(cfg) {
 	const bg = makeNode('div'); bg.className = 'brand-group';
 	const brand = makeNode('a'); brand.className = 'brand';
 	bg.appendChild(brand); body.appendChild(bg);
+	// The phone home page's head (index.html), which covers the top bar on a phone.
+	const hh = makeNode('div'); hh.className = 'home-head'; hh.id = 'home-head';
+	const lock = makeNode('img'); lock.className = 'home-lockup';
+	const srch = makeNode('button'); srch.className = 'home-act';
+	hh.appendChild(lock); hh.appendChild(srch); body.appendChild(hh);
 	const document = {
 		title: 'Daimond', head, body, documentElement: root, readyState: 'complete',
 		createElement: (t) => makeNode(t),
@@ -210,8 +215,11 @@ await tryRun('(d) test', async () => {
 		tab.document.querySelector('link[rel="manifest"]').getAttribute('href') === 'app-test.webmanifest');
 	const chip = tab.document.querySelector('.net-chip');
 	check('(d) test: a TEST chip sits in .brand-group', chip && chip.parentNode.className === 'brand-group' && chip.textContent === 'TEST');
-	check('(d) test: the chip appears once, however often policy arrives',
-		(await tab.win.DaimondNet.refresh(), tab.document.querySelectorAll('.net-chip').length === 1));
+	const hc = tab.document.querySelectorAll('.net-chip').find((c) => c.parentNode.id === 'home-head');
+	check('(d) test: a second TEST chip sits in #home-head, after the lockup (home hides the bar)',
+		hc && hc.parentNode.children.indexOf(hc) === 1 && hc.textContent === 'TEST');
+	check('(d) test: one chip per host, however often policy arrives',
+		(await tab.win.DaimondNet.refresh(), tab.document.querySelectorAll('.net-chip').length === 2));
 	fire(chip, 'click');
 	const sheet = tab.document.getElementById('testnet-sheet');
 	check('(d) the chip opens the Testnet sheet', !!sheet && sheet.querySelector('h2').textContent === 'Testnet');

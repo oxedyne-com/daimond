@@ -1,0 +1,95 @@
+/* css/phone/diamond.css -- phone Stack (D-20261029-01): the Diamond page: large title, Crystal | Chat | Files (A4, frame b4).
+   Phone only: every rule sits under the phone media query, so nothing changes at >= 761 px.
+   The page is the turn page's floor with a Diamond open (`#panel-ai.on-diamond`, agentspanel.js
+   showCentre): its head becomes the large title with the Diamond's mark, the tags on their own
+   line, then the face segment; the crystal's toolbar moves into the bar's ✎ and ⋯ (crystal.js
+   paintStackActs). Anchored on two ids, past Daylight's `.panel.ai .chead #diamond-view` rules. */
+
+/* The bar's page acts, and the third face, are the phone's alone. */
+#stack-acts,
+#dview-files { display: none; }
+#chead-tags { display: none; }
+
+@media (max-width: 760px) {
+	/* ── The bar: Back, then the crystal's ✎ and ⋯ (b4) ───────── */
+	#app[data-stack="turn"] #stack-acts:not(:empty) { display: flex; align-items: center; gap: 4px; }
+	#app[data-stack="turn"] .topbar:has(#stack-acts:not(:empty)) :is(.brand-group, #sync-ico, #panel-tags, #help-btn, #fullscreen-btn, .update-chip) { display: none !important; }
+	#stack-acts .icon-btn { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: var(--text-primary); }
+	#stack-acts .ic { width: 24px; height: 24px; }
+	.stack-acts-menu { position: fixed; z-index: 400; display: flex; flex-direction: column; min-width: 200px; }
+	.stack-acts-menu > button { text-align: left; min-height: 44px; padding: 0 14px; font-size: 16px; }
+
+	/* ── The head: mark and large title, tags, the segment ─────── */
+	/* Daylight dissolves the head's two clusters into one wrapping row set by `order` and two
+	   full-width breaks (skin-daylight.css, phone block): row 1 the mark and title, the
+	   break (order 4), then the tags and the segment, each a full line. */
+	#app #panel-ai.on-diamond > .chead { padding: 4px 16px 0; row-gap: 12px; border-bottom: 0; background: transparent; }
+	#app #panel-ai.on-diamond #chead-av,
+	#app #panel-ai.on-diamond #chead-mark {
+		order: 0; margin-right: 14px;
+		width: 34px; height: 34px; padding: 0; border-radius: 9px; flex: none;
+		display: flex; align-items: center; justify-content: center; background: var(--accent-soft);
+	}
+	#app #panel-ai.on-diamond #chead-av svg { width: 20px; height: 20px; }
+	#app #panel-ai.on-diamond #current-session-name {
+		order: 1; flex: 1 1 0; min-width: 0; font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 41px;
+		color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+	}
+	#app #panel-ai.on-diamond #chead-when,
+	/* Full screen is entered from the bar's ⋯; in it, the head's own control is the way out. */
+	:root:not([data-cfull]) #app #panel-ai.on-diamond #crystal-full-btn,
+	:root:not([data-cfull]) #app #panel-ai:is(.crystal-face, .files-face).on-diamond > .chead .chead-right { display: none; }
+	/* In full screen the head keeps one control, the way back (app.css hides the rest of .chead-right). */
+	:root[data-cfull] #app #panel-ai.on-diamond #chead-tags { display: none; }
+	#app #panel-ai.on-diamond #chead-tags:not([hidden]) { order: 5; display: flex; flex-wrap: nowrap; gap: 8px; flex-basis: 100%; min-width: 0; overflow: hidden; margin: -6px 0; }	/* the chips' tap border, outside the row's place */
+	/* Drawn 32 px tall and pressed over 44: a transparent 6 px border outside the drawn chip, since the
+	   house overlay (::after) is clipped by the chip's own ellipsis overflow. */
+	#app #panel-ai.on-diamond #chead-tags .tag-chip {
+		font-size: 15px; height: 44px; padding: 0 12px; border: 6px solid transparent; border-width: 6px 0;
+		border-radius: 22px; background-clip: padding-box; flex: none;
+	}
+	#app #panel-ai.on-diamond #chead-tags .tag-fold { display: none; }
+	/* The segment: a full-width track, three equal faces, the chosen one a raised pill. */
+	#app #panel-ai.on-diamond #diamond-view {
+		order: 6; flex: 1 0 100%; display: flex; gap: 2px; padding: 3px; margin: 0 0 14px;
+		background: var(--bg-tertiary); border: 0; border-radius: 10px;
+	}
+	#app #panel-ai.on-diamond #diamond-view .dview-btn {
+		display: block; position: relative; flex: 1 1 0; min-width: 0; height: 32px; margin: 0; padding: 0 8px;
+		font-size: 15px; border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary);
+	}
+	#app #panel-ai.on-diamond #diamond-view .dview-btn::before { content: none; }
+	/* Drawn 32 px tall as the mock's segment, pressed over 44 (the head's tap rule, verify_phone_shell HD). */
+	#app #panel-ai.on-diamond #diamond-view .dview-btn::after { content: ''; position: absolute; inset: -6px 0; }
+	#app #panel-ai.on-diamond #diamond-view .dview-btn[aria-pressed="true"] {
+		background: var(--bg-primary); color: var(--text-primary); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+	}
+	/* In dark the page is darker than the track, so the chosen face is lifted above it, not sunk. */
+	:root[data-tone="dark"] #app #panel-ai.on-diamond #diamond-view .dview-btn[aria-pressed="true"] {
+		background: color-mix(in srgb, var(--bg-tertiary), white 12%);
+	}
+
+	/* ── Crystal face: the card you read, its Files group beneath (b4) ── */
+	#app #panel-ai.on-diamond .crystal-bar { display: none; }
+	/* The face scrolls as one: the card hugs its text, the Files group follows it (b4). */
+	#app #panel-ai.on-diamond:not(.files-face) #crystal-view { overflow-y: auto; }
+	#app #panel-ai.on-diamond #crystal-body {
+		flex: none; min-height: 0; overflow: visible; margin: 0 16px; padding: 14px 16px;
+		border: 1px solid var(--border); border-radius: 14px; background: var(--bg-secondary);
+	}
+	/* The Files group first, headed FILES with its + at the right (fix 4); linked Diamonds after. */
+	#app #panel-ai.on-diamond #crystal-controls { border-top: 0; padding: 18px 16px 8px; }
+	#app #panel-ai.on-diamond #arte-list { order: 1; }
+	#app #panel-ai.on-diamond #link-sec { order: 2; }
+	#app #panel-ai.on-diamond #link-body { order: 3; }
+	#app #panel-ai.on-diamond #arte-list > .attach-head { display: flex; align-items: center; gap: 8px; padding: 0 2px 8px; }
+	#app #panel-ai.on-diamond #arte-list .attach-group-title {
+		flex: 1 1 auto; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary);
+	}
+	#app #panel-ai.on-diamond #arte-list .attach-add { font-size: 16px; font-weight: 600; color: var(--accent); background: transparent; border: 0; }
+
+	/* ── Files face: the Workspace card, moved here whole (files_tree.js seatOnDiamond) ── */
+	#app #panel-ai.files-face :is(#crystal-body, #crystal-controls) { display: none; }
+	#app #panel-ai.files-face #diamond-files:not([hidden]) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 16px; }
+	#diamond-files > .files-card { flex: 1 1 auto; min-height: 0; }
+}

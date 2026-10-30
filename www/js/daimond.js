@@ -99,11 +99,14 @@ import { install as agentspanel_install } from './page/agentspanel.js';
 import { install as crystal_install } from './page/crystal.js';
 import { install as marks_install } from './page/marks.js';
 import { install as settingsui_install } from './page/settingsui.js';
+import './page/phone_stack.js';
+import './page/phone_swipe.js';
+import { install as phone_home_install } from './page/phone_home.js';
 import { install as boot_install } from './page/boot.js';
 bindWasm({ Wasm, init, DaimondApp, builtin_tools, qr_matrix, set_account_ns, heap_bytes,
 	grow_on_purpose, install_panic_hook, set_workspace_dir, use_opfs_workspace, compose_prompt,
 	compose_prompt_for, default_prompt, safety_clause, Sbj });
-// page-split: order state util chatstore parcel_collect parcel_apply handoff send steer workers files_tree files_view admin layout rating sourcemenu links passkey_phrase termpanel turns consent chats tilestyle pending diamonds agentspanel crystal marks settingsui boot turnwrite
+// page-split: order state util chatstore parcel_collect parcel_apply handoff send steer workers files_tree files_view admin layout rating sourcemenu links passkey_phrase termpanel turns consent chats tilestyle pending diamonds agentspanel crystal marks settingsui phone_stack phone_swipe phone_home boot turnwrite
 util_install();
 state_install();
 util_install_2();
@@ -140,4 +143,5 @@ links_install();
 passkey_phrase_install();
 termpanel_install_2();
 settingsui_install();
+phone_home_install();
 boot_install();

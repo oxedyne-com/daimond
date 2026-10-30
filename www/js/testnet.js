@@ -68,20 +68,33 @@
 		rep.focus();
 	}
 
-	/// Put the chip in, or take it out, to match the net policy.js holds.
+	function chip() {
+		var c = elt('button', 'net-chip', 'TEST');
+		c.type = 'button';
+		c.title = tOr('testnet.title', 'Testnet');
+		c.setAttribute('aria-label', tOr('testnet.title', 'Testnet'));
+		c.addEventListener('click', openSheet);
+		return c;
+	}
+
+	/// Put the chips in, or take them out, to match the net policy.js holds.
+	/// One sits in the top bar's brand group; a second in the phone home page's
+	/// head (#home-head), since home hides the top bar and would otherwise lose
+	/// the test signal. #home-head is not drawn at a desktop width.
 	function mount() {
-		var have = document.querySelector('.net-chip');
 		var on = !!(window.DaimondNet && DaimondNet.isTest());
-		if (!on) { if (have && have.parentNode) have.parentNode.removeChild(have); return; }
-		if (have) return;
-		var host = document.querySelector('.brand-group');
-		if (!host) return;
-		var chip = elt('button', 'net-chip', 'TEST');
-		chip.type = 'button';
-		chip.title = tOr('testnet.title', 'Testnet');
-		chip.setAttribute('aria-label', tOr('testnet.title', 'Testnet'));
-		chip.addEventListener('click', openSheet);
-		host.appendChild(chip);
+		var have = document.querySelectorAll('.net-chip');
+		if (!on) {
+			for (var i = 0; i < have.length; i++) if (have[i].parentNode) have[i].parentNode.removeChild(have[i]);
+			return;
+		}
+		var bar = document.querySelector('.brand-group');
+		if (bar && !bar.querySelector('.net-chip')) bar.appendChild(chip());
+		var head = document.getElementById('home-head');
+		if (head && !head.querySelector('.net-chip')) {
+			var lock = head.querySelector('.home-lockup');
+			head.insertBefore(chip(), lock ? lock.nextSibling : head.firstChild);
+		}
 	}
 
 	try { window.addEventListener('daimond:policy', mount); } catch (e) { /* no events here */ }

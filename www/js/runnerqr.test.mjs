@@ -164,6 +164,8 @@ function boot({ hash = '', claims = [], status = null, approve = { ok: true }, i
 		crypto: webcrypto, TextEncoder, Uint8Array, atob, btoa, setTimeout, clearTimeout, console, JSON, Promise,
 	};
 	win.window = win;
+	// The one history mover (js/history.js) tidies the address; its `url` is a replace that keeps the state.
+	win.DaimondHistory = { url: (u) => win.history.replaceState(win.history.state, '', u) };
 	vm.createContext(win);
 	vm.runInContext(SRC, win);
 	return { win, doc, st, loc };

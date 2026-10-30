@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC  = path.join(HERE, 'layers.js');
+const HSRC = path.join(HERE, 'history.js');	// the one history mover, loaded before layers.js as the page does
 
 // A stand-in for the parts of the document the router reads: which element holds focus, and whether an element is
 // on screen. `el(name, { shown, own })` makes one; `focus()` moves `activeElement` to it, as a real element does.
@@ -94,7 +95,9 @@ function browser(how = 'land') {
 				else if (t === 'keydown') b.keys.push({ fn, cap });
 			},
 		};
+		new Function('window', fs.readFileSync(HSRC, 'utf8'))(win);
 		new Function('window', fs.readFileSync(SRC, 'utf8'))(win);
+		b.H = win.DaimondHistory;
 		b.L = win.DaimondLayers;
 		return b.L;
 	};
@@ -292,7 +295,7 @@ test('a reload on a layer\'s entry loads the page once, and lands on no stale la
 	// A traversal from here would be a SECOND full load of the page, and whatever the person had typed into the
 	// first boot (a passphrase at unlock) would be gone. So the page takes the entry it stands on as its start.
 	assert.equal(b.loads, 0, 'the page was not loaded a second time');
-	assert.deepEqual(b.calls, ['replace'], 'no traversal, no push: the entry stands as the start');
+	assert.ok(b.calls.length > 0 && b.calls.every((c) => c === 'replace'), 'no traversal, no push: the entry stands as the start: ' + b.calls);
 	assert.equal(b.idx, 2, 'still on the entry the reload kept');
 	assert.equal(b.history.state && b.history.state.dlayers, 0, 'and it reads as depth nought');
 });
@@ -332,7 +335,7 @@ test('Back past a reloaded page boots the entries the old page left, each as the
 test('a traversal that never lands does not swallow the next Back', async () => {
 	let t = 0;
 	const b = browser(), L = b.load();
-	L.clock = () => t;
+	b.H.clock = () => t;
 	layer(L, 'a', []);
 	await tick();
 	// Take the entry away so the stack's own `go` has nowhere to land.

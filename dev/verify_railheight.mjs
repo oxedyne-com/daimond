@@ -106,7 +106,7 @@ async function world(browser, desk = null) {
 		return document.querySelectorAll('#spend-row .evp').length;
 	});
 	s.pools = pools;
-	if (!desk) await p.evaluate(() => window.DaimondShell && DaimondShell.openDrawer());
+	if (!desk) await p.evaluate(() => window.DaimondShell && DaimondShell.home());
 	await p.waitForTimeout(600);
 	return s;
 }
@@ -180,11 +180,11 @@ const adminBack = async (p, from) => {
 		if (a && a.classList.contains('admin-open') && window.DaimondAdmin) DaimondAdmin.close(); });
 	await p.waitForTimeout(300);
 	if (from === 'closed') {
-		await p.evaluate(() => window.DaimondShell && DaimondShell.closeDrawer());
+		await p.evaluate(() => window.DaimondShell && DaimondShell.turn());
 		await p.waitForTimeout(500);
 		await p.evaluate(() => DaimondAdmin.home());
 	} else {
-		await p.evaluate(() => window.DaimondShell && DaimondShell.openDrawer());
+		await p.evaluate(() => window.DaimondShell && DaimondShell.home());
 		await p.waitForTimeout(500);
 		await p.evaluate(`(() => { const r = ${SCROLLER}; r.scrollTop = ${from === 'foot' ? 'r.scrollHeight' : '0'}; })()`);
 		await p.waitForTimeout(300);

@@ -29,8 +29,9 @@
 //   6. First ship (tn-U1d): a test www with no daimond/ ships with no backup and names its back-out;
 //      a test www with daimond/ but no build.json, and live either way, still die at step 6, and
 //      live's call log equals the base's.
-//   7. Owed gates (tn-U1d): test never reads live's owed ledger; live still refuses on its red, with
-//      the base's call log and refusal; a red filed against the shipped www refuses on both.
+//   7. Owed gates (tn-U1d): test never reads live's owed ledger; live carries its owed red (DRY-OWED,
+//      31 Oct 2026) and completes, with the call log of the base whose live owes nothing red; a red
+//      filed against the shipped www refuses on both.
 //   8. Trap 6 (tn-U1d): with the mirror ahead of source and no served-builds log, a NET_SEAL=none
 //      net passes 0c with its skip line; live still refuses, call log and refusal equal to base's.
 //  10. No mirror on a NET_SEAL=none net (tn-U1d): the mirror pins another fe2o3 and is sealed off
@@ -146,16 +147,17 @@ if (me === 'dev/publish.mjs' && a[0] === '--resolve-pin') {
 }
 if (me === 'dev/staleguard.mjs') process.stdout.write('${FP}\\n');
 if (me === 'dev/gate_evidence.mjs' && a[0] === 'check') {
-	// Arm 7: FX_GATE=owed has this tree's by-role owed and the live tree's owed red; =red has this tree's own red filed.
+	// Arm 7: FX_GATE=owed has this tree's by-role owed and the live tree's owed red; =pending the same with nothing red on
+	// live; =red has this tree's own red filed.
 	const g = process.env.FX_GATE || '';
-	if (g === 'owed' || g === 'red') {
-		process.stdout.write('gate by-role www ' + (a[1] || '').slice(0, 12) + ': REFUSED. ' + (g === 'owed' ? 'no byrole.json' : '3 bad parts') + '\\n');
+	if (g === 'owed' || g === 'pending' || g === 'red') {
+		process.stdout.write('gate by-role www ' + (a[1] || '').slice(0, 12) + ': REFUSED. ' + (g === 'red' ? '3 bad parts' : 'no byrole.json') + '\\n');
 		process.exit(20);
 	}
 	process.stdout.write('gate by-role: ok\\n');
 }
 if (me === 'dev/gate_evidence.mjs' && a[0] === 'check-owed' && process.env.FX_GATE === 'owed') {
-	process.stdout.write('gate evidence: gates owed for live www d7c2167f53d7 are RED\\n');
+	process.stdout.write('gate evidence: gates owed for live www d7c2167f53d7 are RED\\ncarried owed red: by-role from live www d7c2167f53d7 (head 0a1b2c3d4e5f, run /cons/run7)\\n');
 	process.exit(20);
 }
 `;
@@ -509,16 +511,18 @@ if (want(6)) {
 
 // ── 7. 0h on a non-live net reads only its own owed ledger ─────────────────
 if (want(7)) {
-	console.log('\n7. Owed gates: test does not read the live owed red; live still refuses on it; a red of its own refuses everywhere');
+	console.log('\n7. Owed gates: test does not read the live owed red; live carries it; a red of its own refuses everywhere');
 	const t = release(newSrc, 'dry', 'test', undefined, '', { FX_GATE: 'owed' });
 	check('7 test, live owed red: not consulted, the run completes', ran(t) && !/«check-owed»/.test(t.calls), `rc ${t.rc}\n${t.out.slice(-1200)}`);
 	for (const mode of ['dry', 'real']) {
 		const lv = release(newSrc, mode, undefined, undefined, '', { FX_GATE: 'owed' });
-		check(`7 live ${mode}, owed red: refuses, exit 20`, lv.rc === 20 && /«check-owed»/.test(lv.calls), `rc ${lv.rc}\n${lv.out.slice(-800)}`);
-		const lb = release(baseSrc, mode, undefined, undefined, '', { FX_GATE: 'owed' });
-		const failed = r => r.out.split('\n').filter(l => /deploy FAILED/.test(l)).join('\n');
-		check(`7 live ${mode}, owed red: call log and refusal identical to base`, lv.calls === lb.calls && failed(lv) === failed(lb),
-			firstDiff(lb.calls + failed(lb), lv.calls + failed(lv)));
+		check(`7 live ${mode}, owed red: carried (named in the log), and the run completes`,
+			ran(lv) && /«check-owed»/.test(lv.calls) && /carried owed red: by-role from live www d7c2167f53d7/.test(lv.out) && /owed red carried \(exit 20\)/.test(lv.out),
+			`rc ${lv.rc}\n${lv.out.slice(-800)}`);
+		const lb = release(baseSrc, mode, undefined, undefined, '', { FX_GATE: 'pending' });
+		const [bs, ns] = [settle(lb.calls, 'was'), settle(lv.calls, 'now')];
+		check(`7 live ${mode}, owed red carried: call log identical to base's with nothing red on live, but for SINCE_BASE`, ran(lb) && bs === ns,
+			firstDiff(bs, ns));
 	}
 	for (const net of ['test', undefined]) {
 		const r = release(newSrc, 'dry', net, undefined, '', { FX_GATE: 'red' });

@@ -878,17 +878,16 @@ fs.mkdirSync(SHOTS, { recursive: true });
 const snap = (s, look, size, surf) => s.page.screenshot({ path: path.join(SHOTS, `${look}_${size}_${surf}.png`) }).catch(() => {});
 const PHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 const LONG_MODEL = 'anthropic/claude-opus-5.5-extended-context-preview-20260930-very-long';
-/// A new chat on `s`; on the phone the rail is a drawer, opened first and closed after. The page leaves the drawer open
-/// over a new chat (only picking a chat or a Diamond closes it), so the scrim is tapped, as a thumb would; with the drawer
-/// open the next `#chat-send` click lands on the scrim and the turn is never sent. That was T's "no answers on the phone".
+/// A new chat on `s`. On the phone Stack (D-20261029-01) New chat is on the home page and the chat opens over it as the
+/// conversation page, so the phone goes home first and must stand on that page after: a send pressed from home reaches
+/// no composer, which was T's "no answers on the phone" when the rail was a drawer left open over the chat.
 async function startChat(s) {
 	if (s !== PH) return newChat(s);
-	const drawerOpen = () => s.page.evaluate(() => document.body.classList.contains('drawer-open'));
-	if (!(await drawerOpen())) { await s.page.evaluate(() => document.getElementById('drawer-btn').click()); await sleep(800); }
-	await s.page.evaluate(() => document.getElementById('new-session-btn').click());
+	await s.page.evaluate(() => DaimondShell.home()); await sleep(600);
+	await s.page.click('#new-session-btn');
 	await s.page.waitForSelector('#chat-input', { state: 'visible', timeout: 10000 });
-	await sleep(700);
-	if (await drawerOpen()) { await s.page.evaluate(() => document.getElementById('scrim').click()); await waitFor(async () => !(await drawerOpen()), 4000); await sleep(400); }
+	await waitFor(() => s.page.evaluate(() => DaimondStack.top() === 'turn'), 4000);
+	await sleep(400);
 	return chatIdNow(s);
 }
 async function phone() {
@@ -1229,13 +1228,13 @@ await section('FW4', async () => {
 	check('FW4: the Files row draws the same from its records alone (J6), byte for byte, chrome removed', (await tileOf(D)) === html0, 'it changed once the store was gone');
 });
 await section('FW5', async () => {
-	// The note the desktop's Diamond holds, opened from the drawer as a finger does: the phone makes no Diamond of its own (a fresh
+	// The note the desktop's Diamond holds, opened from the home page as a finger does: the phone makes no Diamond of its own (a fresh
 	// profile on a phone has no connection to make one with), and the rows it shows are the records the seed left.
 	const { id } = await fwSeed();
 	const P = await phone();
-	await P.page.evaluate(() => { const b = document.getElementById('drawer-btn'); if (b && !document.body.classList.contains('drawer-open')) b.click(); }); await sleep(700);
+	await P.page.evaluate(() => DaimondShell.home()); await sleep(700);
 	await P.page.evaluate((id) => { const b = document.querySelector(`.session-box[data-id="${id}"]`) || document.querySelector(`[data-diamond-id="${id}"]`); if (b) b.click(); }, id); await sleep(1200);
-	await P.page.evaluate(() => { if (document.body.classList.contains('drawer-open')) document.getElementById('scrim').click(); const c = document.getElementById('dview-chat'); if (c) c.click(); }); await sleep(1000);
+	await P.page.evaluate(() => { const c = document.getElementById('dview-chat'); if (c) c.click(); }); await sleep(1000);
 	await waitFor(() => P.page.evaluate((sel) => document.querySelectorAll(sel).length >= 2, FWROW), 25000, 500);
 	need((await fwRows(P)).some((r) => r.group), 'no file-row group on the phone');
 	console.log('  (FW5 rows, y ranges: ' + J(await P.page.evaluate((sel) => [...document.querySelectorAll(sel)].map((r) => { const q = (e) => e ? Math.round(e.getBoundingClientRect().top) + '-' + Math.round(e.getBoundingClientRect().bottom) : '';

@@ -2511,6 +2511,12 @@ function sessionBox(s) {
 	// Its icon, as a Diamond's (js/avatar.js). A chat has no tags; its name is its title.
 	if (window.DaimondAvatar) header.appendChild(DaimondAvatar.button({ kind: 'chat', id: s.id, name: chatIconName(s), tags: [] }));
 	header.appendChild(label);
+	// [q6] The seat of a shared chat's author or members: empty and hidden until
+	// multiplayer fills it, so the phone row's layout already has its place.
+	var author = document.createElement('span');
+	author.className = 'tile-author';
+	author.hidden = true;
+	header.appendChild(author);
 	// NO TRAFFIC LIGHT ON AN ORDINARY CHAT. The user's ruling: "ordinary chats
 	// do not need a pptw", which is the same rule that took it off an
 	// unautomated Diamond — a widget is for what spends WITHOUT being asked,

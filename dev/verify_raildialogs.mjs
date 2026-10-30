@@ -198,7 +198,7 @@ async function railOpen(page) {
 	await page.evaluate(() => { try { DaimondPanels.show('rail'); } catch (e) { /* not up */ } });
 	await page.waitForTimeout(400);
 	if (await there()) return true;
-	await page.evaluate(() => { const b = document.getElementById('drawer-btn'); if (b) b.click(); });
+	await page.evaluate(() => DaimondShell.home());	// the rail is the Stack's home page (A2)
 	await page.waitForTimeout(450);
 	return there();
 }

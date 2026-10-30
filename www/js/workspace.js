@@ -457,12 +457,107 @@
 	/// default and the one a new reader should meet.
 	var VIEW_IDS = ['simple', 'max'];
 
+	// ── Appearance in Settings, on a phone (Stack A3, frame b5) ──────────
+	//
+	// On a phone the top-bar Appearance button is gone and the menu itself MOVES into Settings'
+	// Appearance group: the one `#settings-menu` node, drawn by the one `renderMenu`, so there is
+	// never a second copy to fall out of step. There it is drawn as grouped rows (a label and its
+	// control on one line), opens on Skin, Theme with its palettes as swatches, and Text size, and
+	// has no closer: the Settings page has its own way back. Above 760px it goes home, a popover.
+	var menuHome = null;	// the parent the menu was drawn in, to go back to off a phone
+
+	/// Move the Appearance menu into `box` (Settings' Appearance group) and draw it there.
+	function mountAppearance(box) {
+		menuEl = menuEl || document.getElementById('settings-menu');
+		if (!menuEl || !box) return null;
+		if (menuEl.dataset.host !== 'settings') {
+			menuHome = menuEl.parentNode;
+			menuEl.dataset.host = 'settings';
+			menuEl.setAttribute('role', 'group');
+		}
+		box.appendChild(menuEl);
+		menuEl.hidden = false;
+		renderMenu();
+		return menuEl;
+	}
+	/// Put the menu back where it was drawn, a popover again.
+	function unmountAppearance() {
+		if (!menuEl || menuEl.dataset.host !== 'settings') return;
+		delete menuEl.dataset.host;
+		menuEl.setAttribute('role', 'dialog');
+		menuEl.hidden = true;
+		if (menuHome) menuHome.appendChild(menuEl);
+	}
+
+	/// The ground colour of palette `name`, read from its own stylesheet rule, so a swatch is the
+	/// palette and no copy of its colours is kept here.
+	var grounds = null;
+	function paletteGround(name) {
+		if (!grounds) {
+			grounds = {};
+			var sheets = document.styleSheets || [];
+			for (var i = 0; i < sheets.length; i++) {
+				var rules;
+				try { rules = sheets[i].cssRules || []; } catch (e) { continue; }	// a sheet from elsewhere
+				for (var j = 0; j < rules.length; j++) {
+					var m = /^:root\[data-theme="([a-z]+)"\]$/.exec(rules[j].selectorText || '');
+					if (m && rules[j].style) grounds[m[1]] = rules[j].style.getPropertyValue('--bg-primary').trim();
+				}
+			}
+		}
+		return grounds[name] || '';
+	}
+
 	function renderMenu() {
 		menuEl = menuEl || document.getElementById('settings-menu');
 		if (!menuEl) return;
+		var inSettings = menuEl.dataset.host === 'settings';
 		menuEl.innerHTML = '';
-		menuEl.appendChild(closerHead(t('topbar.appearance'), closeMenu));
+		if (!inSettings) menuEl.appendChild(closerHead(t('topbar.appearance'), closeMenu));
 		var model = P().model();
+		// A setting and its control: a heading over it in the popover, one row in Settings.
+		function pair(label, control) {
+			if (!inSettings) {
+				menuEl.appendChild(el('div', 'pop-head', label));
+				menuEl.appendChild(control);
+				return;
+			}
+			var r = el('div', 'ap-row');
+			r.appendChild(el('span', 'ap-label', label));
+			r.appendChild(control);
+			menuEl.appendChild(r);
+		}
+		// Theme leads in Settings, as the phone's mock draws it: the tone, then that tone's palettes
+		// as swatches. The mock's Skin row is not drawn: Daylight is the one skin left (D-20260929-02),
+		// so there is no skin to choose, and the View row below is the shape control there is.
+		if (inSettings && window.DaimondTheme) {
+			var themeNow = DaimondTheme.get();
+			var toneNow = (DaimondTheme.spec(themeNow) || {}).tone || 'dark';
+			var tseg = el('div', 'seg ap-tone');
+			DaimondTheme.tones().forEach(function (tone) {
+				var tb = el('button', null, t('menu.tone_' + tone));
+				tb.setAttribute('aria-pressed', tone === toneNow ? 'true' : 'false');
+				// A tone is a band of palettes: choosing one wears its first.
+				tb.addEventListener('click', function () {
+					if (tone !== toneNow) DaimondTheme.set(DaimondTheme.inTone(tone)[0]);
+					renderMenu();
+				});
+				tseg.appendChild(tb);
+			});
+			pair(t('menu.theme'), tseg);
+			var sw = el('div', 'ap-swatches');
+			DaimondTheme.inTone(toneNow).forEach(function (name) {
+				var b = el('button', 'ap-swatch');
+				b.setAttribute('aria-label', t('menu.theme_' + name));
+				b.title = t('menu.theme_' + name);
+				b.setAttribute('aria-pressed', name === themeNow ? 'true' : 'false');
+				var g = paletteGround(name);
+				if (g) b.style.background = g;
+				b.addEventListener('click', function () { DaimondTheme.set(name); renderMenu(); });
+				sw.appendChild(b);
+			});
+			menuEl.appendChild(sw);
+		}
 
 		// Spacing -- the overall shape (corners, typeface, room between things),
 		// orthogonal to the palette chosen below. The two settings are stored
@@ -474,8 +569,9 @@
 		// expressions of one intent, and "airy shape, maximum density" is a
 		// combination nobody wants. Not a lock, though: the palette below is
 		// untouched, and a skin chosen afterwards stays chosen.
-		if (window.DaimondView) {
-			menuEl.appendChild(el('div', 'pop-head', t('menu.view')));
+		// In Settings it follows Text size: the mock's first rows are Theme and Text size.
+		function drawView() {
+			if (!window.DaimondView) return;
 			var viewNow = DaimondView.get();
 			var vseg = el('div', 'seg');
 			VIEW_IDS.forEach(function (id) {
@@ -488,8 +584,9 @@
 				});
 				vseg.appendChild(vb);
 			});
-			menuEl.appendChild(vseg);
+			pair(t('menu.view'), vseg);
 		}
+		if (!inSettings) drawView();
 		// The Look row (Classic | Daylight) is shelved (2026-09-29, D-20260929-02):
 		// Daylight is the only look now, so there is nothing left to choose here.
 		// `DaimondLook` in daimond.js stays defined, inert, for the old names.
@@ -498,35 +595,37 @@
 		// bands is a list to look down, and a segmented control of ten would eat
 		// the menu and still not say which of them are light. The bands are the
 		// optgroups, so "a light one" is one glance rather than ten guesses.
-		menuEl.appendChild(el('div', 'pop-head', t('menu.theme')));
-		var now = window.DaimondTheme ? DaimondTheme.get() : 'dark';
-		var sel = el('select', 'theme-pick');
-		sel.setAttribute('aria-label', t('menu.theme'));
-		(window.DaimondTheme ? DaimondTheme.tones() : ['dark']).forEach(function (tone) {
-			var grp = document.createElement('optgroup');
-			grp.label = t('menu.tone_' + tone);
-			DaimondTheme.inTone(tone).forEach(function (name) {
-				var o = el('option', null, t('menu.theme_' + name));
-				o.value = name;
-				// A palette that exists for a REASON says so on hover. Most are a
-				// matter of taste and need no note; Amber is not, and a reader
-				// scanning ten names would have no way to tell which is which.
-				var help = 'menu.theme_' + name + '_help';
-				if (has(help)) o.title = t(help);
-				if (name === now) o.selected = true;
-				grp.appendChild(o);
+		// In Settings the tone and swatches above stand in its place.
+		if (!inSettings) {
+			menuEl.appendChild(el('div', 'pop-head', t('menu.theme')));
+			var now = window.DaimondTheme ? DaimondTheme.get() : 'dark';
+			var sel = el('select', 'theme-pick');
+			sel.setAttribute('aria-label', t('menu.theme'));
+			(window.DaimondTheme ? DaimondTheme.tones() : ['dark']).forEach(function (tone) {
+				var grp = document.createElement('optgroup');
+				grp.label = t('menu.tone_' + tone);
+				DaimondTheme.inTone(tone).forEach(function (name) {
+					var o = el('option', null, t('menu.theme_' + name));
+					o.value = name;
+					// A palette that exists for a REASON says so on hover. Most are a
+					// matter of taste and need no note; Amber is not, and a reader
+					// scanning ten names would have no way to tell which is which.
+					var help = 'menu.theme_' + name + '_help';
+					if (has(help)) o.title = t(help);
+					if (name === now) o.selected = true;
+					grp.appendChild(o);
+				});
+				sel.appendChild(grp);
 			});
-			sel.appendChild(grp);
-		});
-		sel.addEventListener('change', function () {
-			DaimondTheme.set(sel.value);
-			renderMenu();
-		});
-		menuEl.appendChild(sel);
+			sel.addEventListener('change', function () {
+				DaimondTheme.set(sel.value);
+				renderMenu();
+			});
+			menuEl.appendChild(sel);
+		}
 
 		// Reading size. The sample is set in the size being chosen, so the control
 		// shows the change rather than naming it.
-		menuEl.appendChild(el('div', 'pop-head', t('menu.text_size')));
 		var cur = STEPS.indexOf(scale());
 		var row = el('div', 'size-row');
 		var down = el('button', null, 'A');
@@ -550,10 +649,10 @@
 		row.appendChild(sample);
 		row.appendChild(up);
 		row.appendChild(el('span', 'pct', Math.round(STEPS[cur] * 100) + '%'));
-		menuEl.appendChild(row);
+		pair(t('menu.text_size'), row);
+		if (inSettings) drawView();
 
 		// The dock's tiling.
-		menuEl.appendChild(el('div', 'pop-head', t('menu.dock_tiling')));
 		var grids = P().grids();
 		var gseg = el('div', 'seg');
 		// Enumerated from the engine, not from a copy kept here: the palette
@@ -582,7 +681,7 @@
 			b.addEventListener('click', function () { P().setGrid(key); renderMenu(); });
 			gseg.appendChild(b);
 		});
-		menuEl.appendChild(gseg);
+		pair(t('menu.dock_tiling'), gseg);
 		// A dragged dock is a dock no preset describes, so none is shown pressed
 		// (`P().grid()` answers 'custom') and one row offers the way back. No
 		// explanation beside it: the segment above says what it returns to.
@@ -718,6 +817,7 @@
 
 	function toggleMenu(anchor) {
 		menuEl = menuEl || document.getElementById('settings-menu');
+		unmountAppearance();		// off a phone the menu is a popover again
 		if (!menuEl.hidden) { closeMenu(); return; }
 		renderMenu();
 		openPop(menuEl, anchor);
@@ -730,7 +830,8 @@
 	}
 
 	function closeMenu() {
-		if (!menuEl || menuEl.hidden) return;
+		// Standing in Settings it is a group of rows, not a popover, and nothing closes it.
+		if (!menuEl || menuEl.hidden || menuEl.dataset.host === 'settings') return;
 		hidePop(menuEl);
 		var b = document.getElementById('settings-menu-btn');
 		if (b) { b.setAttribute('aria-expanded', 'false'); b.focus(); }
@@ -752,7 +853,7 @@
 	//
 	// Settings and Link device fold into Help below 760px (PH-01): seven icons a thumb cannot label
 	// become drawer, wordmark, this one control and full screen. The chat head's Concise, Copy, Steps
-	// and Expand fold into "more" for the same reason (the owner's choice of 2026-09-30), and its
+	// and Expand fold into "more" for the same reason (the owner's choice of 2026-09-30), Fold with them, and its
 	// last row, Select, presses the Collapse button, which stays on the head so that select mode has
 	// a way out where it was entered.
 	var HELP = {
@@ -774,6 +875,9 @@
 			// Steps is a toggle that says it is off by dimming itself; in the menu a state is a filled row.
 			{ id: 'steps-toggle-btn', mark: null, on: function (b) { return !b.classList.contains('dim'); } },
 			{ id: 'expand-all-btn',   mark: null },
+			// A Diamond's chat face alone draws Fold (send.js syncFoldBtn). In the head it took a third row of its
+			// own under the Crystal | Chat | Files segment on a phone's Diamond page (192px, not b4's 136).
+			{ id: 'chat-fold-btn',    mark: null },
 		],
 		folded: null,
 		// What the rows say when the menu opens: select mode, and the toggles that do not carry their own state.
@@ -1266,6 +1370,8 @@
 		scale: scale,
 		setScale: setScale,
 		steps: function () { return STEPS.slice(); },
+		mountAppearance: mountAppearance,
+		unmountAppearance: unmountAppearance,
 	};
 
 	if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

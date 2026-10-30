@@ -112,6 +112,14 @@
 	<link rel="stylesheet" href="css/chunks.css"><!-- js/chunks.js — the standing storage notice -->
 	<link rel="stylesheet" href="css/responsive.css">
 <link rel="stylesheet" href="css/mobile.css">
+<!-- Phone Stack (D-20261029-01): one file per page of the stack, empty until its unit lands. -->
+<link rel="stylesheet" href="css/phone/stack.css">
+<link rel="stylesheet" href="css/phone/home.css">
+<link rel="stylesheet" href="css/phone/settings.css">
+<link rel="stylesheet" href="css/phone/diamond.css">
+<link rel="stylesheet" href="css/phone/turn.css">
+<link rel="stylesheet" href="css/phone/composer.css">
+<link rel="stylesheet" href="css/phone/dictate.css">
 <!-- Full-screen toggle (phone only) -- just the two icon faces; see js/fullscreen.js. -->
 <link rel="stylesheet" href="css/fullscreen.css">
 <!-- skin-warm.css is shelved (D-20260929-02): Daylight is the only look now,
@@ -132,10 +140,13 @@
 	<!-- Top bar -->
 	<header class="topbar" aria-labelledby="app-title">
 		<h1 class="vh" id="app-title">Daimond</h1>
-		<!-- The hamburger: phone only, opens the rail as a left drawer. -->
-		<button id="drawer-btn" title="Menu" aria-label="Open menu" data-i18n-title="topbar.menu" data-i18n-aria-label="topbar.open_menu">
-			<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+		<!-- The stack bar's Back: phone only, shown while a page lies behind the one in
+		     view (js/mobile.js paintBar). The rail is no longer a drawer but the home page. -->
+		<button id="stack-back" type="button" hidden title="Back" aria-label="Back" data-i18n-title="stack.back" data-i18n-aria-label="stack.back">
+			<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
 		</button>
+		<!-- The page's title, when it gives one; the brand stands in otherwise. -->
+		<div class="stack-title" id="stack-title"></div>
 		<div class="brand-group">
 		<a class="brand" href="https://daimond.app" target="_blank" rel="noopener noreferrer" aria-label="Daimond, the daimond.app home page" data-i18n-aria-label="topbar.brand">
 			<img class="brand-wordmark wm-on-dark" src="assets/daimond_word.svg" alt="Daimond">
@@ -154,6 +165,9 @@
 			<!-- A tag per CLOSED panel. Click it to open the panel; the panel's own
 			     closer sends it back here. -->
 			<div class="panel-tags" id="panel-tags"></div>
+			<!-- The top page's own acts, phone only: a Diamond's ✎ and ⋯ (crystal.js
+			     paintStackActs). Empty everywhere else. -->
+			<span class="stack-acts" id="stack-acts"></span>
 			<button class="update-chip" id="update-chip" hidden title="Daimond is up to date" aria-label="Daimond is up to date" data-i18n-title="topbar.up_to_date" data-i18n-aria-label="topbar.up_to_date">
 				<svg class="ic ic-refresh" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
 				<svg class="ic ic-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
@@ -272,6 +286,21 @@
 		     stays live beside them: the user can ask Daimond what an app password is
 		     while the box asking for one is still on screen. -->
 		<aside class="panel rail" id="panel-rail" data-panel="rail" data-zone="rail" data-label="diamonds" data-i18n-label="panel.rail">
+			<!-- THE HOME PAGE'S HEAD (Stack A1): on a phone the rail is the first page of the stack
+			     (js/page/phone_home.js), so it carries the brand and its two most-used acts, search and
+			     a new chat, as the mock's b1 does. Hidden everywhere else (css/phone/home.css). Both
+			     buttons are the rail's own: search opens #diamond-search, compose is New Chat. -->
+			<div class="home-head" id="home-head">
+				<img class="home-lockup" src="assets/daimond_word.svg" alt="Daimond">
+				<button class="home-act" id="home-search-btn" type="button" aria-expanded="false" aria-controls="diamond-search"
+					title="Search diamonds" aria-label="Search diamonds" data-i18n-title="rail.search" data-i18n-aria-label="rail.search">
+					<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+				</button>
+				<button class="home-act" id="home-compose-btn" type="button"
+					title="New Chat" aria-label="New Chat" data-i18n-title="rail.new_chat" data-i18n-aria-label="rail.new_chat">
+					<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h8"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
+				</button>
+			</div>
 			<!-- The drawer's scroller, inside the drawer's frame and never the frame
 			     itself (FIRE ublk30b). On a phone the frame carries the slide's
 			     `transform`, which makes it the containing block of the fixed Admin
@@ -744,7 +773,14 @@
 							        data-i18n="crystal.view_crystal">Crystal</button>
 							<button class="dview-btn" id="dview-chat" type="button" aria-pressed="false"
 							        data-i18n="crystal.view_chat">Chat</button>
+							<!-- The third face, phone only (Stack A4, b4): the Diamond's whole
+							     Workspace tree, the one Workspace card moved onto the page. -->
+							<button class="dview-btn" id="dview-files" type="button" aria-pressed="false"
+							        data-i18n="diamond.files">Files</button>
 						</div>
+						<!-- A Diamond's tags on their own line under its name, phone only:
+						     whole chips, the rest folded into "+N" (agentspanel.js paintHeadTags). -->
+						<div class="session-box-tags chead-tags" id="chead-tags" hidden></div>
 						<!-- How long since this Diamond was last edited. Set by selectDiamond;
 						     empty on an ordinary chat. -->
 						<span class="chead-when" id="chead-when"></span>
@@ -947,6 +983,9 @@
 				<div class="crystal-view" id="crystal-view" style="display:none">
 					<div class="crystal-body" id="crystal-body"></div>
 					<div class="crystal-controls" id="crystal-controls"></div>
+					<!-- A Diamond's Files face on a phone (Stack A4): the Workspace card
+					     moves here while the face is up (files_tree.js seatOnDiamond). -->
+					<div class="diamond-files" id="diamond-files" hidden></div>
 				</div>
 			</section>
 
@@ -1661,9 +1700,8 @@
 	<nav class="mnav" id="mnav" aria-label="Panels" data-i18n-aria-label="gallery.title"></nav>
 </div>
 
-<!-- Phone shell: the scrim behind the drawer, and the sheet that raises a
-     "thing" over the chat. Both are inert on desktop (see mobile.css). -->
-<div id="scrim"></div>
+<!-- Phone shell: the sheet that raises a "thing" over the chat. Inert on
+     desktop (see mobile.css). -->
 <div id="msheet" aria-label="Panel" data-i18n-aria-label="sheet.panel">
 	<div class="msheet-grab" id="msheet-grab">
 		<span class="msheet-bar" aria-hidden="true"></span>
@@ -1867,6 +1905,9 @@
      dialog, popover, drawer and sheet wears, and it is loaded before ANY of
      them so a classic script and the wasm module can both reach for it. -->
 <script src="js/closer.js"></script>
+<!-- history.js: the one history mover. It alone pushes, rewrites and steps the session history and hears
+     popstate, for the layer stack and the phone's page stack alike. Before layers.js, which uses it at load. -->
+<script src="js/history.js"></script>
 <!-- layers.js: the layer stack. Every drawer, sheet, menu, dialog and the palette
      registers here so that the platform's Back closes the top one rather than
      leaving the app. Loaded with the closer, before anything that opens a surface. -->

@@ -1214,13 +1214,13 @@ export async function completeUnlock() {
 	pg.locked = false;
 	document.body.classList.remove('locked');
 	renderAll();
-	// A sheet or drawer left marked open from before the lock would keep the
+	// A sheet left marked open from before the lock would keep the
 	// composer hidden (`body.sheet-open .chat-input-bar { visibility: hidden }`,
 	// css/mobile.css) on a phone that resumed straight into a chat. Unlocking is a
-	// fresh app draw, so any stale sheet/drawer state is cleared here defensively.
+	// fresh app draw, so a stale sheet state is cleared here defensively (the drawer
+	// this once closed too is retired, Stack A2: the page stack keeps its own place).
 	try {
 		document.body.classList.remove('sheet-open');
-		if (window.DaimondShell) DaimondShell.closeDrawer();	// through the layer stack, not past it
 	} catch (e) { /* no body */ }
 	updateUserRow();
 	// The CONTENT, not the drawer: unlocking is not a request to open Admin.

@@ -1099,7 +1099,7 @@ await setPoolOn(bp, true);
 // first thing under the search box on it.
 await bp.setViewportSize({ width: 390, height: 844 });
 await bp.waitForTimeout(600);
-await bp.evaluate(() => document.getElementById('drawer-btn').click());
+await bp.evaluate(() => DaimondShell.home());	// the rail is the Stack's home page (A2)
 await bp.waitForTimeout(700);
 // Back to the top of the pool, so the shot below is the state a thumb opens on.
 await bp.evaluate(() => { const el = document.querySelector('.tagf-pool'); if (el) el.scrollTop = 0; });

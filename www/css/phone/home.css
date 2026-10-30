@@ -1,0 +1,251 @@
+/* css/phone/home.css -- the phone's home page: the rail as the first page of the stack
+   (Stack A1, D-20261029-01; mock b1). js/page/phone_home.js moves #panel-rail into
+   `#phone-stack > [data-page="home"]` on a phone and back to #main at a desktop width,
+   so every rule here is scoped to `.home-page` and the desktop rail is untouched. */
+
+/* The head is the home page's alone. */
+.home-head { display: none; }
+
+@media (max-width: 760px) {
+	/* ── The page ─────────────────────────────────────────────
+	   The drawer's frame, opened out to the screen: no slide, no shadow, no
+	   scrim's edge. The ids outrank mobile.css's drawer rules, `!important` ones
+	   included. Fixed, so the section that holds it takes no room in #app. */
+	.home-page > #panel-rail {
+		inset: 0;
+		width: 100% !important;
+		max-width: none;
+		border-right: 0;
+		box-shadow: none;
+		transform: none;
+		transition: none;
+		visibility: visible;
+		background: var(--bg-primary);   /* the page; its two lists are the raised cards */
+		z-index: 60;              /* under the drawer's scrim (70) and every sheet */
+	}
+	/* ── The head: lockup, search, compose (52 px, the stack's bar height) ── */
+	.home-page > #panel-rail .home-head {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		flex: none;
+		height: 52px;
+		padding: var(--safe-t) 6px 0 calc(14px + var(--safe-l));
+		box-sizing: content-box;
+	}
+	.home-page > #panel-rail .home-lockup { height: 20px; width: auto; display: block; margin-right: auto; }
+	/* The TEST chip (js/testnet.js) on the test network: beside the lockup, as on the bar. */
+	.home-page > #panel-rail .home-lockup:has(+ .net-chip) { margin-right: 0; }
+	.home-page > #panel-rail .home-head > .net-chip { margin-right: auto; }
+	/* Home covers the top bar, so the bar's brand and controls are hidden under it
+	   (as Settings does, css/phone/settings.css): nothing is left there to tap. */
+	#app[data-stack="home"] .topbar :is(.brand-group, .top-actions) { visibility: hidden; }
+	.home-page > #panel-rail .home-act {
+		width: 44px; height: 44px; flex: none;
+		display: grid; place-items: center;
+		border: 0; border-radius: 22px; background: none;
+		color: var(--text-primary);
+	}
+	.home-page > #panel-rail .home-act .ic { width: 24px; height: 24px; }
+
+	/* The scroller holds the hardware off at the head now, so its own top inset goes. */
+	.home-page > #panel-rail .rail-scroll { padding: 0 0 8px; overflow-x: hidden; }
+
+	/* The rail's own head row: the global pause stays (it is the root of every
+	   pause, and no other door to it is on the phone), drawn small. Its closer is
+	   gone with every panel's on a phone (css/responsive.css). */
+	/* 44 px tall, so the play/pause hit areas (44 px ::after) are not clipped by
+	   #rail-top's `overflow: hidden`; the label's 24 px line keeps the section
+	   gap under the head at the canon's 14 px. */
+	.home-page #pptw-global-row { padding: 0 20px; min-height: 44px; }
+	.home-page #pptw-global-row .pptw-head-label { line-height: 24px; }
+
+	/* Search is behind the head's magnifier (l.265: names and tags, unchanged). */
+	.home-page #panel-rail:not([data-search="on"]) .diamond-find { display: none; }
+	.home-page > #panel-rail .diamond-find { margin: 0 16px 6px; }
+
+	/* ── The group heads: "Diamonds", "Chats", 20 px bold, the act on the right ── */
+	.home-page > #panel-rail .railhead {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 6px 12px 2px 20px;
+		min-height: 0;
+		border: 0;
+		background: none;
+	}
+	.home-page > #panel-rail .railhead > span:first-child {
+		font-size: 20px;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+		color: var(--text-primary);
+		margin-right: auto;
+		text-transform: none;
+	}
+	/* "New Diamond" / "New Chat" keep their words (l.109), drawn as the mock's accent act. */
+	.home-page > #panel-rail .railhead > .railbtn {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		min-height: 44px;
+		padding: 0 8px;
+		border: 0;
+		background: none;
+		box-shadow: none;
+		color: var(--accent-text, var(--accent));
+		font-size: 15px;
+		font-weight: 600;
+	}
+	.home-page > #panel-rail .railhead > .railbtn::before { content: '+'; font-size: 20px; font-weight: 400; line-height: 1; }
+	/* The section folds are the drawer's lever on height; a page has room. */
+	.home-page > #panel-rail .railhead > .rail-fold { display: none; }
+	.home-page > #panel-rail .railhead > .addbtn:not(.railbtn) { width: 44px; height: 44px; border: 0; background: none; color: var(--text-muted); }
+
+	/* ── The two groups: inset lists, each its own window (mobile.js fits five rows) ── */
+	.home-page > #panel-rail :is(#diamond-list, #session-list) {
+		margin: 0 16px;
+		padding: 0;
+		gap: 0;
+		border-radius: 14px;
+		background: var(--bg-secondary);
+		border: 0;
+	}
+	/* "Today" never takes a row of its own (l.365): the time is inside each row. */
+	.home-page > #panel-rail #session-list > .rail-day { display: none; }
+
+	/* ── A row: icon, name, time, 44 px, a hairline under all but the last ── */
+	.home-page > #panel-rail :is(#diamond-list, #session-list) > .session-box {
+		position: relative;
+		overflow: hidden;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		border-radius: 0;
+		background: var(--bg-secondary);
+		box-shadow: none;
+		touch-action: pan-y;
+	}
+	.home-page > #panel-rail :is(#diamond-list, #session-list) > .session-box::after {
+		content: '';
+		position: absolute;
+		left: 52px; right: 0; bottom: 0;
+		height: 1px;
+		background: var(--border);
+		opacity: .6;
+	}
+	.home-page > #panel-rail :is(#diamond-list, #session-list) > .session-box:last-child::after { display: none; }
+	.home-page > #panel-rail .session-box > * {
+		transform: translateX(var(--swipe-dx, 0px));
+		transition: transform .22s cubic-bezier(.32, .72, 0, 1);
+	}
+	.home-page > #panel-rail .session-box[data-swipe="drag"] > * { transition: none; }
+	.home-page > #panel-rail .session-box > .session-box-header {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-height: 44px;
+		padding: 0 14px 0 12px;
+	}
+	.home-page > #panel-rail .session-box .tile-label {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex: 1;
+		min-width: 0;
+		min-height: 44px;
+		padding: 0;
+		background: none;
+		border: 0;
+		text-align: left;
+	}
+	.home-page > #panel-rail .session-box :is(.tile-when, .session-box-name) {
+		flex: 1;
+		min-width: 0;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		font-size: 16px;
+		font-weight: 400;
+		color: var(--text-primary);
+	}
+	.home-page > #panel-rail .session-box .tile-when-sub { flex: none; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+	.home-page > #panel-rail .session-box .tile-preview { display: none; }
+	/* The running line takes no margin of its own: empty, it cost each row 7 px. */
+	.home-page > #panel-rail .session-box > .tile-active { margin-top: 0; }
+
+	/* ── The tray: the row's own cog and Delete, until a swipe or a hold ──
+	   They ride just past the header's right edge, where the box clips them, and
+	   come into view as the header slides left by the tray's width. The header is
+	   the transformed box, so it is their containing block and they move with it. */
+	.home-page > #panel-rail .session-box > .session-box-header { position: relative; }
+	.home-page > #panel-rail .session-box :is(.tile-cog, .tile-x) {
+		display: grid;
+		place-items: center;
+		position: absolute;
+		top: 0; bottom: 0;
+		left: 100%;
+		width: 72px;
+		height: auto;
+		margin: 0;
+		border: 0;
+		border-radius: 0;
+		opacity: 1;
+		color: #fff;               /* fixed: white on the tray's fills, as the mock */
+	}
+	.home-page > #panel-rail .session-box:not([data-swipe]) :is(.tile-cog, .tile-x) { visibility: hidden; }
+	.home-page > #panel-rail .session-box .tile-cog { background: var(--text-muted); }
+	.home-page > #panel-rail .session-box .tile-x { left: calc(100% + 72px); background: var(--danger); }
+	.home-page > #panel-rail .session-box :is(.tile-cog, .tile-x) .ic { width: 20px; height: 20px; }
+
+	/* ── The foot: the status line and the pools stay pinned (l.369/371) ── */
+	/* The hairline is a shadow over the line, not a border: folded, the status is one line of 44 px
+	   (owner-eye S1, D-20261024-13), and a border made it 45. */
+	.home-page > #panel-rail #admin { padding: 0; background: var(--bg-primary); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
+	.home-page > #panel-rail #admin-status > .astat-id { padding: 0 6px 0 16px; }
+	/* Folded, the chevron points up: the rows it opens rise above the line. */
+	.home-page > #panel-rail #admin-status [data-fold="status"][aria-expanded="false"] .ic { transform: rotate(180deg); }
+
+	/* ── Icons in tiles: each row's own glyph on a 32 px rounded square, the identity's in a circle ── */
+	.home-page > #panel-rail .session-box .av-btn {
+		width: 32px; height: 32px; min-width: 32px; margin: 0;
+		border-radius: 8px;
+		background: var(--bg-tertiary);
+		color: var(--text-secondary);
+	}
+	.home-page > #panel-rail .session-box .av-btn svg { width: 18px; height: 18px; }
+	.home-page > #panel-rail #user-avatar {
+		width: 32px; height: 32px; flex: none;
+		display: grid; place-items: center;
+		border-radius: 50%;
+		background: var(--bg-tertiary);
+	}
+
+	/* ── A Diamond's age on its own line, at the right as a chat's is ──
+	   Only the age of the meter row is drawn; its spend and context bar are a
+	   Diamond's own page's to show. The name leaves the age its room. */
+	.home-page > #panel-rail .diamond-box > .session-box-header { padding-right: 88px; }
+	.home-page > #panel-rail .diamond-box > .diamond-meter {
+		position: absolute;
+		grid-area: auto;          /* Daylight's grid would make its area the containing block */
+		top: 0; right: 14px;
+		height: 44px;
+		display: flex; align-items: center;
+		margin: 0; padding: 0;
+		font-family: inherit;     /* the meter's mono is for its figures, not an age */
+		pointer-events: none;
+	}
+	.home-page > #panel-rail .diamond-meter > :not(.session-box-time) { display: none; }
+	.home-page > #panel-rail .diamond-meter > .session-box-time { display: inline; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+	/* A tagged Diamond's chip row starts at its name's x (CHIPLINE, owner-eye R13): the header's 12 px
+	   padding, the 32 px icon and the 12 px gap above, where Daylight's 28 px is the rail's 20 px icon. */
+	.home-page > #panel-rail .diamond-box > .session-box-tags { margin-left: calc(12px + 32px + 12px); }
+
+	/* ── "N need you": the mock's pill ── */
+	.home-page > #panel-rail #astat-flag:not([hidden]) {
+		display: inline-flex; align-items: center; gap: 6px;
+		padding: 4px 12px;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--warn) 18%, transparent);
+		font-weight: 600;
+	}
+}

@@ -229,7 +229,7 @@ check('D10 the identity row is named "Settings" and still shows the identity', d
 // ── D9: the phone, the same toggle, shut by default, a thumb's target ───
 await p.setViewportSize({ width: 390, height: 844 });
 await settle(p, 700);
-await p.evaluate(() => window.DaimondShell && DaimondShell.openDrawer && DaimondShell.openDrawer());
+await p.evaluate(() => window.DaimondShell && DaimondShell.home());
 await settle(p, 600);
 await onePool(p);
 const F = await survey(p);

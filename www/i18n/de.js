@@ -50,8 +50,6 @@
 	'copy.what_handle':        'Deinen öffentlichen Namen',
 
 	// ── The top bar ────────────────────────────────────────────
-	'topbar.menu': 'Menü',
-	'topbar.open_menu': 'Menü öffnen',
 	'topbar.brand': 'Daimond, die Startseite von daimond.app',
 	'topbar.made_by': 'Von Oxedyne gemacht',
 	'topbar.made_with_ai': 'Code überwiegend mit KI erstellt',
@@ -4224,5 +4222,21 @@
 	'settings.group_help_what': 'Neuigkeiten, Berichte, Diagnose',
 	'rel.whats_new': 'Neuigkeiten',
 	'rel.about': '\u00dcber',
+	'composer.placeholder': 'Nachricht',
+	'composer.steer_diamond': 'Frag oder lenke {name}',
+	'dictate.mic': 'Diktieren',
+	'dictate.listening': 'Hört zu…',
+	'dictate.cancel': 'Abbrechen',
+	'dictate.keep': 'Behalten',
+	'dictate.check': 'Aus deiner Stimme: prüfe es, dann Senden',
+	'dictate.slide_cancel': 'Zum Abbrechen wischen',
+	'dictate.release_stop': 'Loslassen zum Beenden',
+	'camera.add_title': 'Zu diesem Chat hinzufügen',
+	'camera.camera': 'Kamera',
+	'camera.photos': 'Fotos',
+	'camera.files': 'Dateien',
+	'stack.back': 'Zurück',
+	'diamond.files': 'Dateien',
+	'settings.title': 'Einstellungen',
 	});
 })();

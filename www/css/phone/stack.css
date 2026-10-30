@@ -1,0 +1,72 @@
+/* css/phone/stack.css -- phone Stack (D-20261029-01): the page stack: host, pages, back bar (A0 contract, A2 navigation).
+   Phone only: every rule sits under the phone media query, so nothing changes at >= 761 px. */
+
+/* The bar's Back and title are the phone's alone. */
+#stack-back,
+#stack-title { display: none; }
+
+@media (max-width: 760px) {
+	/* ── The stack bar ─────────────────────────────────────────
+	   The top bar on a phone: Back while a page lies behind this one, the page's
+	   title centred (the brand stands in when it gives none), and one trailing
+	   control, Help's "more". The hamburger it replaces is retired with the drawer. */
+	.topbar { position: relative; min-height: 52px; }
+	#stack-back:not([hidden]) {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex: none;
+		width: 44px;
+		height: 44px;
+		margin-left: -8px;
+		padding: 0;
+		background: none;
+		border: none;
+		border-radius: var(--radius);
+		color: var(--accent);
+		cursor: pointer;
+	}
+	#stack-back .ic { width: 24px; height: 24px; stroke-width: 2; }
+	#stack-back:active { background: var(--accent-soft); }
+	#stack-title:not(:empty) {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		position: absolute;
+		inset: 0 56px;
+		min-width: 0;
+		pointer-events: none;
+		text-align: center;
+		line-height: 1.2;
+	}
+	.stack-title-main,
+	.stack-title-sub { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.stack-title-main { font-size: 17px; font-weight: 600; color: var(--text-primary); }
+	.stack-title-sub  { font-size: 13px; color: var(--text-secondary); }
+	.topbar:has(#stack-title:not(:empty)) .brand-group { visibility: hidden; }
+
+	/* ── Pages with content of their own ───────────────────────
+	   The turn is a surface the shell already has, so its section is empty and
+	   takes no room; home is the floor and draws its own head (home.css). A page
+	   pushed over them that draws (Settings, a Diamond) fills the screen under
+	   the bar. */
+	#phone-stack > .phone-page:empty { display: none; }
+	#phone-stack > .phone-page:not(:empty):not([data-page="home"]) {
+		position: fixed;
+		inset: calc(var(--safe-t) + 52px) 0 0 0;
+		z-index: 60;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+		background: var(--bg-primary);
+	}
+	/* Push slides the new page in from the right; Back uncovers the one before. */
+	#app[data-stack-dir="push"] #phone-stack > .phone-page:not([hidden]):not(:empty):not([data-page="home"]) { animation: stack-in .28s cubic-bezier(.32, .72, 0, 1); }
+	#app[data-stack-dir="pop"]  #phone-stack > .phone-page:not([hidden]):not(:empty):not([data-page="home"]) { animation: stack-uncover .28s cubic-bezier(.32, .72, 0, 1); }
+	@media (prefers-reduced-motion: reduce) {
+		#phone-stack > .phone-page { animation: none !important; }
+	}
+}
+
+@keyframes stack-in      { from { transform: translateX(100%); } }
+@keyframes stack-uncover { from { transform: translateX(-30%); opacity: .6; } }

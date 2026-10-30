@@ -313,7 +313,8 @@ async function boot() {
 	// waiter does not hang forever on a boot that failed.
 	var readyResolve, readyReject;
 	window.DaimondCore.ready = new Promise(function (res, rej) { readyResolve = res; readyReject = rej; });
-	mshow(document.body.dataset.mpanel || 'ai');
+	// Redrawn, not navigated to: a push here put the turn page over the page a reload restored.
+	mshow(document.body.dataset.mpanel || 'ai', { restore: true });
 	try {
 		await init();               // instantiate the wasm module
 		// FIRST, before anything can panic. A wasm panic with no hook is the

@@ -1425,7 +1425,7 @@
 		if (!buy && !card) return null;
 		q.delete('buy'); q.delete('card');
 		var url = location.pathname + (q.toString() ? '?' + q : '');
-		history.replaceState(history.state, '', url);
+		DaimondHistory.url(url);
 		// 'credits' | 'cancel' | 'pro' | 'card:saved' | 'card:cancel'
 		return buy || ('card:' + card);
 	}

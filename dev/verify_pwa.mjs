@@ -658,9 +658,9 @@ try {
 		port.nav === null ? 'no bottom bar' : `lowest button ${port.nav.toFixed(1)}, floor ${port.h - INSET.b}`);
 	await shot(s, 'pwa-standalone-portrait' + (BREAK ? '-' + BREAK : ''));
 
-	// The drawer is fixed to the viewport, outside the frame's padding, so it
+	// The rail, the Stack's home page (A2), is fixed to the viewport, outside the frame's padding, so it
 	// has to hold the hardware off its own contents.
-	await page.click('#drawer-btn', { force: true });
+	await page.evaluate(() => DaimondShell.home());
 	await sleep(700);
 	const drawer = await page.evaluate((inset) => {
 		const rail = document.querySelector('.panel.rail');
@@ -671,7 +671,7 @@ try {
 			padTop: parseFloat(cs.paddingTop),
 			padBot: parseFloat(cs.paddingBottom),
 			firstTop: first ? first.getBoundingClientRect().top : null,
-			open: document.body.classList.contains('drawer-open'),
+			open: (document.getElementById('app') || { dataset: {} }).dataset.stack === 'home',
 			inset,
 		};
 	}, INSET);

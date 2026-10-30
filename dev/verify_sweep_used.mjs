@@ -216,26 +216,28 @@ console.log('\n5. a phone, after the same use\n');
 {
 	await p.setViewportSize({ width: 390, height: 844 });
 	await p.waitForTimeout(700);
-	const btn = await p.$('#drawer-btn');
+	// The way home on a phone is the Stack's Back (A2 retired the hamburger), from the turn page.
+	await p.evaluate(() => DaimondShell.turn()); await p.waitForTimeout(500);
+	const btn = await p.$('#stack-back');
 	const shown = await p.evaluate(() => {
-		const b = document.getElementById('drawer-btn');
+		const b = document.getElementById('stack-back');
 		if (!b) return false;
 		const r = b.getBoundingClientRect();
 		return r.width > 0 && r.height > 0;
 	});
-	check('the hamburger is drawn on a phone', shown);
+	check('Back is drawn on a phone', shown);
 	if (shown) {
 		// The point is hit-tested before it is pressed: a button under a stale
 		// overlay takes a forced click and does nothing, which is exactly what
 		// "it stops working" looks like from the outside.
 		const atPoint = await p.evaluate(() => {
-			const b = document.getElementById('drawer-btn');
+			const b = document.getElementById('stack-back');
 			const r = b.getBoundingClientRect();
 			const e = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
 			return e ? (b.contains(e) || e.contains(b) ? 'itself' : (e.id || e.className || e.tagName)) : 'nothing';
 		});
-		check('the point you would press belongs to the hamburger', atPoint === 'itself', String(atPoint));
-		await btn.click({ force: true });
+		check('the point you would press belongs to Back', atPoint === 'itself', String(atPoint));
+		await btn.click();
 		await p.waitForTimeout(600);
 		const drawer = await p.evaluate(() => {
 			const r = document.getElementById('panel-rail');
@@ -243,7 +245,7 @@ console.log('\n5. a phone, after the same use\n');
 			const b = r.getBoundingClientRect();
 			return { out: b.width > 40 && b.left > -40 && b.right > 0, left: Math.round(b.left), width: Math.round(b.width) };
 		});
-		check('the rail drawer comes out after all that use', drawer.out === true, JSON.stringify(drawer));
+		check('the home page comes up after all that use', drawer.out === true, JSON.stringify(drawer));
 		await p.screenshot({ path: path.join(SHOTS, 'used-iphone-drawer.png') }).catch(() => {});
 	}
 	const phone = hard(await audit(p));

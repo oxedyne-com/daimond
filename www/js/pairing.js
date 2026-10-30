@@ -1063,7 +1063,7 @@
 		try {
 			var h = (location.hash || '').replace(/[#&]?pair=[^&]*/, '');
 			if (h === '#') h = '';
-			history.replaceState(history.state, '', location.pathname + location.search + h);
+			DaimondHistory.url(location.pathname + location.search + h);
 		} catch (e) {}
 	}
 
@@ -1098,7 +1098,7 @@
 		try {
 			var h = (location.hash || '').replace(/[#&]?runner=[^&]*/, '');
 			if (h === '#') h = '';
-			history.replaceState(history.state, '', location.pathname + location.search + h);
+			DaimondHistory.url(location.pathname + location.search + h);
 		} catch (e) { /* the address keeps it; the claim is still once */ }
 		if (document.querySelector('.pair-scrim')) return null;	// a dialog is already up
 		var raw = '';

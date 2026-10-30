@@ -29,4 +29,7 @@ export * from './agentspanel.js';
 export * from './crystal.js';
 export * from './marks.js';
 export * from './settingsui.js';
+export * from './phone_stack.js';
+export * from './phone_swipe.js';
+export * from './phone_home.js';
 export * from './boot.js';

@@ -382,19 +382,14 @@ function PROBE(arg) {
 			const p = m[1].split(',').map(x => parseFloat(x));
 			return p.length < 4 || p[3] >= 0.999;
 		})(),
-		scrim: (() => {
-			const e = document.getElementById('scrim'); if (!e) return null;
-			const s = cs(e); const b = e.getBoundingClientRect();
-			return { pe: s.pointerEvents, op: +s.opacity, bg: s.backgroundColor,
-				covers: b.left <= 0 && b.top <= 0 && b.right >= W && b.bottom >= H };
-		})(),
-		drawerOpen: document.body.classList.contains('drawer-open'),
+		// The "drawer" states are the Stack's home page now (A2 retired the drawer and its scrim).
+		drawerOpen: (() => { const a = document.getElementById('app'); return !!(a && a.dataset.stack === 'home'); })(),
 		// A drawer taller than the screen scrolls; a drawer whose content sits ABOVE
 		// its own top edge while it is scrolled to the top does not.  Those controls
 		// cannot be reached at all.
 		railClipped: (() => {
 			const rl = document.getElementById('rail-scroll') || document.getElementById('panel-rail');	// the drawer's scroller
-			if (!rl || !document.body.classList.contains('drawer-open')) return null;
+			if (!rl || !(() => { const a = document.getElementById('app'); return !!(a && a.dataset.stack === 'home'); })()) return null;
 			const rr = rect(rl);
 			const out = [];
 			rl.querySelectorAll('button, input, a[href], select, textarea').forEach(el => {
@@ -590,7 +585,7 @@ async function setState(page, state) {
 	await clearOverlays(page);
 	await page.evaluate(() => {
 		try { if (window.DaimondSheet && DaimondSheet.isOpen()) DaimondSheet.close(); } catch (e) {}
-		try { if (window.DaimondShell) DaimondShell.closeDrawer(); } catch (e) {}
+		try { if (window.DaimondShell) DaimondShell.turn(); } catch (e) {}
 	});
 	await sleep(150);
 	switch (state) {
@@ -599,7 +594,7 @@ async function setState(page, state) {
 			break;
 		case 'drawer':
 			if (BREAK !== 'drawer') {
-				await page.evaluate(() => { const b = document.getElementById('drawer-btn'); if (b) b.click(); else DaimondShell.openDrawer(); });
+				await page.evaluate(() => DaimondShell.home());
 			}
 			await sleep(250);
 			// Open the tag pool, which is where the small controls live.
@@ -610,7 +605,7 @@ async function setState(page, state) {
 			break;
 		case 'drawer-folded':
 			await page.evaluate(() => {
-				const b = document.getElementById('drawer-btn'); if (b) b.click(); else DaimondShell.openDrawer();
+				DaimondShell.home();
 			});
 			await sleep(250);
 			await page.evaluate(() => {
@@ -637,7 +632,7 @@ async function setState(page, state) {
 			break;
 	}
 	await sleep(420);
-	const overlays = { drawer: ['#scrim', '#panel-rail'], 'drawer-folded': ['#scrim', '#panel-rail'],
+	const overlays = { drawer: ['#panel-rail'], 'drawer-folded': ['#panel-rail'],
 		'sheet-half': ['#msheet'], 'sheet-full': ['#msheet'] }[state] || [];
 	return overlays;
 }
@@ -735,7 +730,7 @@ function judge(r, ctx) {
 			report({ check: 'shell', sel: '#mnav', width, palette, skin, state, detail: 'bottom bar not drawn on a phone width' });
 		}
 		if (state === 'drawer' || state === 'drawer-folded') {
-			if (!g.drawerOpen) report({ check: 'shell', sel: 'body.drawer-open', width, palette, skin, state, detail: 'the hamburger did not open the drawer' });
+			if (!g.drawerOpen) report({ check: 'shell', sel: '#app[data-stack="home"]', width, palette, skin, state, detail: 'the home page did not come up' });
 			if (g.rail && g.rail.l < -1) report({ check: 'shell', sel: '#panel-rail', width, palette, skin, state, detail: `drawer left edge at ${g.rail.l}px — it did not slide in` });
 			if (g.rail && g.rail.r > g.W + 1) report({ check: 'shell', sel: '#panel-rail', width, palette, skin, state, detail: `drawer runs to ${g.rail.r}px past a ${g.W}px screen` });
 			if (g.railOpaque === false) report({ check: 'shell', sel: '#panel-rail', width, palette, skin, state, detail: 'drawer background is not opaque — the page shows through' });
@@ -752,10 +747,6 @@ function judge(r, ctx) {
 					report({ check: 'shell', sel: `#${what === 'diamonds' ? 'diamond' : 'session'}-list`, width, palette, skin, state,
 						detail: `the drawer's ${what} list is ${h}px tall — under two rows` });
 				}
-			}
-			if (g.scrim && (g.scrim.pe !== 'auto' || !g.scrim.covers)) {
-				report({ check: 'shell', sel: '#scrim', width, palette, skin, state,
-					detail: `scrim pointer-events=${g.scrim.pe}, covers=${g.scrim.covers}` });
 			}
 		}
 		if (state.startsWith('sheet')) {
@@ -891,11 +882,11 @@ async function selftest(page) {
 	asOverlays = await setState(page, 'chat');
 	asState = 'chat';
 
-	await run('touch target: shrink #drawer-btn to 20×20',
-		() => page.evaluate(() => { const b = document.getElementById('drawer-btn');
+	await run('touch target: shrink #stack-back to 20×20',
+		() => page.evaluate(() => { const b = document.getElementById('stack-back');
 			b.dataset.old = b.style.cssText; b.style.cssText += ';width:20px!important;height:20px!important;min-width:20px!important;min-height:20px!important'; }),
-		() => page.evaluate(() => { const b = document.getElementById('drawer-btn'); b.style.cssText = b.dataset.old || ''; }),
-		{ check: 'target<24', sel: 'drawer-btn' });
+		() => page.evaluate(() => { const b = document.getElementById('stack-back'); b.style.cssText = b.dataset.old || ''; }),
+		{ check: 'target<24', sel: 'stack-back' });
 
 	// A fixed bar, because #app is `overflow: hidden` and would legitimately clip
 	// an in-flow one — which is what clipRect is for, and is not the bug class.
@@ -1024,21 +1015,21 @@ for (const size of SIZES) {
 				safeArea.push({ width: size.tag, skin, state, ...g });
 			}
 		}
-		// The drawer must close and hand the page back.
+		// The home page must hand the page back to the turn, its rail put away.
 		if (phone) {
 			await setState(page, 'drawer');
-			await page.evaluate(() => { const sc = document.getElementById('scrim'); if (sc) sc.click(); });
+			await page.evaluate(() => DaimondShell.turn());
 			await sleep(400);
 			const after = await page.evaluate(() => ({
-				open: document.body.classList.contains('drawer-open'),
-				railL: Math.round(document.getElementById('panel-rail').getBoundingClientRect().left),
-				scrimPE: getComputedStyle(document.getElementById('scrim')).pointerEvents,
+				open: (() => { const a = document.getElementById('app'); return !!(a && a.dataset.stack === 'home'); })(),
+				railShown: (() => { const r = document.getElementById('panel-rail');
+					return !!(r && r.getClientRects().length && getComputedStyle(r).visibility !== 'hidden'); })(),
 				composer: (() => { const c = document.getElementById('chat-input'); if (!c) return 'absent';
 					const st = getComputedStyle(c); return st.visibility + '/' + st.display; })(),
 			}));
-			if (after.open || after.railL > -10 || after.scrimPE !== 'none') {
-				report({ check: 'shell', sel: '#scrim (close)', width: size.tag, palette: '(all)', skin, state: 'drawer-close',
-					detail: `after a scrim tap: open=${after.open} railLeft=${after.railL} scrimPE=${after.scrimPE}` });
+			if (after.open || after.railShown) {
+				report({ check: 'shell', sel: '#panel-rail (to the turn)', width: size.tag, palette: '(all)', skin, state: 'drawer-close',
+					detail: `after going to the turn: home=${after.open} railShown=${after.railShown}` });
 			}
 			// And the sheet must hand the guest back to the stage.
 			await setState(page, 'sheet-half');

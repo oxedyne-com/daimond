@@ -29,6 +29,7 @@ import { DEFAULT_IDS, cycleTagFilter, daimonChat, diamondApp, diamondMatches, di
 	tagState, tagsOf } from './diamonds.js';
 import { clearCrystalBody, crystalFull, renderCrystal, setCrystalFull, syncCrystalFullBtn } from './crystal.js';
 import { renderChatAttachments, syncAttachPrefix } from './marks.js';
+import { seatOnDiamond } from './files_tree.js';
 import { SpendCap, tOr } from './settingsui.js';
 // page-split: end imports
 let agentPinScrollTo, agentDotFrame, tagFoldRo; // page-split: hoisted
@@ -1562,6 +1563,27 @@ export function setDiamondWhen(f) {
 	if (aiMeter && /^crystal v/.test(aiMeter.textContent || '')) aiMeter.textContent = '';
 }
 
+/// The open Diamond's tags on their own line under its name (phone only by CSS): the rail
+/// tile's own chips and its "+N" fold (`foldTags`), so a chip here filters the rail as one
+/// there does.
+function paintHeadTags(f) {
+	var strip = document.getElementById('chead-tags');
+	if (!strip) return;
+	var tags = f ? tagsOf(f) : [];
+	var key = tags.join('\u0001');
+	if (strip.dataset.tags === key) return;	// drawn already: a redraw would drop an open "+N"
+	strip.dataset.tags = key;
+	strip.textContent = '';
+	tags.forEach(function (tag) {
+		var on   = tagState(tag) === 'inc';
+		var chip = tagChip(tag, 'tag-sm' + (on ? ' tag-inc' : ''), cycleTagFilter);
+		chip.title = on ? t('tag.exclude_next', { tag: tag }) : t('tag.only_diamonds', { tag: tag });
+		strip.appendChild(chip);
+	});
+	strip.hidden = !tags.length;
+	if (tags.length) { foldTagsWatch(strip); foldTags(strip); }
+}
+
 /// The open Diamond's or chat's icon, 18px, before its title in the panel head. It takes the
 /// mark's place where there is one to draw: the icon says which Diamond, the mark only that it
 /// is one. Repainted whenever the title changes (see the observer in `wireAvatars`).
@@ -1636,14 +1658,24 @@ export function showCentre(mode) {
 	try { syncFoldBtn(); } catch (e) { /* not wired yet at first paint */ }
 	// The face switch belongs to a Diamond and nothing else: a chat has one face,
 	// and a switch offering it a second would be a control that does nothing.
+	// A phone has a third face, Files (Stack A4, b4): the crystal's place on the page,
+	// taken by the Diamond's whole Workspace tree. A desktop has the Workspace panel
+	// beside the crystal, so there the stored face reads as the crystal.
+	var filesOn = crystalOn && isMobile() && diamondView(pg.currentDiamond && pg.currentDiamond.id) === 'files';
+	var face = filesOn ? 'files' : (crystalOn ? 'crystal' : 'chat');
 	var sw = document.getElementById('diamond-view');
 	if (sw) {
 		sw.style.display = onDiamond ? '' : 'none';
-		var cb = document.getElementById('dview-crystal');
-		var hb = document.getElementById('dview-chat');
-		if (cb) cb.setAttribute('aria-pressed', crystalOn ? 'true' : 'false');
-		if (hb) hb.setAttribute('aria-pressed', crystalOn ? 'false' : 'true');
+		['crystal', 'chat', 'files'].forEach(function (which) {
+			var b = document.getElementById('dview-' + which);
+			if (b) b.setAttribute('aria-pressed', face === which ? 'true' : 'false');
+		});
 	}
+	if (ai) { ai.classList.toggle('files-face', filesOn); ai.classList.toggle('on-diamond', onDiamond); }
+	seatOnDiamond(filesOn);
+	paintHeadTags(onDiamond ? pg.currentDiamond : null);
+	// The bar's ✎ and ⋯ are the crystal's; any other face or page leaves them empty.
+	if (!crystalOn || filesOn) { var acts = document.getElementById('stack-acts'); if (acts) acts.textContent = ''; }
 	// The face decides which of the rail's two selections wears the accent, so
 	// both lists are repainted here rather than only where a row is clicked --
 	// the face also changes from the view switch, from a fold and from a link.
@@ -2337,7 +2369,7 @@ export async function selectDiamond(f, view) {
 	updateActiveDiamond();
 	sessionNameEl.textContent = f.name;
 	setDiamondWhen(f);
-	var want = (view === 'chat' || view === 'crystal') ? view : diamondView(f.id);
+	var want = (view === 'chat' || view === 'crystal' || view === 'files') ? view : diamondView(f.id);
 	if (view) setDiamondView(f.id, want);
 	// Remembered so this tab's next boot comes back here, on this face. See TAB_VIEW_KEY.
 	tabViewSet({ diamond: f && f.id ? f.id : '', chat: '', face: want });

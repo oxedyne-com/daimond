@@ -54,8 +54,6 @@
 	'copy.what_handle':        '공개 이름',
 
 	// ── 상단 바 ────────────────────────────────────────────────
-	'topbar.menu':        '메뉴',
-	'topbar.open_menu':   '메뉴 열기',
 	'topbar.brand':       'Daimond, daimond.app 홈페이지',
 	'topbar.made_by': 'Oxedyne가 만들었어요',
 	'topbar.made_with_ai': '코드는 대부분 AI로 만들었어요',
@@ -4257,5 +4255,21 @@
 	'settings.group_help_what': '\uc0c8 \uc18c\uc2dd, \ubcf4\uace0\uc11c, \uc9c4\ub2e8',
 	'rel.whats_new': '\uc0c8\ub85c\uc6b4 \uae30\ub2a5',
 	'rel.about': '\uc815\ubcf4',
+	'composer.placeholder': '메시지',
+	'composer.steer_diamond': '{name}에게 묻거나 지시하기',
+	'dictate.mic': '받아쓰기',
+	'dictate.listening': '듣는 중…',
+	'dictate.cancel': '취소',
+	'dictate.keep': '유지',
+	'dictate.check': '음성으로 입력했어요. 확인한 뒤 보내기',
+	'dictate.slide_cancel': '밀어서 취소',
+	'dictate.release_stop': '손을 떼면 정지',
+	'camera.add_title': '이 대화에 추가',
+	'camera.camera': '카메라',
+	'camera.photos': '사진',
+	'camera.files': '파일',
+	'stack.back': '뒤로',
+	'diamond.files': '파일',
+	'settings.title': '설정',
 	});
 })();

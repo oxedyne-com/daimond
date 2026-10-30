@@ -27,7 +27,7 @@
 //   6. The appearance menu and the panel gallery each move focus into
 //      themselves, close on Escape, and return focus to their opener.
 //   7. The command palette opens with the caret in its box and swallows Tab, so
-//      the keyboard cannot end up typing behind the scrim.
+//      the keyboard cannot end up typing behind the backdrop.
 //   8. Focus the app moves by itself draws no ring (2026-10-02, "New Chat" after an
 //      automatic reload; quality bar rule 1). Section 10: with stay-unlocked forced
 //      on, the app is reloaded with NO input and left past the unlock and the 60 ms
@@ -283,8 +283,8 @@ const UNLOCKED_NOW = () => {
 		theme: window.DaimondTheme ? window.DaimondTheme.get() : '' };
 };
 // The hand-over's own candidates and test (daimond.js handOverTarget): boxes AND visible, since
-// a phone's closed drawer keeps its boxes while hidden, so there the burger is the stop (S1MF-live).
-const WANT_FIRST = () => ['chat-input', 'new-session-btn', 'new-diamond-btn', 'drawer-btn']
+// a page the phone's Stack hides keeps its boxes (S1MF-live); the burger went with the drawer (Stack A2).
+const WANT_FIRST = () => ['chat-input', 'new-session-btn', 'new-diamond-btn']
 	.map((id) => document.getElementById(id))
 	.filter((e) => e && e.getClientRects().length
 		&& (typeof e.checkVisibility !== 'function' || e.checkVisibility({ visibilityProperty: true, opacityProperty: true })))
@@ -375,7 +375,7 @@ async function ringSection() {
 		// D. a menu a pointer opened, closed by a pointer, in a fresh document with no input.
 		await reloadNoInput(pg);
 		let tested = 0;
-		for (const op of ['#help-btn', '#settings-menu-btn', '#panel-more', '#drawer-btn', '#chead-more']) {
+		for (const op of ['#help-btn', '#settings-menu-btn', '#panel-more', '#chead-more']) {	// the drawer's burger went with it (Stack A2)
 			for (const how of ['the opener again', 'a click outside']) {
 				const o = await centre(op);
 				if (!o) continue;
@@ -650,7 +650,7 @@ for (let i = 0; i < stops + 3; i++) {
 	if (!x.inside) { escapedAt = i + 1; escapedTo = x.name; break; }
 }
 check(escapedAt === -1, `Tab cannot walk out of a dialog (${stops} stops, ${stops + 3} presses)`,
-	escapedAt === -1 ? null : `Tab ${escapedAt} landed on ${escapedTo}, behind the scrim`);
+	escapedAt === -1 ? null : `Tab ${escapedAt} landed on ${escapedTo}, behind the backdrop`);
 
 await page.keyboard.press('Escape');
 await page.waitForTimeout(400);
@@ -705,7 +705,7 @@ if (rateFocused) {
 			if (!x.inside) { rEscaped = i + 1; rTo = x.name; break; }
 		}
 		check(rstops > 0 && rEscaped === -1, `Tab cannot walk out of the rating popup, ${state} (${rstops} stops, ${rstops + 3} presses)`,
-			rEscaped === -1 ? null : `Tab ${rEscaped} landed on ${rTo}, behind the scrim`);
+			rEscaped === -1 ? null : `Tab ${rEscaped} landed on ${rTo}, behind the backdrop`);
 	}
 	await page.keyboard.press('Escape');
 	await page.waitForTimeout(400);
@@ -772,7 +772,7 @@ if (rateFocused) {
 				const x = await page.evaluate(WHERE, '.rate-card');
 				if (!x.inside) { fEsc = i + 1; fTo = x.name; break; }
 			}
-			check(fstops > 0 && fEsc === -1, `Tab cannot walk out of the file popup (${fstops} stops, ${fstops + 3} presses)`, fEsc === -1 ? null : `Tab ${fEsc} landed on ${fTo}, behind the scrim`);
+			check(fstops > 0 && fEsc === -1, `Tab cannot walk out of the file popup (${fstops} stops, ${fstops + 3} presses)`, fEsc === -1 ? null : `Tab ${fEsc} landed on ${fTo}, behind the backdrop`);
 			await page.keyboard.press('Escape');
 			await page.waitForTimeout(400);
 			check(!(await page.$('.rate-card')), 'Escape closes the file popup');
@@ -853,7 +853,7 @@ check(w.id === 'pal-input', 'the palette opens with the caret in its box', `focu
 await page.keyboard.press('Tab');
 await page.waitForTimeout(120);
 w = await page.evaluate(WHERE, '#palette');
-check(w.id === 'pal-input', 'Tab is swallowed, so the keyboard cannot type behind the scrim',
+check(w.id === 'pal-input', 'Tab is swallowed, so the keyboard cannot type behind the backdrop',
 	`focus is on ${w.name}`);
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
@@ -862,7 +862,7 @@ check(await page.evaluate(() => document.getElementById('palette').hidden === tr
 w = await page.evaluate(WHERE, null);
 if (w.onBody) {
 	note('Closing the command palette drops the focus on <body>',
-		'www/js/workspace.js:737 closePalette() hides the scrim without restoring the focus '
+		'www/js/workspace.js:737 closePalette() hides the backdrop without restoring the focus '
 		+ 'it took. The next Tab starts again from the top of the app. See a11y_report.md §6.');
 } else {
 	check(true, 'closing the palette leaves the focus on something', `focus is on ${w.name}`);

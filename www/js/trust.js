@@ -1382,7 +1382,7 @@
 		try {
 			var h = (location.hash || '').replace(/[#&]?c=[^&]*/, '');
 			if (h === '#') h = '';
-			history.replaceState(history.state, '', location.pathname + location.search + h);
+			DaimondHistory.url(location.pathname + location.search + h);
 		} catch (e) { /* nothing to tidy */ }
 	}
 

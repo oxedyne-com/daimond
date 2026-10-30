@@ -486,6 +486,8 @@ export const answerChanges = (page, word) => page.evaluate((w) => {
 	};
 }, word);
 
+const LIVE_PROFILES = new Set();	// the scratch profiles of the sessions now open in this process
+
 export async function open(opts = {}) {
 	const {
 		headed    = false,
@@ -634,7 +636,16 @@ export async function open(opts = {}) {
 
 	// A persistent context per session, on its own profile: OPFS, localStorage
 	// and identity are that session's alone, so sessions may run in parallel.
-	const profileDir = profile || scratch('pw', `${name}-${process.pid}`);
+	// A profile in use is never handed to a second session: one opened while another of the same name is
+	// still up (a section that threw before it closed its browser) takes the next free suffix, -2, -3, and
+	// the name is free again once its session closes, so a reopen after a close still finds its profile.
+	let profileDir = profile;
+	if (!profileDir) {
+		const stem = `${name}-${process.pid}`;
+		profileDir = scratch('pw', stem);
+		for (let k = 2; LIVE_PROFILES.has(profileDir); k++) profileDir = scratch('pw', `${stem}-${k}`);
+	}
+	LIVE_PROFILES.add(profileDir);
 	fs.mkdirSync(profileDir, { recursive: true });
 	// DISPLAY is dropped for a headless run, and it is the reason half the
 	// clicks in this tree are forced.
@@ -875,7 +886,9 @@ export async function open(opts = {}) {
 	if (signIn && !defaults) await clearDiamonds(s);
 	if (signIn && connect) await connectMock(s, { baseUrl: mock });
 
-	s.close = async () => { await browser.close(); };
+	s.close = async () => {
+		try { await browser.close(); } finally { LIVE_PROFILES.delete(profileDir); }
+	};
 	return s;
 }
 
@@ -1664,6 +1677,14 @@ export async function connectMock(s, { baseUrl = MOCK, model = MODEL, apiKey = '
 		} catch { return false; }
 	}, model, { timeout: 6000 }).catch(() => {});
 	await s.page.waitForTimeout(200);
+	// SETTINGS PUT AWAY, as a person does once the model is connected. Left up, every session
+	// began with the drawer open, and a window narrowed to a phone's width then stood on the
+	// Settings page: "a connected phone boots on Settings", which the app never does (A4k).
+	await s.page.evaluate(() => {
+		const a = document.getElementById('admin');
+		if (a && a.classList.contains('admin-open') && window.DaimondAdmin) DaimondAdmin.close();
+	});
+	await s.page.waitForTimeout(150);
 
 	// Whatever the form did, the app is only connected if it says it is.
 	//

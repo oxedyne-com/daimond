@@ -116,8 +116,6 @@
 	'copy.what_handle':        'your public handle',
 
 	// ── The top bar ────────────────────────────────────────────
-	'topbar.menu':        'Menu',
-	'topbar.open_menu':   'Open menu',
 	'topbar.brand':       'Daimond, the daimond.app home page',
 	'topbar.made_by': 'Made by Oxedyne',
 	'topbar.made_with_ai': 'Code made mostly with AI',
@@ -5444,5 +5442,25 @@
 	'settings.group_help_what':       'What’s new, reports, diagnostics',
 	'rel.whats_new':        "What’s new",
 	'rel.about':            'About',
+	// ── Phone Stack (D-20261029-01; spec daimond_mobile_redesign_20261030 §i18n) ──
+	// Laid down whole by Stack A0 so no later unit edits a locale file. The Diamond
+	// page's Chat face reuses `crystal.view_chat`; the voice set is `dictate.*`
+	// because `voice.*` is the forge posting name.
+	'composer.placeholder':     'Message',
+	'composer.steer_diamond':   'Ask or steer {name}',
+	'dictate.mic':              'Dictate',
+	'dictate.listening':        'Listening…',
+	'dictate.cancel':           'Cancel',
+	'dictate.keep':             'Keep',
+	'dictate.check':            'From your voice: check it, then Send',
+	'dictate.slide_cancel':     'Slide to cancel',
+	'dictate.release_stop':     'Release to stop',
+	'camera.add_title':         'Add to this chat',
+	'camera.camera':            'Camera',
+	'camera.photos':            'Photos',
+	'camera.files':             'Files',
+	'stack.back':               'Back',
+	'diamond.files':            'Files',
+	'settings.title':           'Settings',
 	});
 })();

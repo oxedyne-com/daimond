@@ -118,7 +118,6 @@
 	'use strict';
 
 	var KEY     = 'dlayers';	// the state each entry carries: { dlayers: depth }
-	var STALE   = 2000;			// ms after which an unlanded traversal stops being counted
 
 	function depthOf(state) {
 		var d = state && typeof state === 'object' ? state[KEY] : 0;
@@ -130,39 +129,29 @@
 		var stack     = [];		// { id, close, opener, over, menu }, bottom first; over: the claims live when it opened
 		var claims    = [];		// { id, fn, live }, oldest first: Escape-only entries with no history
 		var pos       = 0;		// the history depth we believe the page is at
-		var pending   = [];		// when each traversal we issued was issued
 		var scheduled = false;
-		var retry     = null;	// the timer that settles again once an unlanded traversal is given up
 		var seq       = 0;
 		var base      = [];		// base[d]: history.length just after depth d's entry was pushed
 		var capped    = false;	// the history stopped growing as entries were pushed: lengths say nothing
 		var hung      = new WeakSet();	// the elements `hang` put up as menus
 
+		// The history is moved by history.js alone, for this stack and the phone's page stack alike: it merges
+		// every key the other keeps into each entry, runs one traversal at a time and never goes below the floor.
 		function hist() { return win.history; }
-		function now()  { return api.clock(); }
-
-		/// Forget traversals that never landed, and believe the page about where it is.
-		function sweep() {
-			var t = now(), k = pending.length;
-			while (pending.length && t - pending[0] > STALE) pending.shift();
-			if (pending.length < k) {
-				try { pos = depthOf(hist().state); } catch (e) { /* keep the count */ }
-			}
-		}
+		function mover() { return win.DaimondHistory; }
+		function mark(d) { var o = {}; o[KEY] = d; return o; }
 
 		/// How far back to go, in entries, to land on the last entry that belongs to the layers at depth `n` and
 		/// below: the entry before the one that opened depth n + 1, which is where a frame in that layer left the
 		/// page. With only our own entries in the history that is one for each layer closed.
-		function back(h, n) {
+		function back(h, H, n) {
 			var top = base[pos], low = base[n + 1], probed = false;
 			if (capped || !(top > 0) || !(low > 1)) return n - pos;
 			var len = h.length;
 			if (len !== top) {
 				// Entries we did not push (a frame's), or entries ahead of the page. Push one more, which clears
 				// what lies ahead, so that the page stands on the last entry and the length is its position.
-				var s = {};
-				s[KEY] = pos;
-				h.pushState(s, '');
+				H.push(mark(pos));
 				len = h.length;
 				probed = true;
 			}
@@ -174,32 +163,23 @@
 		/// that has none, and take back the surplus in one traversal.
 		function settle() {
 			scheduled = false;
-			var h = hist();
-			if (!h) return;
-			sweep();
-			if (pending.length) {
-				// Our own traversal is in flight: its `popstate` settles again. If it never comes, so does this.
-				if (!retry && typeof setTimeout === 'function') {
-					retry = setTimeout(function () { retry = null; later(); }, STALE + 50);
-				}
-				return;
-			}
+			var h = hist(), H = mover();
+			if (!h || !H) return;
+			// A traversal in flight, ours or the page stack's: settle against the entry it lands on.
+			if (H.busy()) { H.run(settle); return; }
 			var n = stack.length;
 			try {
 				while (pos < n) {
 					pos++;
-					var s = {};
-					s[KEY] = pos;
-					h.pushState(s, '');
+					H.push(mark(pos));
 					base[pos] = h.length;
 					// A deeper entry always lengthens the history, unless the history is at its cap.
 					if (pos > 1 && !(base[pos] > base[pos - 1])) capped = true;
 				}
 				if (pos > n) {
-					var d = back(h, n);
+					var d = back(h, H, n);
 					pos = n;
-					pending.push(now());
-					h.go(d);
+					H.go(d);
 				}
 			} catch (e) { /* no history to keep: the layers still work, only Back is the platform's */ }
 		}
@@ -355,7 +335,6 @@
 		api.top    = function () { return stack.length ? stack[stack.length - 1].id : null; };
 		api.has    = function (id) { return indexOf(id) >= 0; };
 		api.settle = settle;
-		api.clock  = function () { return Date.now(); };
 
 		/// Where a floating layer may stand so that it lies inside the glass.
 		///
@@ -376,18 +355,17 @@
 			return { top: top, max: top + o.height > hi ? hi - top : null };
 		};
 
-		/// The person pressed Back (or Forward). Close the layers above the
-		/// depth the page has arrived at, top first.
-		function onPop(ev) {
-			sweep();
-			if (pending.length) {
-				// Ours has landed. The page is where the platform put it, not where we meant it to be.
-				pending.shift();
-				pos = depthOf(ev && ev.state);
-				settle();
+		/// A landing (history.js tells every one). The person pressed Back (or Forward): close the layers above
+		/// the depth the page has arrived at, top first.
+		function onPop(st, how) {
+			if (!how.back) {
+				// A traversal of ours, or the page stack's, has landed (or was given up). The page is where the
+				// platform put it, not where we meant it to be.
+				pos = depthOf(st);
+				if (how.lost) later(); else settle();
 				return;
 			}
-			var d = depthOf(ev && ev.state);
+			var d = depthOf(st);
 			pos = d;
 			var k = stack.length - d;
 			for (var i = 0; i < k && stack.length; i++) {
@@ -425,8 +403,8 @@
 			later();
 		}
 
+		if (win.DaimondHistory) win.DaimondHistory.listen(onPop);
 		if (win.addEventListener) {
-			win.addEventListener('popstate', onPop);
 			// The window, in the capture phase: before every capture listener on the document.
 			win.addEventListener('keydown', onKey, true);
 		}
@@ -438,10 +416,7 @@
 			var h0 = hist(), st0 = h0 && h0.state;
 			pos = depthOf(st0);
 			if (pos > 0) {
-				var s0 = {};
-				for (var k0 in st0) if (Object.prototype.hasOwnProperty.call(st0, k0)) s0[k0] = st0[k0];
-				s0[KEY] = 0;
-				h0.replaceState(s0, '');
+				mover().replace(mark(0));
 				pos = 0;
 			}
 		} catch (e) { pos = 0; }

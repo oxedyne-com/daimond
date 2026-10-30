@@ -6,7 +6,7 @@
 // (DK_RULINGS overrides the path); a quote not found on a line carrying its id fails the
 // run before a browser starts. Every finding names the element, the cell and the number.
 //
-// CELLS   1440x900 and 1280x720 in Chromium; 393x793 in WebKit, touch, the drawer open
+// CELLS   1440x900 and 1280x720 in Chromium; 393x793 in WebKit, touch, on the Stack's home page
 //         (his phone). Obsidian and Porcelain in each.
 // STATES  thin: four Diamonds, four chats, no money pool. full: forty of each (tagged) and three
 //         pools ("Daimond credits", "OpenRouter", "Fireworks AI"), as the approved
@@ -618,7 +618,8 @@ async function world(cell, state, t) {
 		});
 	}
 	for (const f of SEEDS) await f(p, cell, state);
-	if (cell.phone) await p.evaluate(() => window.DaimondShell && DaimondShell.openDrawer());
+	// On a phone the rail is the Stack's home page (A2 retired the drawer): go there, as his Back does.
+	if (cell.phone) await p.evaluate(() => window.DaimondShell && DaimondShell.home());
 	await p.waitForTimeout(800);
 	await settle(p);
 	return s;

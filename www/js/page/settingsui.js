@@ -1971,7 +1971,7 @@ export function install() { // page-split: install
 			Pending.render();
 		});
 	}
-	['crystal', 'chat'].forEach(function (which) {
+	['crystal', 'chat', 'files'].forEach(function (which) {
 		var b = document.getElementById('dview-' + which);
 		if (!b) return;
 		b.addEventListener('click', function () {

@@ -138,7 +138,7 @@ try {
 
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.waitForTimeout(1000);
-	await page.evaluate(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } });
+	await page.evaluate(() => DaimondShell.home());	// the rail is the Stack's home page (A2)
 	await page.waitForTimeout(900);
 	await judge(page, '390');
 	await snap(page, 'diamond_tile_390', '#diamond-list .diamond-box');

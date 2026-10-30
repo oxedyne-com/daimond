@@ -194,7 +194,7 @@ await grab('vocab-gallery.png', '#panel-gallery', { pad: 10 });
 await p.keyboard.press('Escape');
 await pause(400);
 
-// ── The phone shell: the drawer and the sheet ────────────────────────
+// ── The phone shell: the home page and the sheet ─────────────────────
 // Reloaded at the phone size rather than resized into it. A window taken from
 // 1500 to 1000 and then to 390 leaves the rail `display: none` and open at the
 // same time, which is a layout the phone shell never reaches on its own and not
@@ -205,14 +205,11 @@ await signInAs(s, 'Vocab');
 await pause(2000);
 await p.evaluate(() => { if (window.DaimondPanels) DaimondPanels.show('rail'); });
 await pause(600);
-await p.click('#drawer-btn', { force: true }).catch(() => {});
-await pause(1000);
-// The hamburger toggles, so a rail that was already open when the window
-// narrowed ends up shut. Asked for by state rather than by another press.
-await p.evaluate(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } });
+// The rail is the Stack's home page (A2 retired the drawer and its scrim): go there, then back to the turn.
+await p.evaluate(() => DaimondShell.home());
 await pause(900);
 await grab('vocab-drawer.png', '#panel-rail', { pad: 0 });
-await p.evaluate(() => { const sc = document.getElementById('scrim'); if (sc) sc.click(); });
+await p.evaluate(() => DaimondShell.turn());
 await pause(800);
 await p.evaluate(() => { if (window.DaimondSheet) DaimondSheet.open('work'); });
 await pause(1500);

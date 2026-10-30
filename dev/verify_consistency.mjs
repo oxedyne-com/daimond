@@ -380,7 +380,7 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 	//         included; the `#admin` wrapper also holds the strip, which lies beneath it and is not tappable while Admin is open.)
 	const taps = [];
 	if (tap) {
-		const OV = '.pop:not([hidden]), .dlg-card, .modal-card, [role="dialog"], .modal, #admin.admin-open .admin-body, .pal-box, .menu:not([hidden]), #msheet.open, body.drawer-open #panel-rail';
+		const OV = '.pop:not([hidden]), .dlg-card, .modal-card, [role="dialog"], .modal, #admin.admin-open .admin-body, .pal-box, .menu:not([hidden]), #msheet.open';	// the rail is the Stack's home page, no overlay (A2)
 		const ovs = [...document.querySelectorAll(OV)].filter((e) => e.getClientRects().length && e.getBoundingClientRect().height > 10 && cs(e).visibility !== 'hidden');
 		// The top overlay is the one that is on top where it can be seen: of those whose own centre lands inside them, the last in document order
 		// (a popover inside a sheet beats the sheet). An open drawer over an open sheet is the top overlay, not the sheet beneath it.
@@ -545,7 +545,7 @@ async function overlay(name, opener) {
 // surface, and a row is reached through the door that holds it. A door that is not there is a counted finding (CONS-CRASH fix 3).
 // `drawer`: a phone, whose Settings opens from inside the rail's drawer.
 async function settingsHome(drawer) {
-	if (drawer) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(700); }
+	if (drawer) { await ev(() => { if (window.DaimondShell) DaimondShell.home(); }); await wait(700); }
 	if (!(await click('#user-row'))) return false;
 	await wait(600);
 	await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(400);
@@ -914,7 +914,7 @@ async function ratingSurfaces(pre, wk) {
 		await quiet();
 		// The same list in the Diamond's own settings (Models area): its notes and the account's.
 		const cogOv = await overlay(pre + 'dlg_steer_list', async () => {
-			if (pre) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); }
+			if (pre) { await ev(() => { if (window.DaimondShell) DaimondShell.home(); }); await wait(800); }
 			const hit = await ev((nm) => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || e).textContent || '').trim() === nm); const c = t && t.querySelector('.tile-cog'); if (!c) return false; c.click(); return true; }, DIAMONDS[1]);
 			if (hit === true) { await wait(900); await ev(() => { const l = document.querySelector('.tile-dlg-card [data-steer-list]'); if (l) l.scrollIntoView({ block: 'center' }); }); await wait(300); }
 			return hit;
@@ -1104,13 +1104,13 @@ async function phoneSurfaces(wk) {
 	await group('p_file_surfaces', () => fileSurfaces('p_', wk));
 	await page.fill('#chat-input', 'A draft long enough to wrap onto a second line of the composer on a phone.').catch(() => {});
 	await wait(300); await grab('p_composer', '.chat-input-bar'); await page.fill('#chat-input', '').catch(() => {});
-	await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(900);
+	await ev(() => { if (window.DaimondShell) DaimondShell.home(); }); await wait(900);
 	await ev(() => document.querySelectorAll('#panel-rail details').forEach((d) => { d.open = true; }));
 	await grab('p_drawer', '#panel-rail');
 	await ev(() => { const r = document.querySelector('#panel-rail .rail-scroll') || document.getElementById('panel-rail'); r.scrollTop = 99999; }); await wait(300);
 	await grab('p_drawer_end', '#panel-rail');
 	await quiet();
-	await ev(() => { document.body.classList.remove('drawer-open'); const sc = document.querySelector('.drawer-scrim, .scrim'); if (sc) sc.click(); }); await wait(400);
+	await ev(() => { if (window.DaimondShell) DaimondShell.turn(); }); await wait(400);
 	// The strip (bottom nav) and each sheet it opens.
 	await grab('p_strip', '#mnav');
 	const tabs = await ev(() => [...document.querySelectorAll('#mnav button')].map((b, i) => (b.textContent || '').trim().replace(/\W+/g, '').slice(0, 12) || 'b' + i));
@@ -1137,7 +1137,7 @@ async function phoneSurfaces(wk) {
 	await quiet();
 	await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(300);
 	for (const [name, sel, drawer] of [['p_menu_settings', '#settings-menu-btn'], ['p_admin', '#user-row', 1], ['p_dlg_newdiamond', '#new-diamond-btn', 1], ['p_menu_handmode', '#hand-mode-chip'], ['p_dlg_chatcog', '#session-list .chat-box .tile-cog', 1]]) {
-		await overlay(name, async () => { if (drawer) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(700); } return click(sel); });
+		await overlay(name, async () => { if (drawer) { await ev(() => { if (window.DaimondShell) DaimondShell.home(); }); await wait(700); } return click(sel); });
 	}
 	// F4: every door's own page on a phone, opened from the drawer as Settings itself is.
 	await quiet();
@@ -1212,11 +1212,11 @@ async function secretSurfaces(pre) {
 async function carrySurfaces(wk) {
 	const home = async () => {
 		await quiet();
-		await ev(() => { document.body.classList.remove('drawer-open'); const sc = document.querySelector('.drawer-scrim, .scrim'); if (sc && sc.getClientRects().length) sc.click(); }); await wait(300);
+		await ev(() => { if (window.DaimondShell) DaimondShell.turn(); }); await wait(300);
 		await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400);
 		await mainChat();
 	};
-	const drawer = async () => { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); };
+	const drawer = async () => { await ev(() => { if (window.DaimondShell) DaimondShell.home(); }); await wait(800); };
 	await home();
 	await overlay('p_menu_help', '#help-btn');
 	// MISSING on B0 by design: the ⋯ menu is H1's. The surface turns from MISSING to present when H1 merges.
@@ -1523,7 +1523,7 @@ async function seed() {
 	// Three trashed things, so the Trash's rows are measured: two chats (Keep, Restore, the cross and the note) and a Diamond (no Keep).
 	{
 		const trashOne = async (listSel, boxCls, re) => {
-			await ev(() => { const b = document.getElementById('drawer-btn'); if (b && b.getClientRects().length && !document.body.classList.contains('drawer-open')) b.click(); }); await wait(300);
+			await ev(() => { if (window.DaimondShell) DaimondShell.home(); }); await wait(300);
 			const ok = await ev((a) => { const t = [...document.querySelectorAll(a.l + ' ' + a.c)].find((e) => new RegExp(a.re).test((e.textContent || ''))); const c = t && t.querySelector('.tile-cog'); if (!c) return false; c.click(); return true; }, { l: listSel, c: boxCls, re });
 			if (!ok) return false;
 			await wait(700); await page.locator('.tile-dlg-delete').first().click(); await wait(600);
@@ -1905,7 +1905,7 @@ const ROLES = [
 	// G16: the bar's own icon-only tools (hamburger, section fold) are a
 	// role of their own -- 30px on desk, 36px on phone -- ahead of `head-tool`,
 	// whose regex otherwise claims `.rail-fold` for a row it does not belong to.
-	['bar-icon',        'none',     (it) => it.ctrl && (it.id === 'drawer-btn' || has(it, 'rail-fold'))],
+	['bar-icon',        'none',     (it) => it.ctrl && (it.id === 'stack-back' || has(it, 'rail-fold'))],
 	['head-tool',       'title',    (it) => it.ctrl && within(it, /chead-right|railhead-acts|(files|mail|spend|trash|pending|agents|top)-actions(\.|$)|files-view-head|^div\.railhead($|\.)|pptw-head/)],
 	// The "Go to a panel" gallery is a padded search-result row, not a plain
 	// text menu entry -- it fell into `menu-item` only through the generic
@@ -2763,7 +2763,7 @@ async function vSetup(kind) {
 	if (kind === 'diamond') {
 		// The Kitchen Diamond on its crystal face, picked as a person would: from the drawer on a phone.
 		const ph = page.viewportSize().width <= 760;
-		if (ph) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); }
+		if (ph) { await ev(() => { if (window.DaimondShell) DaimondShell.home(); }); await wait(800); }
 		const hit = await ev(() => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => /Kitchen/.test(e.getAttribute('aria-label') || e.textContent)); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
 		// A device that holds no Diamond (WebKit has no file store; see `webkitPair`) has no head to measure. Measuring the chat's head under this
 		// slot's name would be a pass on the wrong element.
@@ -2772,7 +2772,7 @@ async function vSetup(kind) {
 	}
 	if (kind === 'lifelog') {
 		const ph = page.viewportSize().width <= 760;
-		if (ph) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); }
+		if (ph) { await ev(() => { if (window.DaimondShell) DaimondShell.home(); }); await wait(800); }
 		const hit = await ev(() => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || {}).textContent || '').trim() === 'Log Life'); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
 		if (hit !== true) return 'no Log Life on this device';
 		await wait(1200); await click('#dview-crystal'); await wait(2200);
@@ -2807,7 +2807,7 @@ async function vSetup(kind) {
 	if (kind === 'dtail') {
 		// The Kitchen Diamond whose turn changed files, on its chat face, with the tail note in view (the thread's last tile).
 		const ph = page.viewportSize().width <= 760;
-		if (ph) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); }
+		if (ph) { await ev(() => { if (window.DaimondShell) DaimondShell.home(); }); await wait(800); }
 		const hit = await ev(() => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => /Kitchen/.test(e.getAttribute('aria-label') || e.textContent)); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
 		if (hit !== true) return 'no Diamond on this device';
 		await wait(1200); await click('#dview-chat'); await wait(900);
@@ -2845,10 +2845,10 @@ async function vShot(name, clip) {
 async function varlenPass(phone) {
 	fs.mkdirSync(`${OUT}/varlen_shots`, { recursive: true });
 	const recs = [];
-	const railOpen = async () => { if (phone) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); } };
+	const railOpen = async () => { if (phone) { await ev(() => { if (window.DaimondShell) DaimondShell.home(); }); await wait(800); } };
 	const place = async (setup, ctx) => {
 		await quiet();
-		if (phone) { await ev(() => { document.body.classList.remove('drawer-open'); }); await wait(300); }
+		if (phone) { await ev(() => { if (window.DaimondShell) DaimondShell.turn(); }); await wait(300); }
 		if (!phone) await panels(['rail', 'ai', 'work']);
 		if (phone && setup === 'work') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
 		else if (phone && setup === 'viewer') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }

@@ -3,11 +3,11 @@
 //	node --test www/js/layers.wiring.test.mjs
 //
 // layers.test.mjs proves the stack. This proves nothing opens AROUND it: the
-// next dialog somebody writes, or the next place that flips `drawer-open`, would
+// next dialog somebody writes, or a page shown outside DaimondStack, would
 // otherwise bring back a surface the platform's Back leaves the app from, and no
 // unit test of the stack could see it. The checks are over the source, by role:
-// every builder of a `.modal` registers it, the drawer and a popover have one
-// opener and one closer each, and the safe-area inset is applied to each role of
+// every builder of a `.modal` registers it, a popover has one opener and one
+// closer, and the safe-area inset is applied to each role of
 // layer head by ONE rule of its own.
 import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
@@ -45,19 +45,20 @@ test('every opener of a dialog has the matching closer reporting it', () => {
 	}
 });
 
-test('the drawer\'s class changes in one opener and one closer', () => {
+test('nothing flips the retired drawer class (Stack A2: the rail is the home page)', () => {
 	let hits = 0;
-	for (const f of JS) hits += count(read('js', f), /classList\.(add|remove|toggle)\('drawer-open'/g);
-	assert.equal(hits, 2, 'drawer-open is flipped in ' + hits + ' places');
-	const m = read('js', 'mobile.js');
-	assert.match(m, /function openDrawer\(\) \{[^}]*DaimondLayers\.open\('drawer'/s);
-	assert.match(m, /function closeDrawer\(\) \{[^}]*DaimondLayers\.done\('drawer'/s);
+	for (const f of JS) hits += count(read('js', f), /classList\.(add|remove|toggle)\('drawer-open'/g);	// keeps: drawer-open asserts nothing flips it
+	assert.equal(hits, 0, 'drawer-open is flipped in ' + hits + ' places');	// keeps: drawer-open asserts nothing flips it
 });
 
 test('a popover is hidden in one place, which tells the stack', () => {
 	const w = read('js', 'workspace.js');
 	assert.match(w, /function hidePop\(pop\) \{\s*pop\.hidden = true;\s*DaimondLayers\.done\('pop'\);/);
-	assert.equal(count(w, /\b(menuEl|galEl|el|pop)\.hidden = true/g), 1, 'a popover is hidden somewhere other than hidePop');
+	// Stack A3: on its way home from Settings the Appearance menu is put down closed. Standing in
+	// Settings it was a group of rows, never hung on the layer stack, so there is nothing to tell.
+	const away = w.match(/function unmountAppearance\(\) \{[\s\S]*?\n\t\}\n/);
+	assert.ok(away && /menuEl\.hidden = true/.test(away[0]), 'unmountAppearance puts the menu down closed');
+	assert.equal(count(w.replace(away[0], ''), /\b(menuEl|galEl|el|pop)\.hidden = true/g), 1, 'a popover is hidden somewhere other than hidePop');
 	assert.equal(count(read('js', 'handmode.js'), /pop\.hidden = true/g), 0);
 	assert.match(w, /function openPop[\s\S]*?DaimondLayers\.hang\(pop, 'pop'/);
 });
@@ -76,6 +77,23 @@ test('the sheet, the palette and the Admin drawer register and report', () => {
 
 test('nothing overwrites the history state a layer entry carries', () => {
 	for (const f of JS) assert.equal(count(read('js', f), /history\.replaceState\(\{\}/g), 0, f);
+});
+
+// ── One history mover (Stack A4i) ───────────────────────────────────────────
+// history.js alone moves the session history and hears popstate; the layers and the phone's page stack ask it.
+// web.js steps the Web sheet's own frame (`contentWindow.history`), which is the frame's, not the page's.
+test('history.js alone moves the history and hears popstate', () => {
+	const MOVE = /\.(pushState|replaceState)\s*\(|(?<!contentWindow\.)\bhistory\.(go|back|forward)\s*\(|['"]popstate['"]/g;
+	const files = JS.map((f) => [ f, read('js', f) ]);
+	for (const f of fs.readdirSync(path.join(HERE, 'page')).filter((n) => n.endsWith('.js'))) files.push([ 'page/' + f, read('js', 'page', f) ]);
+	for (const [ f, src ] of files) {
+		const code = src.replace(/^\s*(\/\/|\/\*|\*).*$/gm, '');
+		if (f === 'history.js') continue;
+		assert.equal(count(code, MOVE), 0, `${f} moves history itself: ask DaimondHistory`);
+	}
+	const h = read('index.html');
+	const at = (name) => h.indexOf(`<script src="js/${name}"></script>`);
+	assert.ok(at('history.js') > 0 && at('history.js') < at('layers.js'), 'history.js loads before layers.js');
 });
 
 test('the stack is loaded before anything that opens a surface', () => {
@@ -126,9 +144,8 @@ test('what Escape used to close is a layer, or a claim the router asks', () => {
 	// The passcode dialog is a dialog layer like pairing's and mail's.
 	assert.match(p, /DaimondLayers\.open\(DaimondLayers\.uid\('dialog'\), /);
 	assert.match(p, /DaimondLayers\.done\(lid\)/);
-	// The drawer hides by transform, so it carries a closer of its own, which also gives the focus back to the burger.
-	assert.match(m, /function leaveDrawer\(\) \{[^}]*closeDrawer\(\)[^}]*drawer-btn/s);
-	assert.match(m, /DaimondLayers\.open\('drawer', leaveDrawer\)/);
+	// The drawer is gone (Stack A2): the rail is the stack's home page and Back is the history's, so it holds no layer.
+	assert.doesNotMatch(m, /DaimondLayers\.open\('drawer'/);
 	assert.match(m, /DaimondLayers\.open\('sheet'/);
 	// The drag and the graph are claims, held for the page's life, that decline when idle.
 	assert.match(read('js', 'dockdrag.js'), /DaimondLayers\.claim\('dockdrag', /);
@@ -157,8 +174,10 @@ test('the phone\'s modal, its card and the identity card keep clear of the statu
 	assert.match(rule(css, '#identity-modal .modal-card'), /var\(--safe-t\)/);
 });
 
-test('the Admin drawer on a phone stands inside the rail\'s own inset', () => {
-	assert.match(rule(read('css', 'mobile.css'), '.panel.rail .admin-body {'), /top:\s*calc\(8px \+ var\(--safe-t\)\)/);
+test('Settings on a phone stands below the status bar, its body riding the page', () => {
+	// The Admin drawer is retired (a9f9374c7): Settings is a page of the stack, and the stack's page holds the inset.
+	assert.match(rule(read('css', 'phone', 'stack.css'), '#phone-stack > .phone-page:not(:empty):not([data-page="home"]) {'), /inset:\s*calc\(var\(--safe-t\) \+ 52px\)/);
+	assert.match(rule(read('css', 'phone', 'settings.css'), '.sg-page > .admin-body {'), /position:\s*static/);
 });
 
 test('the palette stands below the status bar at any height', () => {
@@ -250,8 +269,8 @@ const KEPT = {
 	                   [ 'document.body.appendChild(mirror);', 'a hidden caret-measuring mirror' ] ],
 	'models.js':     [ [ 'var cs = getComputedStyle(inp.isConnected ? inp : document.body);', 'a style read' ],
 	                   [ 'document.body.appendChild(mpPop);', 'the model picker\'s list: a listbox of its input, closed on blur, no layer' ] ],
-	'pairing.js':    [ [ 'document.body.appendChild(scrim);', 'the pairing modal' ] ],
-	'passcode.js':   [ [ 'document.body.appendChild(scrim);', 'the passcode modal' ] ],
+	'pairing.js':    [ [ 'document.body.appendChild(scrim);', 'the pairing modal' ] ],	// keeps: scrim pairing.js's own local, not #scrim
+	'passcode.js':   [ [ 'document.body.appendChild(scrim);', 'the passcode modal' ] ],	// keeps: scrim passcode.js's own local, not #scrim
 	'record.js':     [ [ "push({ type: 'key', key: name }, el.nodeType === 1 ? el : document.body);", 'the target of a recorded key' ],
 	                   [ 'document.body.appendChild(badge);', 'the recording badge' ] ],
 	'render.js':     [ [ 'document.body.appendChild(ta);', 'a copy textarea, removed at once' ] ],
@@ -340,7 +359,7 @@ test('every navigation leaves the menu that is up: show, mshow, hide, selectChat
 		const at = m.index, tabs = m[1];
 		return d.slice(at, d.indexOf('\n' + tabs + '}\n', at));
 	};
-	const ms = body(/\n(\t)function mshow\(name\) \{/);
+	const ms = body(/\n(\t)function mshow\(name, opts\) \{/);
 	assert.ok(ms.indexOf('DaimondLayers.leave()') >= 0 && ms.indexOf('DaimondLayers.leave()') < ms.indexOf('return;'), 'mshow: leave() must come ahead of every early return');
 	const sh = body(/\n(\t\t)function show\(id, opts\) \{/);
 	const lv = sh.indexOf('if (!quiet) DaimondLayers.leave();');

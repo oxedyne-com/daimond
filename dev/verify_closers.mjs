@@ -37,8 +37,9 @@
 //   4. PRESSING IT DISMISSES THAT DIALOG AND NOTHING ELSE. Not asserted as
 //      "the dialog went": a census of every surface in the app is taken before
 //      and after, and the difference has to be exactly the one named. A cross
-//      that takes the drawer down with it passes any check that only looks at
-//      what it was pointed at.
+//      that moves the phone's Stack page with it (sends home a conversation the
+//      dialog was opened over, or pushes one over the home page) passes any check
+//      that only looks at what it was pointed at.
 //
 //   5. FOCUS LANDS BACK ON THE OPENER. The opener is focused and clicked, so
 //      the keyboard genuinely starts there; after the cross, `activeElement`
@@ -53,8 +54,8 @@
 //   node dev/verify_closers.mjs --break nocross    # 1 fails: the closers vanish
 //   node dev/verify_closers.mjs --break small      # 3 fails: they go back to 28px
 //   node dev/verify_closers.mjs --break moved      # 2 fails: they slide left
-//   node dev/verify_closers.mjs --break closesall  # 4 fails: a cross takes the
-//                                                  # drawer down with the dialog
+//   node dev/verify_closers.mjs --break closesall  # 4 fails: a cross moves the
+//                                                  # Stack page under the dialog
 //   node dev/verify_closers.mjs --break nofocus    # 5 fails: focus falls to body
 //   node dev/verify_closers.mjs                    # and then, clean
 //   node dev/verify_closers.mjs 'Appearance menu'  # one dialog
@@ -132,33 +133,28 @@ const BREAKS = {
 	moved:   [{ file: 'css/responsive.css', find: CLOSER_RULE,
 		with: '\t.ui-close { width: 44px; height: 44px; }\n\t' + ALL
 			+ ' { margin-right: 180px !important; }' }],
-	// A cross that closes more than the thing it sits on. The rail drawer is the
-	// witness for eleven of the thirteen: it is open underneath every dialog this
-	// file raises on a phone, and it is what a closer wired one scope too wide
-	// takes down with it. The sheet stands in as the drawer's own witness.
+	// A cross that does more than close the thing it sits on. The witness is the
+	// phone's Stack page (Stack A0-A4, D-20261029-01): every dialog here is raised
+	// over one, the home page or the conversation over it, and a closer wired one
+	// scope too wide moves it. The fault served moves it either way, so it is seen
+	// whichever page the dialog was opened over.
 	//
-	// The two it cannot reach are the Mobile sheet (the drawer would be drawn
-	// over the cross being pressed) and the Panel gallery (a desktop width, where
-	// there is no phone shell to witness anything). For those two, check 4 still
-	// asks that no OTHER surface in the census moved — a smaller claim, made
-	// honestly rather than dressed up.
+	// The Panel gallery has no Stack (a desktop width, no phone shell), so check 4
+	// there still asks that no OTHER surface in the census moved: a smaller claim,
+	// made honestly rather than dressed up.
 	closesall: [
 		{ file: 'js/closer.js',
 			find: '\t\t\t\topts.onClose(e);',
-			with: '\t\t\t\tdocument.body.classList.remove(\'drawer-open\');\n\t\t\t\topts.onClose(e);' },
+			with: '\t\t\t\twindow.DaimondShell && (DaimondShell.onHome() ? DaimondShell.turn() : DaimondShell.home());\n\t\t\t\topts.onClose(e);' },
 		{ file: 'js/workspace.js',
 			find: '\tfunction closePalette() {\n\t\tif (!palEl || palEl.hidden) return;',
-			with: '\tfunction closePalette() {\n\t\tif (!palEl || palEl.hidden) return;\n\t\tdocument.body.classList.remove(\'drawer-open\');' },
+			with: '\tfunction closePalette() {\n\t\tif (!palEl || palEl.hidden) return;\n\t\twindow.DaimondShell && (DaimondShell.onHome() ? DaimondShell.turn() : DaimondShell.home());' },
 		{ file: 'js/daimond.js',
 			find: '\t\tfunction closeAdmin() {\n\t\t\tendForm();',
-			with: '\t\tfunction closeAdmin() {\n\t\t\tdocument.body.classList.remove(\'drawer-open\');\n\t\t\tendForm();' },
+			with: '\t\tfunction closeAdmin() {\n\t\t\twindow.DaimondShell && (DaimondShell.onHome() ? DaimondShell.turn() : DaimondShell.home());\n\t\t\tendForm();' },
 		{ file: 'js/daimond.js',
 			find: '\t\tfunction close() {\n\t\t\tdocument.removeEventListener(\'keydown\', onKey, true);\n\t\t\tif (sayPause) window.removeEventListener(\'daimond:pause\', sayPause);',
-			with: '\t\tfunction close() {\n\t\t\tdocument.body.classList.remove(\'drawer-open\');\n\t\t\tdocument.removeEventListener(\'keydown\', onKey, true);\n\t\t\tif (sayPause) window.removeEventListener(\'daimond:pause\', sayPause);' },
-		{ file: 'js/mobile.js',
-			find: '\tfunction closeDrawer() {\n\t\tdocument.body.classList.remove(\'drawer-open\');\n\t\tDaimondLayers.done(\'drawer\');\n\t}',
-			with: '\tfunction closeDrawer() {\n\t\tdocument.body.classList.remove(\'drawer-open\');\n\t\tDaimondLayers.done(\'drawer\');\n'
-				+ '\t\tvar sh = document.getElementById(\'msheet\'); if (sh) sh.classList.remove(\'open\');\n\t}' },
+			with: '\t\tfunction close() {\n\t\t\twindow.DaimondShell && (DaimondShell.onHome() ? DaimondShell.turn() : DaimondShell.home());\n\t\t\tdocument.removeEventListener(\'keydown\', onKey, true);\n\t\t\tif (sayPause) window.removeEventListener(\'daimond:pause\', sayPause);' },
 	],
 	// The keyboard is dropped on the floor. Both families again: the modal
 	// dialogs restore through `refocus`, and the popovers and shells each do it
@@ -166,13 +162,11 @@ const BREAKS = {
 	nofocus: [
 		{ file: 'js/daimond.js',   find: '\tfunction refocus(prev, host) {\n\t\tif (tookFocus(prev)) return;', with: '\tfunction refocus(prev, host) {\n\t\tif (true) return;' },
 		{ file: 'js/workspace.js', find: '\t\tif (b) { b.setAttribute(\'aria-expanded\', \'false\'); b.focus(); }', with: '\t\tif (b) { b.setAttribute(\'aria-expanded\', \'false\'); }' },
-		{ file: 'js/mobile.js',    find: '\t\tif (burger) { try { burger.focus(); } catch (x) { /* not on screen */ } }', with: '\t\tif (burger) { /* dropped */ }' },
 		{ file: 'js/pairing.js',   find: '\t\t\tif (prev && prev.focus && prev.getClientRects && prev.getClientRects().length) {', with: '\t\t\tif (false) {' },
 		{ file: 'js/workspace.js', find: '\t\tif (more) { more.setAttribute(\'aria-expanded\', \'false\'); more.focus(); }', with: '\t\tif (more) { more.setAttribute(\'aria-expanded\', \'false\'); }' },
 		{ file: 'js/workspace.js', find: '\t\tif (palPrev && palPrev.focus && document.contains(palPrev)) {', with: '\t\tif (false) {' },
-		{ file: 'js/handmode.js',  find: '\t\t\ttry { chip.focus(); } catch (e) { /* gone from the page */ }', with: '\t\t\t/* dropped */' },
+		{ file: 'js/handmode.js',  find: 'if (returnFocus !== false) try { chip.focus(); } catch (e) { /* gone from the page */ }', with: '/* dropped */' },
 		{ file: 'js/mobile.js',    find: '\t\t\ttry { opener.focus(); } catch (e) { /* gone with the redraw */ }', with: '\t\t\t/* dropped */' },
-		{ file: 'js/daimond.js',   find: '\t\t\t\ttry { drawerOpener.focus(); } catch (e) { /* gone with the redraw */ }', with: '\t\t\t\t/* dropped */' },
 	],
 };
 
@@ -221,14 +215,16 @@ async function serveBreak(page) {
 /// Every surface the app can put over itself, and whether it is up.
 ///
 /// This is what makes check 4 mean something. "The dialog closed" is one bit;
-/// "and the drawer, the sheet, the menu and the other three modals are exactly
-/// as they were" is the property, and it is the one a cross wired to the wrong
+/// "and the Stack page, the sheet, the menu and the other modals are exactly as
+/// they were" is the property, and it is the one a cross wired to the wrong
 /// scope breaks.
 const CENSUS = () => {
 	const up = (sel) => [...document.querySelectorAll(sel)]
 		.some((el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden');
 	return {
-		'Rail drawer':      document.body.classList.contains('drawer-open'),
+		// The phone's Stack page and its depth: `home@1`, `turn@2`; null off a phone.
+		'Stack page':       window.DaimondStack && DaimondStack.started()
+			? DaimondStack.top() + '@' + DaimondStack.depth() : null,
 		'Mobile sheet':     !!document.querySelector('#msheet.open'),
 		'Admin drawer':     !!document.querySelector('.admin.admin-open'),
 		'Appearance menu':  up('#settings-menu'),
@@ -366,11 +362,11 @@ async function pressLabel(page, rootSel, text) {
 	await page.waitForTimeout(400);
 }
 
-/// Open the rail drawer, which is the WITNESS for check 4: on a phone it is
-/// reachable from anywhere, it stays up under every dialog below, and a cross
-/// wired to the wrong scope takes it down.
-async function openDrawer(page) {
-	await pressFrom(page, '#drawer-btn');
+/// Put the conversation over the home page, for the dialogs a phone raises over
+/// it. The Stack page is the WITNESS for check 4, and this is the page it reads.
+async function toTurn(page) {
+	await page.evaluate(() => window.DaimondShell && DaimondShell.turn());
+	await page.waitForSelector('#stack-back', { state: 'visible', timeout: 8000 });
 	await page.waitForTimeout(300);
 }
 
@@ -378,14 +374,17 @@ async function openDrawer(page) {
 //
 // `card` is the box the closer must be in the top right OF. `close` finds the
 // closer inside it. `opener` is the selector focus must come back to, and is
-// what `reach` presses first. `witness: false` marks the two surfaces that
-// cannot have the drawer open underneath them — the drawer itself, and the one
-// the drawer would cover.
+// what `reach` presses first. `over: 'turn'` raises the dialog over the
+// conversation page rather than the home page, which is where a phone reaches it.
 const DIALOGS = [
 	{
 		// The one the user reported, by name.
 		name:   'Appearance menu',
 		open:   { connect: false },
+		// Below 761px Appearance is a page of Settings (Stack A3), not this
+		// popover, and its door is gone from the bar: measured where it is one.
+		viewport: { width: 900, height: 820 },
+		touch:    true,
 		card:   '#settings-menu',
 		close:  '.ui-close',
 		reach:  async (page) => {
@@ -396,6 +395,7 @@ const DIALOGS = [
 	{
 		name:   'Permission ladder',
 		open:   { connect: false },
+		over:   'turn',
 		card:   '#hand-mode-pop',
 		close:  '.ui-close',
 		reach:  async (page) => {
@@ -409,13 +409,14 @@ const DIALOGS = [
 	{
 		name:   'Command palette',
 		open:   { connect: false },
+		over:   'turn',
 		card:   '.pal-box',
 		close:  '#pal-close',
 		reach:  async (page) => {
 			// Focused and stamped first, so there is a real place for the keyboard to
 			// go back to — the palette is opened with a key from wherever the hand
 			// already was.
-			await stamp(page, '#drawer-btn');
+			await stamp(page, '#stack-back');
 			await page.keyboard.press('Control+k');
 			await page.waitForSelector('#palette', { state: 'visible', timeout: 8000 });
 		},
@@ -430,8 +431,8 @@ const DIALOGS = [
 			await pressLabel(page, '#admin-home', 'Change name…');
 		},
 		// The prompt is opened from a row INSIDE the admin drawer, which the
-		// dialog's own dismissal leaves standing — so the drawer is in the census
-		// twice over and the rail drawer underneath must survive as well.
+		// dialog's own dismissal leaves standing, and the home page under both
+		// must stay where it is.
 		census: 'Modal dialog',
 	},
 	{
@@ -467,6 +468,8 @@ const DIALOGS = [
 		card:   '.about-card',
 		close:  '.ui-close',
 		reach:  async (page) => {
+			// About is a row of Help's menu.
+			await pressFrom(page, '#help-btn');
 			await pressFrom(page, '#about-btn');
 			await page.waitForSelector('.about-card', { timeout: 8000 });
 		},
@@ -486,10 +489,11 @@ const DIALOGS = [
 	{
 		name:   'Pairing (Link another device)',
 		open:   { connect: false },
+		over:   'turn',
 		card:   '.pair-box',
 		close:  '.ui-close',
 		reach:  async (page) => {
-			await stamp(page, '#drawer-btn');
+			await stamp(page, '#stack-back');
 			await page.evaluate(() => window.DaimondPairing && DaimondPairing.showLink());
 			await page.waitForSelector('.pair-scrim', { timeout: 8000 });
 		},
@@ -502,15 +506,11 @@ const DIALOGS = [
 		open:   {},
 		card:    '.tile-dlg-card',
 		close:   '.tile-dlg-x',
-		// The drawer is opened HERE rather than by the shared step, because the
-		// Admin panel has to be put away first (a connected session opens it) and
-		// putting it away is one of the things the `closesall` break makes close
-		// the drawer as well. Opened after, the witness is open when it matters.
-		witness: false,
+		// The Admin panel is put away first (a connected session opens it), and
+		// the home page it leaves is the witness.
 		reach:   async (page) => {
 			await page.evaluate(() => { const b = document.getElementById('admin-close'); if (b) b.click(); });
 			await page.waitForTimeout(250);
-			await openDrawer(page);
 			// The only Diamonds on this profile are the two built-ins, and since
 			// RAIL-07 those live in a `<details>` at the foot of the list that starts
 			// shut -- so their cogs are on the page and not on the screen, and a real
@@ -531,32 +531,13 @@ const DIALOGS = [
 		open:    { connect: false },
 		card:    '.msheet-grab',
 		close:   '#msheet-close',
-		witness: false,		// the drawer would cover it
+		over:    'turn',
 		reach:   async (page) => {
-			await stamp(page, '#drawer-btn');
+			await stamp(page, '#stack-back');
 			await page.evaluate(() => window.DaimondSheet && DaimondSheet.open('doc'));
 			await page.waitForTimeout(700);
 		},
 		census: 'Mobile sheet',
-	},
-	{
-		name:    'Rail drawer',
-		open:    { connect: false },
-		card:    '.panel.rail .pptw-head',
-		close:   '.panel-close',
-		witness: false,		// it IS the witness for everything else
-		// The sheet stands in as the thing that must survive: the drawer is drawn
-		// over it, so closing the drawer with the sheet up is the case where a
-		// closer wired too wide would take two surfaces down at once.
-		under:   async (page) => {
-			await page.evaluate(() => window.DaimondSheet && DaimondSheet.open('doc'));
-			await page.waitForTimeout(600);
-		},
-		reach:   async (page) => {
-			await pressFrom(page, '#drawer-btn');
-			await page.waitForTimeout(400);
-		},
-		census: 'Rail drawer',
 	},
 	{
 		// Desktop and tablet only: the chip row it overflows out of is
@@ -570,7 +551,6 @@ const DIALOGS = [
 		touch:    true,
 		card:     '#panel-gallery',
 		close:    '.ui-close',
-		witness:  false,		// no phone shell at this width
 		reach:    async (page) => {
 			await page.evaluate(() => {
 				['doc', 'msg', 'compose'].forEach((p) => {
@@ -600,8 +580,7 @@ for (const d of DIALOGS) {
 		await s.page.setViewportSize(d.viewport || PHONE);
 		await s.page.waitForTimeout(400);
 
-		if (d.under) await d.under(s.page);
-		if (d.witness !== false) await openDrawer(s.page);
+		if (d.over === 'turn') await toTurn(s.page);
 
 		await d.reach(s.page);
 		await s.page.waitForTimeout(350);

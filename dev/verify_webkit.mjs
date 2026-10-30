@@ -105,7 +105,7 @@ check('safari: all visible fields ≥16px', (await smallInputs()).length === 0, 
 check('safari: shell present', await page.evaluate(() => !!window.DaimondSheet && !!window.DaimondShell));
 
 // Drawer
-await page.evaluate(() => document.getElementById('drawer-btn').click());
+await page.evaluate(() => DaimondShell.home());	// the rail is the Stack's home page (A2)
 await sleep(300);
 check('safari: drawer opaque', await page.evaluate(() => {
 	const bg = getComputedStyle(document.getElementById('panel-rail')).backgroundColor;

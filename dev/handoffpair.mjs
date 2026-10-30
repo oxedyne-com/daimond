@@ -65,8 +65,42 @@ export const modelSaw = (text) => mockLog().filter((r) => JSON.stringify(r).incl
 export async function send(page, text) {
 	await page.setViewportSize({ width: 420, height: 860 });
 	await page.waitForTimeout(300);
+	await toTurn(page);
 	await page.fill('#chat-input', text);
 	await page.click('#chat-send', { force: true });
+}
+
+/// Bring the turn page up on a phone, as a person does: since ccp29 a phone is a stack of pages
+/// (home, the rail, at the bottom), so the composer is reachable only once the chat is opened over
+/// it; a send pressed on home lands on the rail instead (A4m, 30 Oct). The chat in focus is
+/// opened by its row's name, else the first chat, else New Chat from home's head; a page without the stack is left as it is.
+async function toTurn(page) {
+	const top = () => page.evaluate(() => (window.DaimondStack && window.DaimondStack.top()) || 'turn').catch(() => 'turn');
+	if ((await top()) === 'turn') return;
+	for (let i = 0; i < 4 && (await top()) !== 'home'; i++) { await page.goBack().catch(() => {}); await page.waitForTimeout(400); }
+	const sel = await page.evaluate(() => {
+		let f = null;
+		try { f = window.DaimondAttach.focus(); } catch (e) { /* no focus yet */ }
+		const row = (f && f.kind === 'chat' && document.querySelector('.session-box.chat-box[data-id="' + f.id + '"] .session-box-name'))
+			|| document.querySelector('.session-box.chat-box .session-box-name');
+		if (!row) return '';
+		row.setAttribute('data-hp-turn', '1');
+		return '[data-hp-turn="1"]';
+	});
+	if (sel) {
+		await page.click(sel);
+		await page.evaluate(() => { const e = document.querySelector('[data-hp-turn]'); if (e) e.removeAttribute('data-hp-turn'); });
+	} else {
+		// No chat yet: home's compose is New Chat, and its start tile, where one is drawn, opens the composer.
+		await page.click('#home-compose-btn');
+		await page.waitForTimeout(600);
+		if ((await top()) !== 'turn') for (const q of ['.tile-start', '.pending-centre .empty-new-session']) {
+			const e = await page.$(q);
+			if (e && await e.isVisible()) { await e.click(); break; }
+		}
+	}
+	for (let i = 0; i < 20 && (await top()) !== 'turn'; i++) await page.waitForTimeout(150);
+	if ((await top()) !== 'turn') throw new Error('handoffpair.send: opening the chat left the phone on ' + (await top()));
 }
 
 /// Send one prompt from the composer at a DESKTOP's width, where a quick turn runs here.

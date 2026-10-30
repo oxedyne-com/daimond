@@ -8,8 +8,9 @@
 // keyed on hover (headless Chromium reports `hover: none`, log P finding 3).
 //
 //   HD  the head           every control has a 44x44 tap cross, nothing scrolls or sits under a fade, nothing
-//                          overlaps, the head is 52px on a chat and 96px on a Diamond or in select mode in every
-//                          locale, the title is the same width at every length, and the mode chip and "more" keep one x
+//                          overlaps, the head is 52px on a chat, 96px in select mode and b4's large-title head on a
+//                          Diamond in every locale, the title is the same width at every length, and the mode chip and
+//                          "more" keep one x on each page (the crystal face draws neither: its acts are the bar's ⋯)
 //   HM  the menu           "more" opens it, its rows are 44px in his order with visible labels in the locale, a row
 //                          runs its action and closes the menu, a state row is filled, the dot shows, and Help's rows
 //                          are drawn by the same rule
@@ -20,8 +21,15 @@
 //                          the others, and one Escape clears the screen
 //   HX  the computer       at 1300x900 there is no "more", every tool is home, the menu is shut; crossing 760px with
 //                          the menu open shuts it and sends the buttons home
-//   DR  the drawer         showing a destination (New Chat, New Diamond, a chat, a footer chip) closes it; a tap that
-//                          chooses nothing does not, and neither does a fan-out landing in the background
+//   SP  Settings a page    on a phone Settings is only ever a page of the stack, never the modal: a connected phone opens
+//                          on home (narrowed or booted at a phone's width); a window narrowed past 760px with Settings up
+//                          stands on the Settings page, not home with Admin over it; Credits and Models tapped in the Models group are pages pushed
+//                          over it with the modal down, Back is the group again, and on down the stack to home
+//   DR  the stack          (Stack A2: the drawer is retired; the rail is the home page, the conversation the turn page
+//                          over it) Back goes home and a push is a history entry the browser's Back undoes; showing a
+//                          destination (New Chat, New Diamond, a chat, a footer chip) pushes the turn page; a tap that
+//                          chooses nothing does not, nor a fan-out landing in the background; installed (navigator.
+//                          standalone stubbed), a left-edge touch swipe is a popstate back home
 //   ST  the footer strip   every chip, once shown, stands clear of the fade at both ends, in all eight languages
 //
 // A section that cannot find what it tests fails ONCE, by name, and the rest of the run goes on: on the code before
@@ -73,12 +81,12 @@ const BREAKS = {
 		from: 'scroll-padding-inline: var(--fade);',
 		to:   'scroll-padding-inline: 0;',
 		what: 'the footer strip scrolls a chip in with no padding, so it stands under the fade' },
-	// Showing a destination no longer closes the drawer (`mshow` in daimond.js), as on 5.2.8; that takes the sheet
-	// guests with it, which is how an Admin prompt row left the drawer open before gatefix moved the close up.
+	// Showing a destination no longer pushes the turn page (`mshow`, page/layout.js), as the drawer's close once went
+	// missing on 5.2.8; that takes the sheet guests with it, as an Admin prompt row did before gatefix moved it up.
 	drawer: { section: 'DR', file: 'js/daimond.js',
-		from: '\t\tif (window.DaimondShell) DaimondShell.closeDrawer();\n\t\t// A guest rises as a sheet;',
-		to:   '\t\t// A guest rises as a sheet;',
-		what: 'showing a destination leaves the drawer open over it' },
+		from: "\tif (DaimondStack.started() && isMobile()) DaimondStack.push('turn');\n\t// A guest rises as a sheet;",
+		to:   '\t// A guest rises as a sheet;',
+		what: 'showing a destination leaves the home page over it' },
 	// `openPop` no longer hides the other popovers, as before QA1 F1: the mode chip and "more" stand open together.
 	pops:   { section: 'HP', file: 'js/workspace.js',
 		from: '\t\tdismissPops(pop);\n\t\tpop.hidden = false;',
@@ -104,7 +112,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'; one of: 
 	if (stale.length && BREAK && stale.includes(BREAK)) { console.error('break no longer matches exactly once: ' + BREAK); process.exit(2); }
 	if (stale.length && process.argv.includes('--check-breaks')) { console.error('break(s) no longer match exactly once: ' + stale.join(', ')); process.exit(2); }
 }
-const ALL = 'HD,HM,HK,HP,HX,DR,ST';
+const ALL = 'HD,HM,HK,HP,HX,SP,DR,ST';
 const ONLY = new Set((arg('--only') || (BREAK && !process.argv.includes('--full') ? BREAKS[BREAK].section : ALL))
 	.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 const on = (s) => ONLY.has(s);
@@ -145,13 +153,20 @@ async function phone() {
 	return S;
 }
 const ev = (f, a) => S.page.evaluate(f, a);
-/// Click by script, not by pointer: used for set-up only, never for the thing under test.
-const clk = (sel) => S.page.evaluate((q) => { const b = [...document.querySelectorAll(q)].find((e) => e.getClientRects().length) || document.querySelector(q); if (!b) return false; b.click(); return true; }, sel);
+/// A real tap on the first VISIBLE element matching `sel`, for set-up: false when nothing is there to tap. A DOM
+/// click sends no pointerdown, so a set-up step that clicked by script could pass where a thumb does nothing (gate 50).
+const clk = async (sel) => {
+	const up = await S.page.evaluate((q) => [...document.querySelectorAll(q)].some((e) => e.checkVisibility({ visibilityProperty: true })), sel);
+	if (!up) return false;
+	await tap(sel);
+	return true;
+};
 const shot = (name, clip) => S.page.screenshot({ path: path.join(SHOTS, name + '.png'), ...(clip ? { clip } : {}) }).catch(() => {});
-/// A real tap at the centre of the first VISIBLE element matching `sel`, as a thumb would.
+/// A real tap at the centre of the first VISIBLE element matching `sel`, as a thumb would. Visible is checkVisibility's:
+/// a tile inside a closed group (the built-in Diamonds' <details>) keeps a layout box but is neither drawn nor hit.
 async function tap(sel) {
 	const box = await S.page.evaluate((q) => {
-		const e = [...document.querySelectorAll(q)].find((x) => x.getClientRects().length && getComputedStyle(x).visibility !== 'hidden');
+		const e = [...document.querySelectorAll(q)].find((x) => x.checkVisibility({ visibilityProperty: true }));
 		if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
 	}, sel);
 	need(box, `nothing visible to tap for ${sel}`);
@@ -166,14 +181,19 @@ async function locale(code) {
 	await ev(async (c) => { await window.DaimondI18n.setLocale(c); }, code);
 	await sleep(500);
 }
-const drawerOpen = () => ev(() => document.body.classList.contains('drawer-open'));
-/// Take the drawer down the way a thumb does, so a state set-up never depends on H2.
+/// Is the home page (the rail, once the drawer) the page in view? (Stack A2.)
+const drawerOpen = () => ev(() => document.getElementById('app').dataset.stack === 'home');
+/// Back to the conversation, for a set-up that never depends on DR.
 async function closeDrawer() {
-	if (await drawerOpen()) { await clk('#scrim'); await sleep(500); }
+	// Settings is pages of the stack over home (Stack A3), so a set-up that left it up goes home first.
+	if (await ev(() => /^settings/.test(window.DaimondStack.top() || ''))) await goHome();
+	if (await drawerOpen()) { await ev(() => window.DaimondShell.turn()); await sleep(500); }
 }
+/// To the home page, for a set-up.
+const goHome = async () => { await ev(() => window.DaimondShell.home()); await sleep(500); };
 /// A chat with one answer in it, on screen, the drawer shut.
 async function startChat() {
-	await clk('#drawer-btn'); await sleep(500);
+	await goHome();
 	await clk('#new-session-btn'); await sleep(600);
 	(await clk('.tile-start')) || (await clk('.pending-centre .empty-new-session')); await sleep(800);
 	await S.page.waitForSelector('#chat-input', { state: 'visible', timeout: 10000 });
@@ -185,17 +205,20 @@ async function startChat() {
 async function toChat() {
 	const onChat = await ev(() => { const sw = document.getElementById('diamond-view'); return !(sw && sw.getClientRects().length) && !!document.querySelector('#chat-input'); });
 	if (onChat) return;
-	await clk('#drawer-btn'); await sleep(500);
-	const ok1 = await ev(() => { const t = document.querySelector('#session-list .session-box'); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
+	await goHome();
+	const ok1 = (await clk('#session-list .session-box .session-box-name')) || (await clk('#session-list .session-box .tile-label')) || (await clk('#session-list .session-box'));
 	if (!ok1) { await closeDrawer(); await startChat(); return; }
 	await sleep(900); await closeDrawer();
 }
 async function toDiamond() {
-	await clk('#drawer-btn'); await sleep(500);
-	const ok1 = await ev(() => { const t = document.querySelector('.diamond-box'); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
+	await goHome();
+	// A person with no Diamond of their own opens the Built-in group to reach one.
+	if (!(await ev(() => [...document.querySelectorAll('.diamond-box')].some((e) => e.checkVisibility())))) await clk('.rail-builtin:not([open]) > summary');
+	// The name, as a person opens a row: a row's own controls (a Diamond's pause sits mid-row) do their own thing.
+	const ok1 = (await clk('.diamond-box .session-box-name')) || (await clk('.diamond-box .tile-label')) || (await clk('.diamond-box'));
 	// WebKit keeps no file store (CRF2), so no Diamond ever reaches the device: read the capability, as the gate's `webkitPair` does.
 	if (!ok1 && (await ev(() => typeof (navigator.storage && navigator.storage.getDirectory))) !== 'function') throw new NotCovered('this browser has no origin file system, so no Diamond reaches the device');
-	need(ok1, 'no Diamond in the drawer');
+	need(ok1, 'no Diamond on the home page');
 	await sleep(1600); await closeDrawer();
 }
 const setTitle = (t) => ev((t0) => { const e = document.querySelector('.panel.ai .chead .ctitle'); e.textContent = t0; e.title = t0; }, t);
@@ -250,6 +273,7 @@ const MEASURE = () => {
 		hscroll: document.documentElement.scrollWidth > innerWidth,
 		chip: chipTxt ? { ...R(document.getElementById('hand-mode-chip')), cut: chipTxt.scrollWidth > chipTxt.clientWidth + 1, txt: chipTxt.textContent } : null,
 		more: more && shown(more) ? R(more) : null,
+		tags: !!document.getElementById('chead-tags') && shown(document.getElementById('chead-tags')),
 	};
 };
 
@@ -262,7 +286,15 @@ const TITLES = {
 };
 if (TITLES.long.length !== 118 || TITLES.vlong.length !== 232) { console.error('the long titles must be 118 and 232 characters'); process.exit(2); }
 const LOOKS = ['obsidian', 'porcelain'];
-const HEIGHT = { chat: 52, select: 96, crystal: 96, dchat: 96 };
+// Stack A4 (b4): a Diamond is a page. Its head is the large title (34 px), the tags line when it has tags,
+// then the Crystal | Chat | Files segment; the figures are b4's, measured in WebKit at 390 px on 30 Oct.
+// On the crystal face the mode chip and "more" leave the head (the bar's ✎ and ⋯ carry the crystal's
+// acts), so the chip and "more" checks read only the cells that draw them, each page on its own.
+const HEIGHT = { chat: 52, select: 96, crystal: 133, dchat: 136 };
+const TAGS_H = 44;		// the tags line (32 px chips) and its 12 px gap, on a Diamond with tags
+const headH = (c) => HEIGHT[c.state] + (c.m.tags ? TAGS_H : 0);
+const drawsChip = (c) => c.state !== 'crystal';
+const pageOf = (c) => (c.state === 'crystal' || c.state === 'dchat') ? 'diamond' : 'chat';
 const cells = [];		// every head measurement of the run, tagged
 const lowTap = (c) => c.m.ctrls.filter((o) => o.tap.w < 44 || o.tap.h < 44);
 async function cell(tag, extra = {}) {
@@ -322,7 +354,9 @@ await section('HD', async () => {
 	await startChat();
 	await shot('HD_ctx_chat_start');
 	await gridState('chat');
-	await clk('#collapse-btn'); await sleep(500);			// the "−" latches select mode (HM drives the real row)
+	// Select mode is latched by the Select row of "more", as a person latches it: the head draws no "−" until select
+	// mode is on (HM), so a tap on the "−" found nothing to press and the mode never latched.
+	await tap('#chead-more'); await tap('#chead-more-menu #chead-select-row'); await sleep(500);
 	need(await ev(() => !!document.querySelector('.panel.ai .chead.selecting')), 'select mode did not latch');
 	await gridState('select');
 	await clk('#collapse-btn'); await sleep(400);
@@ -331,7 +365,9 @@ await section('HD', async () => {
 	if (diamond) {
 	await gridState('crystal');
 	// Full screen on the crystal face: the head keeps one control, the way back, and it is as easy to press as any.
-	await tap('#crystal-full-btn'); await sleep(700);
+	// On a phone it is entered from the bar's ⋯ (its last row); the head's own button shows only once it is on.
+	await tap('#stack-acts .icon-btn:last-child'); await sleep(400);
+	await tap('.stack-acts-menu > [role=menuitem]:last-child'); await sleep(700);
 	const fs1 = await ev(() => ({ on: document.documentElement.hasAttribute('data-cfull'), m: null }));
 	const fm = await ev(MEASURE);
 	await shot('HD_crystal_fullscreen', { x: 0, y: 0, width: 390, height: 190 });
@@ -359,9 +395,9 @@ await section('HD', async () => {
 	check('HD: the page does not scroll sideways', hs.length === 0, list(hs, where));
 	const ovs = cells.filter((c) => c.m.overlaps.length || c.m.titleOverlaps.length);
 	check('HD: no control overlaps another, or the title', ovs.length === 0, list(ovs, (c) => `${where(c)} ${J(c.m.overlaps.concat(c.m.titleOverlaps))}`));
-	const hh = cells.filter((c) => Math.round(c.m.head.h) !== HEIGHT[c.state]);
-	check('HD: the head is 52px on a chat and 96px on a Diamond and in select mode, in every locale and variant', hh.length === 0,
-		hh.length ? list(hh, (c) => `${where(c)} ${c.m.head.h}`) : `52/96/96/96 in all ${cells.length} cells`);
+	const hh = cells.filter((c) => Math.round(c.m.head.h) !== headH(c));
+	check(`HD: the head is 52px on a chat, 96px in select mode and ${HEIGHT.crystal}/${HEIGHT.dchat}px (+${TAGS_H} with tags) on a Diamond's crystal/chat face, in every locale and variant`, hh.length === 0,
+		hh.length ? list(hh, (c) => `${where(c)} ${c.m.head.h} not ${headH(c)}`) : `in all ${cells.length} cells`);
 	// The title is the same width whatever it says.
 	const group = (cs, key) => { const g = new Map(); for (const c of cs) { const k = key(c); if (!g.has(k)) g.set(k, []); g.get(k).push(c); } return g; };
 	const tw = [];
@@ -371,26 +407,40 @@ await section('HD', async () => {
 	check('HD: the title is the same width at every length', tw.length === 0, tw.slice(0, 4).join('; '));
 	const tc = grid.filter((c) => c.title === 'mid' && c.state === 'chat');
 	const dd = grid.filter((c) => c.title === 'mid' && c.state === 'crystal');
-	const wc = tc.map((c) => c.m.title.w), wd = dd.map((c) => c.m.title.w);
+	const dh = grid.filter((c) => c.title === 'mid' && c.state === 'dchat');
+	const wc = tc.map((c) => c.m.title.w), wd = dd.map((c) => c.m.title.w), wh = dh.map((c) => c.m.title.w);
 	// Option B measured 231 and 207 with the chip's padding at 10px; the chip wears the head-tool role's 9px, so the title has 2px more.
+	// 231 was a chat with no mark before its title; since the avatars (5b1584d5b, 16 Oct) every chat's head draws its
+	// 18px mark and 6px gap there (measured 30 Oct: mark 25-43, title from 49), so a chat's title is 233 - 24 = 209.
 	// With no Diamond to measure the Diamond half is NOT COVERED (named above), and the chat half is still asserted.
-	check(`HD: the title is about 231px on a chat${diamond ? ' and 207px on a Diamond' : ''} (option B\'s figures, within 3px)`,
-		wc.length > 0 && (wd.length > 0 || !diamond) && wc.every((w) => Math.abs(w - 231) <= 3) && wd.every((w) => Math.abs(w - 207) <= 3), `chat ${J(wc)}, Diamond ${J(wd)}`);
+	// A Diamond's figures are b4's: the title fills its row beside the tile, and on the chat face shares it with the chip and "more".
+	check(`HD: the title is about 209px on a chat${diamond ? ', 292px on a Diamond\'s crystal face and 173px on its chat face' : ''} (within 3px)`,
+		wc.length > 0 && (wd.length > 0 || !diamond) && wc.every((w) => Math.abs(w - 209) <= 3) && wd.every((w) => Math.abs(w - 292) <= 3)
+		&& wh.every((w) => Math.abs(w - 173) <= 3), `chat ${J(wc)}, crystal ${J(wd)}, Diamond chat ${J(wh)}`);
 	check('HD: "Compare the three joinery quotes" is shown whole on a chat', tc.length > 0 && tc.every((c) => !c.m.title.cut), J(tc.map((c) => c.m.title.cut)));
 	const cut = cells.filter((c) => c.m.chip && c.m.chip.cut);
-	check('HD: the mode word is never cut', cells.every((c) => c.m.chip) && cut.length === 0, list(cut, (c) => `${where(c)} "${c.m.chip.txt}"`));
+	const chipped = cells.filter(drawsChip);
+	check('HD: the mode word is never cut', chipped.every((c) => c.m.chip) && cut.length === 0, list(cut, (c) => `${where(c)} "${c.m.chip.txt}"`));
+	const bare = cells.filter((c) => !drawsChip(c) && (c.m.more || (c.m.chip && c.m.chip.w > 0)));
+	check('HD: a Diamond\'s crystal face draws neither the mode chip nor "more" in its head (its acts are the bar\'s ✎ and ⋯)', bare.length === 0, list(bare, where));
 	// "More" and the chip hold one place: more by its left edge everywhere, the chip by its right edge everywhere and
 	// by its left edge for one word.
-	const mx = cells.map((c) => c.m.more ? c.m.more.x : null);
-	check('HD: "more" is drawn in every cell, in one place', mx.every((x) => x != null) && Math.max(...mx) - Math.min(...mx) <= 1, `x ${J([...new Set(mx.map((x) => x == null ? 'none' : Math.round(x)))])}`);
+	for (const pgName of ['chat', 'diamond']) {
+		const mx = chipped.filter((c) => pageOf(c) === pgName).map((c) => c.m.more ? c.m.more.x : null);
+		if (!mx.length) continue;
+		check(`HD: "more" is drawn in every ${pgName} head that carries it, in one place`, mx.every((x) => x != null) && Math.max(...mx) - Math.min(...mx) <= 1, `x ${J([...new Set(mx.map((x) => x == null ? 'none' : Math.round(x)))])}`);
+	}
 	// The figures option B was chosen on, as this run measures them.
 	const hts = (st) => [...new Set(cells.filter((c) => c.state === st).map((c) => Math.round(c.m.head.h)))];
 	const taps = cells.flatMap((c) => c.m.ctrls.map((o) => o.tap));
 	console.log(`  (B row: head ${J(hts('chat'))}/${J(hts('crystal'))}/${J(hts('dchat'))}/${J(hts('select'))} for chat/crystal/dchat/select; title ${J([...new Set(wc.map(Math.round))])}/${J([...new Set(wd.map(Math.round))])}; scrolling cells ${sc.length}; sideways-scroll cells ${hs.length}; overlap cells ${ovs.length}; smallest tap cross ${Math.min(...taps.map((t) => t.w))}x${Math.min(...taps.map((t) => t.h))})`);
-	const cr = cells.map((c) => c.m.chip ? c.m.chip.x + c.m.chip.w : null);
-	check('HD: the mode chip ends in one place in every cell', cr.every((x) => x != null) && Math.max(...cr) - Math.min(...cr) <= 1, `right edge ${J([...new Set(cr.map((x) => x == null ? 'none' : Math.round(x)))])}`);
+	for (const pgName of ['chat', 'diamond']) {
+		const cr = chipped.filter((c) => pageOf(c) === pgName).map((c) => c.m.chip ? c.m.chip.x + c.m.chip.w : null);
+		if (!cr.length) continue;
+		check(`HD: the mode chip ends in one place in every ${pgName} head`, cr.every((x) => x != null) && Math.max(...cr) - Math.min(...cr) <= 1, `right edge ${J([...new Set(cr.map((x) => x == null ? 'none' : Math.round(x)))])}`);
+	}
 	const cl = [];
-	for (const [k, cs] of group(cells.filter((c) => c.m.chip && !c.locale), (c) => c.m.chip.txt)) {
+	for (const [k, cs] of group(chipped.filter((c) => c.m.chip && !c.locale), (c) => `${pageOf(c)} ${c.m.chip.txt}`)) {
 		const xs = cs.map((c) => c.m.chip.x); if (Math.max(...xs) - Math.min(...xs) > 1) cl.push(`"${k}" ${J([...new Set(xs.map(Math.round))])}`);
 	}
 	check('HD: the mode chip starts in one place for any one word, at every title, state and look', cl.length === 0, cl.join('; '));
@@ -640,17 +690,19 @@ const deskFacts = (page) => page.evaluate((ids) => {
 	return { more: !!(more && more.getClientRects().length && getComputedStyle(more).display !== 'none'),
 		away: ids.filter((id) => { const b = document.getElementById(id); return !b || b.parentNode !== home; }),
 		menuShut: !menu || menu.hidden, expanded: more ? more.getAttribute('aria-expanded') : null,
+		// Where the page is: a history move that ran off the app's first entry leaves a document with none of this.
+		app: !!window.DaimondShell, depth: history.length, stack: (document.getElementById('app') || { dataset: {} }).dataset.stack || null,
 		helpRow: cs ? { pad: [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].join(' '), gap: cs.columnGap, icon: ic ? Math.round(ic.getBoundingClientRect().width) : null } : null };
 }, HOME);
 await section('HX', async () => {
 	DESK = await open({ name: 'shelldesk', route: ROUTE });
 	await DESK.page.setViewportSize({ width: 1300, height: 900 });
 	await sleep(1500);
-	await DESK.page.evaluate(() => { const b = document.getElementById('admin-close'); if (b) b.click(); }); await sleep(300);
+	if (await DESK.page.locator('#admin-close').isVisible()) await DESK.page.click('#admin-close'); await sleep(300);
 	let f = await deskFacts(DESK.page);
 	check('HX: at 1300x900 there is no "more", every tool sits home in the head\'s right-hand cluster, and the menu is shut',
 		!f.more && f.away.length === 0 && f.menuShut, J(f));
-	await DESK.page.evaluate(() => document.getElementById('help-btn').click()); await sleep(300);
+	await DESK.page.click('#help-btn'); await sleep(300);
 	f = await deskFacts(DESK.page);
 	check('HX: Help on a computer is unchanged: rows of 7px 8px, a 4px gap, a 16px icon', !!f.helpRow && f.helpRow.pad === '7px 8px 7px 8px' && f.helpRow.gap === '4px' && f.helpRow.icon === 16, J(f.helpRow));
 	await DESK.page.keyboard.press('Escape');
@@ -668,34 +720,125 @@ await section('HX', async () => {
 	await S.page.setViewportSize({ width: 390, height: 844 }); await sleep(900);
 	f = await ev(() => { const m = document.getElementById('chead-more-menu'); return { folded: ['concise-chip', 'chat-copy-btn', 'steps-toggle-btn', 'expand-all-btn'].every((id) => document.getElementById(id).parentNode === m), shut: m.hidden }; });
 	check('HX: and crossing back folds them into the menu again, shut', f.folded && f.shut, J(f));
+
+	// Widened with the menu up over a New Chat, the menu's entry and the turn page's both come off. Each owner of
+	// the one history once stepped back for itself in the same task, and the two steps walked off the front of
+	// the app (A4g, {app:false}). Real taps only: New Chat on home, then "more".
+	await goHome();
+	await tap('#home-compose-btn'); await sleep(900);
+	if (!(await ev(() => { const m = document.getElementById('chead-more'); return !!(m && m.getClientRects().length); }))) {
+		await S.page.waitForSelector('#chat-input', { state: 'visible', timeout: 10000 });
+		await chat(S, 'hello');
+	}
+	await tap('#chead-more');
+	const up = await readMenu('#chead-more-menu');
+	const h0 = await ev(() => ({ len: history.length, st: history.state }));
+	need(up && up.open && h0.st && h0.st.dlayers > 0 && Array.isArray(h0.st.stack) && h0.st.stack.length > 1,
+		'the menu over the turn page did not stand on its own entry: ' + J(h0));
+	await S.page.setViewportSize({ width: 1300, height: 900 }); await sleep(2500);
+	const g = await S.page.evaluate(() => ({ app: !!window.DaimondShell && !!document.getElementById('app'),
+		stack: history.state && history.state.stack, layers: history.state ? history.state.dlayers || 0 : null,
+		above: window.DaimondHistory ? window.DaimondHistory.above() : null,
+		pages: window.DaimondStack ? window.DaimondStack.pages() : null })).catch((e) => ({ app: false, err: String(e).slice(0, 80) }));
+	// The floor is the entry the page booted on (history.js): booted at a computer's width it carries no state of
+	// ours, so its stack reads null; booted on a phone, ['home']. Either way nothing lies between it and the page.
+	check('HX: widened with the menu up over a New Chat, the page is still the app, on its floor entry (home, no layer)',
+		g.app && g.above === 0 && !g.layers && J(g.pages) === J(['home']) && (g.stack === null || J(g.stack) === J(['home'])), J(g));
+	await S.page.setViewportSize({ width: 390, height: 844 }); await sleep(900);
+});
+
+// ── SP ──────────────────────────────────────────────────────────────────────
+// Settings on a phone is a page of the stack (Stack A3), so nothing that opens it may put up the modal or leave the
+// drawer standing over home. Its own session: the boot under test is the one `phone()` tidies away.
+const settingsAt = (P) => P.evaluate(() => ({ top: DaimondStack.top(), depth: DaimondStack.depth(),
+	admin: !!document.querySelector('#admin.admin-open'), modal: document.getElementById('settings-modal').style.display }));
+await section('SP', async () => {
+	const T = await open({ name: 'shellsp', touch: true, ...(BROWSER === 'webkit' ? { ua: PHONE_UA } : { isMobile: true }), route: ROUTE });
+	try {
+		const P = T.page;
+		const tapIn = async (sel) => {
+			const box = await P.evaluate((q) => {
+				const e = [...document.querySelectorAll(q)].find((x) => x.getClientRects().length && getComputedStyle(x).visibility !== 'hidden');
+				if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+			}, sel);
+			need(box, `nothing visible to tap for ${sel}`);
+			await P.touchscreen.tap(box.x, box.y); await sleep(600);
+		};
+		// A phone opens on home: nothing about a connected profile needs the person in Settings (A4k).
+		const atHome = (b) => b.top === 'home' && b.depth === 1 && !b.admin && b.modal === 'none';
+		const b0 = await settingsAt(P);
+		await P.setViewportSize({ width: 390, height: 844 }); await sleep(1200);
+		const b1 = await settingsAt(P);
+		check('SP: a connected phone opens on home, Settings shut and the modal down', atHome(b1), J({ wide: b0, phone: b1 }));
+		await P.reload(); await sleep(1800);
+		const b2 = await settingsAt(P);
+		check('SP: booted at a phone\'s width, a connected phone opens on home', atHome(b2), J(b2));
+		// Settings up at a computer's width, then the window narrowed past 760px.
+		await P.setViewportSize({ width: 1500, height: 950 }); await sleep(900);
+		await tapIn('#user-row');
+		const w = await settingsAt(P);
+		need(w.admin, 'the identity row did not open Settings at a computer\'s width: ' + J(w));
+		await P.setViewportSize({ width: 390, height: 844 }); await sleep(1200);
+		const b3 = await settingsAt(P);
+		check('SP: narrowed to a phone with Settings up, it stands on the Settings page, never home under Admin or the modal',
+			b3.modal === 'none' && b3.admin && (b3.top === 'settings' || b3.top === 'settings-group'), J({ wide: w, phone: b3 }));
+		await P.evaluate(() => window.DaimondShell.home()); await sleep(500);
+		await tapIn('#user-row');
+		await tapIn('.sg-door[data-sgroup="models"]');
+		const g = await settingsAt(P);
+		need(g.top === 'settings-group', 'the Models door did not push its group page: ' + J(g));
+		for (const [row, name] of [['#astat-account', 'Credits'], ['#astat-model', 'Models']]) {
+			await tapIn(`.sg-group-page ${row}`);
+			const a = await settingsAt(P);
+			const shown = await P.evaluate((q) => { const v = document.querySelector('.sg-view-page ' + q); return !!v && v.getClientRects().length > 0; }, name === 'Credits' ? '#admin-credits' : '#admin-models');
+			check(`SP: ${name}, tapped in the Models group, is a page pushed over it, with the modal down`,
+				a.modal === 'none' && a.admin && a.top === 'settings-view' && a.depth === g.depth + 1 && shown, J({ ...a, shown }));
+			await tapIn('#stack-back');
+			const b = await settingsAt(P);
+			check(`SP: Back from ${name} is the Models group again`, b.top === 'settings-group' && b.depth === g.depth, J(b));
+		}
+		for (let i = 0; i < 4 && (await settingsAt(P)).top !== 'home'; i++) await tapIn('#stack-back');
+		const h = await settingsAt(P);
+		check('SP: the bar\'s Back goes down the stack to home, Settings shut and the modal down', h.top === 'home' && !h.admin && h.modal === 'none', J(h));
+	} finally { await letGo(T); }
 });
 
 // ── DR ──────────────────────────────────────────────────────────────────────
-// The drawer is the phone's list of chats and Diamonds. Showing a destination on the floor means its job is done, so
-// it closes: a New Chat, a New Diamond, a picked chat or Diamond, a footer chip. Nothing that chooses nothing closes it.
+// The home page (the rail; it was the drawer until Stack A2) is the phone's list of chats and Diamonds. Showing a
+// destination on the floor pushes the turn page over it: a New Chat, a New Diamond, a picked chat or Diamond, a footer
+// chip. Nothing that chooses nothing does. "drawerIs(true)" below reads "the home page is in view".
 const hitFloor = () => ev(() => {
 	// The point at the middle of the composer (or, with no composer on screen, of the head's title) must belong to the
-	// panel the person is about to use, and not to the drawer, the scrim or anything else laid over it.
+	// panel the person is about to use, and not to the home page or anything else laid over it.
 	const pick = (document.getElementById('chat-input') && document.getElementById('chat-input').getClientRects().length && document.getElementById('chat-input'))
 		|| document.querySelector('.panel.ai .ctitle');
 	if (!pick) return { found: false };
 	const r = pick.getBoundingClientRect(), h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
 	return { found: true, target: pick.id || pick.className, hit: h ? (h.id || h.className || h.tagName) : null, ok: !!h && (h === pick || pick.contains(h)) };
 });
-const drawerIs = (open) => ev((o) => document.body.classList.contains('drawer-open') === o, open);
-const openDrawer = async () => { if (!(await drawerOpen())) { await tap('#drawer-btn'); await sleep(450); } };
+const drawerIs = (home) => ev((o) => (document.getElementById('app').dataset.stack === 'home') === o, home);
+const openDrawer = async () => { if (!(await drawerOpen())) { await tap('#stack-back'); await sleep(450); } };
+const hist = () => ev(() => ({ len: history.length, stack: history.state && history.state.stack, top: window.DaimondStack.top() }));
 await section('DR', async () => {
 	await chatReady();
 	await closeDrawer();
-	// New Chat.
+	// The bar: no hamburger; Back on the turn page goes home, and the browser's Back undoes a push.
+	check('DR: no hamburger on the phone bar', await ev(() => !document.getElementById('drawer-btn')));	// keeps: drawer-btn asserts it is gone (A2)
+	const h0 = await hist();
+	check('DR: the turn page is a history entry over home', h0.top === 'turn' && J(h0.stack) === J(['home', 'turn']), J(h0));
 	await openDrawer();
-	check('DR: a tap on the hamburger opens the drawer', await drawerIs(true));
+	check('DR: a tap on the bar\'s Back goes to the home page, and Back is hidden there', (await drawerIs(true)) && await ev(() => document.getElementById('stack-back').hidden), J(await hist()));
+	await ev(() => window.DaimondShell.turn()); await sleep(500);
+	const h1 = await hist();
+	await S.page.goBack(); await sleep(600);
+	const h2 = await hist();
+	check('DR: the browser\'s Back pops the turn page to home', h2.top === 'home' && (await drawerIs(true)), J({ h1, h2 }));
 	await tap('#new-session-btn'); await sleep(900);
 	await S.page.waitForSelector('#chat-input', { state: 'visible', timeout: 10000 }).catch(() => {});
 	let f = await hitFloor();
-	check('DR: New Chat closes the drawer, and the composer is what a tap on it reaches', (await drawerIs(false)) && f.ok, J({ drawerOpen: await drawerIs(true), ...f }));
+	check('DR: New Chat pushes the turn page, and the composer is what a tap on it reaches', (await drawerIs(false)) && f.ok, J({ drawerOpen: await drawerIs(true), ...f }));
 	await shot('DR_newchat', { x: 0, y: 0, width: 390, height: 844 });
-	// Picking a chat: another one (the rail's own click closes the drawer), and the one already open (it returned early).
+	// Picking a chat: another one (the rail's own click pushes the turn), and the one already open (it returned early).
 	const pickChat = (which) => ev((w) => {
 		const cur = (() => { try { const f = window.DaimondAttach.focus(); return f && f.kind === 'chat' ? String(f.id) : ''; } catch (e) { return ''; } })();
 		const boxes = [...document.querySelectorAll('#session-list .session-box')].filter((b) => b.getClientRects().length);
@@ -709,64 +852,65 @@ await section('DR', async () => {
 		const at = await pickChat(which);
 		need(at, `there is no ${which} chat to pick (a second chat is made above)`);
 		await S.page.touchscreen.tap(at.x, at.y); await sleep(800);
-		check(`DR: picking ${which === 'other' ? 'another chat' : 'the chat that is already open'} closes the drawer`, await drawerIs(false), J(await hitFloor()));
+		check(`DR: picking ${which === 'other' ? 'another chat' : 'the chat that is already open'} shows the turn page`, await drawerIs(false), J(await hitFloor()));
 	}
 	// New Diamond: the dialog, a name, OK.
 	await openDrawer();
 	await tap('#new-diamond-btn'); await sleep(700);
-	const dlg = await ev(() => { const card = [...document.querySelectorAll('.dlg-card')].filter((c) => c.getClientRects().length).pop(); if (!card) return false; const inp = card.querySelector('input.dlg-input'); if (!inp) return false; inp.value = 'Shell ' + Date.now().toString(36); inp.dispatchEvent(new Event('input', { bubbles: true })); card.querySelector('.dlg-ok').click(); return true; });
+	const dlg = await ev(() => { const card = [...document.querySelectorAll('.dlg-card')].filter((c) => c.getClientRects().length).pop(); if (!card) return false; const inp = card.querySelector('input.dlg-input'); if (!inp) return false; inp.value = 'Shell ' + Date.now().toString(36); inp.dispatchEvent(new Event('input', { bubbles: true })); card.setAttribute('data-ps-dlg', '1'); return true; });
 	need(dlg, 'the New Diamond dialog did not come up');
+	await tap('[data-ps-dlg] .dlg-ok');
 	await sleep(2200);
 	f = await hitFloor();
-	check('DR: New Diamond closes the drawer, and the Diamond is what a tap on the floor reaches', (await drawerIs(false)) && f.ok, J({ drawerOpen: await drawerIs(true), ...f }));
+	check('DR: New Diamond pushes the turn page, and the Diamond is what a tap on the floor reaches', (await drawerIs(false)) && f.ok, J({ drawerOpen: await drawerIs(true), ...f }));
 	await shot('DR_newdiamond', { x: 0, y: 0, width: 390, height: 844 });
-	// A footer chip, with the drawer open. The Diamonds chip is the one that opens it; Workspace is a dock destination.
+	// A footer chip, from home. The Diamonds chip is the one that shows home; Workspace is a dock destination.
 	await toChat(); await closeDrawer();
 	await openDrawer();
-	// A footer chip is under the drawer's scrim on a real phone, so a thumb cannot reach it: it is pressed by script, as the
-	// gate's own chip taps are, and the seam must still take the drawer down.
-	const pressed = await ev(() => { const c = document.querySelector('#mnav .ptag[data-panel="work"]'); if (!c) return false; c.click(); return true; });
+	// A footer chip is under the home page on a phone, so a thumb cannot reach it: it is pressed by script, as the
+	// gate's own chip taps are, and the seam must still push the turn page.
+	const pressed = await ev(() => { const c = document.querySelector('#mnav .ptag[data-panel="work"]'); if (!c) return false; c.click(); return true; });	// keeps: click the chip row is under the home page, so no thumb reaches it there; the gate's chip crawl presses it by script and the seam must still push the turn page
 	need(pressed, 'there is no Workspace chip in the footer');
 	await sleep(900);
-	const st = await ev(() => ({ drawer: document.body.classList.contains('drawer-open'), mpanel: document.body.dataset.mpanel, sheet: document.body.classList.contains('sheet-open') }));
-	check('DR: a footer chip to Workspace, pressed with the drawer open, closes it and shows Workspace', !st.drawer && (st.mpanel === 'work' || st.sheet), J(st));
+	const st = await ev(() => ({ drawer: document.getElementById('app').dataset.stack === 'home', mpanel: document.body.dataset.mpanel, sheet: document.body.classList.contains('sheet-open') }));
+	check('DR: a footer chip to Workspace, pressed from home, pushes the turn page and shows Workspace', !st.drawer && (st.mpanel === 'work' || st.sheet), J(st));
 	await shot('DR_workspace_chip', { x: 0, y: 0, width: 390, height: 844 });
-	await ev(() => { const c = document.querySelector('#mnav .ptag[data-panel="ai"]'); if (c) c.click(); }); await sleep(700);
+	await clk('#mnav .ptag[data-panel="ai"]'); await sleep(700);
 	// An Admin "Edit the ... prompt" row opens the Doc SHEET. A destination that rises as a sheet returned from `mshow`
 	// before the drawer was closed, so the sheet stood over a still-open drawer, and in the gate's mouse crawl the next
-	// Admin control was under a `div.modal` (admin: home, 16 Oct). The row must take the drawer down, and with the sheet
-	// gone the next row must be what a tap on it reaches.
+	// Admin control was under a `div.modal` (admin: home, 16 Oct). The row must leave the home page, and with the sheet
+	// gone the next row must be what a tap on it reaches. On the Stack the rows are Settings' Prompts group, a page of
+	// its own (settingsgroups.js, D-20261024-16): home, the name, then the Prompts door, as a person goes.
 	await locale('en'); await toChat(); await closeDrawer();
-	const promptRows = () => ev(() => [...document.querySelectorAll('#admin button')]
+	const toPrompts = async () => { await goHome(); await tap('#user-row'); await sleep(600); await tap('.sg-door[data-sgroup="prompts"]'); await sleep(600); };
+	const promptRows = () => ev(() => [...document.querySelectorAll('button')]
 		.filter((b) => b.getClientRects().length && /^Edit the .* prompt/.test(b.textContent.trim()))
 		.map((b) => { const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, label: b.textContent.trim() }; }));
 	const coverAt = (p) => ev((q) => {
 		const h = document.elementFromPoint(q.x, q.y), m = h && h.closest('div.modal');
-		const row = h && h.closest('#admin button');
+		const b = h && h.closest('button'), row = b && /^Edit the .* prompt/.test(b.textContent.trim()) ? b : null;
 		return { hit: h ? (h.id || h.className || h.tagName) : null, row: row ? row.textContent.trim() : null, modal: m ? (m.id || m.className) : null };
 	}, p);
-	await openDrawer(); await tap('#user-row'); await sleep(600);
+	await toPrompts();
 	let rows = await promptRows();
 	need(rows.length >= 2, `Admin shows ${rows.length} "Edit the ... prompt" rows; two are needed`);
 	await S.page.touchscreen.tap(rows[0].x, rows[0].y); await sleep(1500);
-	const ep = await ev(() => ({ drawer: document.body.classList.contains('drawer-open'), sheet: document.body.classList.contains('sheet-open'),
+	const ep = await ev(() => ({ drawer: document.getElementById('app').dataset.stack === 'home', sheet: document.body.classList.contains('sheet-open'),
 		modals: [...document.querySelectorAll('div.modal')].filter((m) => m.getClientRects().length && getComputedStyle(m).display !== 'none').map((m) => m.id || m.className) }));
-	check(`DR: "${rows[0].label}" closes the drawer under the Doc sheet it opens`, !ep.drawer && ep.modals.length === 0, J(ep));
+	check(`DR: "${rows[0].label}" leaves the home page for the Doc sheet it opens`, !ep.drawer && ep.modals.length === 0, J(ep));
 	await shot('DR_admin_prompt', { x: 0, y: 0, width: 390, height: 844 });
 	await ev(() => { if (window.DaimondSheet && DaimondSheet.isOpen()) DaimondSheet.close(); }); await sleep(700);
-	await closeDrawer(); await openDrawer();
-	const adminAt = () => ev(() => { const a = document.getElementById('admin'), r = a && a.getBoundingClientRect();
-		return { drawer: document.body.classList.contains('drawer-open'), sheet: document.body.classList.contains('sheet-open'), cls: a && a.className, rect: r && [r.left, r.top, r.width, r.height].map(Math.round), vis: a && getComputedStyle(a).visibility, disp: a && getComputedStyle(a).display }; });
+	const adminAt = () => ev(() => ({ top: window.DaimondStack.top(), depth: window.DaimondStack.depth(), sheet: document.body.classList.contains('sheet-open') }));
 	const before = await adminAt();
+	await toPrompts();
 	rows = await promptRows();
-	if (rows.length < 2) { await tap('#user-row'); await sleep(600); rows = await promptRows(); }
-	need(rows.length >= 2, `a person who opens the drawer and presses their name again does not get Admin back: ${J({ before, after: await adminAt() })}`);
+	need(rows.length >= 2, `a person who goes home, presses their name and the Prompts door again does not get the prompt rows back: ${J({ before, after: await adminAt() })}`);
 	const cov = await coverAt(rows[1]);
 	check(`DR: and afterwards "${rows[1].label}" is what a tap on it reaches, under no modal`, cov.row === rows[1].label && !cov.modal, J(cov));
 	await closeDrawer(); await toChat();
 	// A fan-out is not a person's tap. `Workers.dispatch` (what the model's spawn_agent reaches) lands in the middle of a turn
-	// and reveals the Agents panel, so it can land while a person is in the drawer choosing another chat. It must open the
-	// panel and leave the drawer, and the floor under it, alone. The panel is shut first so that the engine has to open it.
+	// and reveals the Agents panel, so it can land while a person is on the home page choosing another chat. It must open
+	// the panel and leave the home page, and the floor under it, alone. The panel is shut first so that the engine has to open it.
 	const fanOut = (name) => ev((n) => {
 		try {
 			const P = window.DaimondPanels, f = window.DaimondAttach.focus();
@@ -775,24 +919,68 @@ await section('DR', async () => {
 			return '';
 		} catch (e) { return String(e && e.message || e); }
 	}, name);
-	const faced = () => ev(() => ({ drawer: document.body.classList.contains('drawer-open'), mpanel: document.body.dataset.mpanel, agents: window.DaimondPanels.isOpen('agents') }));
+	const faced = () => ev(() => ({ drawer: document.getElementById('app').dataset.stack === 'home', mpanel: document.body.dataset.mpanel, agents: window.DaimondPanels.isOpen('agents') }));
 	await toChat(); await closeDrawer(); await openDrawer();
 	const floor0 = (await faced()).mpanel;
 	const threw = await fanOut('dr-held'); await sleep(900);
 	let fo = await faced();
-	check('DR: a fan-out landing while the drawer is open opens Agents and leaves the drawer open, on the same floor', !threw && fo.drawer && fo.agents && fo.mpanel === floor0, J({ threw, floor0, ...fo }));
+	check('DR: a fan-out landing on the home page opens Agents and leaves home in view, on the same floor', !threw && fo.drawer && fo.agents && fo.mpanel === floor0, J({ threw, floor0, ...fo }));
 	await closeDrawer();
 	const threw2 = await fanOut('dr-shown'); await sleep(900);
 	fo = await faced();
-	check('DR: the same fan-out with the drawer shut still shows Agents (the hold is for the drawer only)', !threw2 && !fo.drawer && fo.mpanel === 'agents', J({ threw2, ...fo }));
+	check('DR: the same fan-out on the turn page still shows Agents (the hold is for home only)', !threw2 && !fo.drawer && fo.mpanel === 'agents', J({ threw2, ...fo }));
 	await toChat();
-	// What chooses nothing leaves it open: the fold of the Diamonds section (or the tag filter, when tags exist).
+	// What chooses nothing leaves home in view: the status fold (or the tag filter, when tags exist). The Diamonds and
+	// Chats folds are gone: a page's lists do not fold (Stack A2).
 	await closeDrawer(); await openDrawer();
-	const sel = await ev(() => { const t = document.querySelector('.tagf-toggle'); return t && t.getClientRects().length ? '.tagf-toggle' : '.rail-fold[data-fold="diamonds"]'; });
+	check('DR: no fold on the Diamonds or Chats heading', await ev(() => [...document.querySelectorAll('.rail-fold[data-fold="diamonds"], .rail-fold[data-fold="chats"]')].every((b) => !b.getClientRects().length)));
+	const sel = await ev(() => { const t = document.querySelector('.tagf-toggle'); return t && t.getClientRects().length ? '.tagf-toggle' : '.rail-fold[data-fold="status"]'; });
 	await tap(sel); await sleep(500);
-	check(`DR: a tap that chooses nothing (${sel}) leaves the drawer open`, await drawerIs(true));
+	check(`DR: a tap that chooses nothing (${sel}) leaves home in view`, await drawerIs(true));
 	await tap(sel); await sleep(300);
 	await closeDrawer();
+	// Installed (fix 8 of the Stack review): Playwright cannot emulate `display-mode`, so iOS's own signal,
+	// `navigator.standalone`, is stubbed before the page loads; a left-edge touch swipe on the turn page must be a
+	// popstate back home. In a tab (above, unstubbed) the browser's own swipe does it, and the page binds none.
+	const app = await open({ name: 'shell-pwa', touch: true, ...(BROWSER === 'webkit' ? { ua: PHONE_UA } : { isMobile: true }), route: ROUTE });
+	try {
+		const pg = app.page;
+		await pg.addInitScript(() => { try { Object.defineProperty(navigator, 'standalone', { get: () => true }); } catch (e) { /* none */ } });
+		await pg.setViewportSize({ width: 390, height: 844 });
+		await pg.reload(); await sleep(1500);
+		if (await pg.locator('#admin-close').isVisible()) await pg.tap('#admin-close'); await sleep(300);
+		await pg.evaluate(() => { window.__pops = 0; window.addEventListener('popstate', () => { window.__pops++; }); window.DaimondShell.turn(); });
+		await sleep(500);
+		const was = await pg.evaluate(() => ({ top: window.DaimondStack.top(), sa: navigator.standalone }));
+		need(was.top === 'turn' && was.sa === true, `the installed page did not reach its turn page: ${J(was)}`);
+		const cdp = BROWSER === 'webkit' ? null : await pg.context().newCDPSession(pg).catch(() => null);
+		const swipe = async (pts) => {
+			if (cdp) {
+				await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [pts[0]] });
+				for (const p of pts.slice(1)) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [p] });
+				await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+				return;
+			}
+			// WebKit has no CDP: real Touch objects, dispatched where a finger at the edge would land.
+			await pg.evaluate((ps) => {
+				const at = (p) => document.elementFromPoint(p.x, p.y) || document.body;
+				const mk = (p, el) => new Touch({ identifier: 1, target: el, clientX: p.x, clientY: p.y });
+				const el = at(ps[0]);
+				const fire = (type, p) => el.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: p ? [mk(p, el)] : [], changedTouches: [mk(p || ps[ps.length - 1], el)] }));
+				fire('touchstart', ps[0]);
+				for (const p of ps.slice(1)) fire('touchmove', p);
+				fire('touchend', null);
+			}, pts);
+		};
+		await swipe([{ x: 6, y: 420 }, { x: 30, y: 421 }, { x: 70, y: 422 }, { x: 110, y: 423 }]);
+		await sleep(700);
+		const after = await pg.evaluate(() => ({ top: window.DaimondStack.top(), pops: window.__pops, stack: document.getElementById('app').dataset.stack }));
+		check('DR: installed, a left-edge swipe on the turn page is a popstate back home', after.top === 'home' && after.pops >= 1 && after.stack === 'home', J(after));
+		await swipe([{ x: 200, y: 420 }, { x: 260, y: 421 }, { x: 320, y: 422 }]);
+		await pg.evaluate(() => window.DaimondShell.turn()); await sleep(500);
+		await swipe([{ x: 200, y: 420 }, { x: 260, y: 421 }, { x: 320, y: 422 }]); await sleep(500);
+		check('DR: installed, a swipe from mid-screen does not go back', await pg.evaluate(() => window.DaimondStack.top() === 'turn'));
+	} finally { await letGo(app); }
 });
 
 // ── ST ──────────────────────────────────────────────────────────────────────
@@ -833,14 +1021,40 @@ await section('ST', async () => {
 			const n = ids.length;
 			for (let i = 0; i < n; i++) {
 				const id = ids[i];
-				await ev(async (q) => { // normalise: nothing open, then the strip as far from this chip as it will go
-					if (document.body.classList.contains('drawer-open')) document.getElementById('scrim').click();
-					const sh = document.getElementById('msheet-close'); if (document.body.classList.contains('sheet-open') && sh) sh.click();
+				// Normalise: nothing open, and the chip's destination not already where we are -- pressing the chip of
+				// the place on screen shows nothing, so there is nothing to bring in (mobile.js markHere scrolls on a
+				// change of place only, by design). The strip is the turn page's: it lies under the home page (Stack A2),
+				// so the arrival is made from another place on the turn page -- pressed from home, a thumb met the
+				// identity row and opened Settings, and every chip after it was measured under that page. Then the strip
+				// as far from this chip as it will go.
+				if (await ev(() => /^settings/.test(window.DaimondStack.top() || ''))) await goHome();
+				await ev(() => { if (document.getElementById('app').dataset.stack === 'home') window.DaimondShell.turn(); });
+				await sleep(150);
+				if (await ev(() => document.body.classList.contains('sheet-open'))) await clk('#msheet-close');
+				await sleep(150);
+				await ev(async (q) => {
+					const c = document.querySelector(`#mnav .panel-tags .ptag[data-panel="${q.id}"]`);
+					if (c && c.classList.contains('on')) document.querySelector(`#mnav .panel-tags .ptag[data-panel="${q.id === 'ai' ? 'work' : 'ai'}"]`).click();	// keeps: click set-up only, the arrival under test is the tap below
+				}, { id });
+				await sleep(150);
+				await ev(async (q) => {
 					const s = document.querySelector('#mnav .panel-tags'); s.scrollLeft = q.far ? s.scrollWidth : 0;
 				}, { far: i < n / 2 });
 				await sleep(150);
-				await ev((i2) => { const c = document.querySelector(`#mnav .panel-tags .ptag[data-panel="${i2}"]`); if (c) c.click(); }, id);
+				// A thumb presses what it can see: the chip's visible part, or, when the far scroll has put it wholly out
+				// of the strip, its edge once the strip is swiped just far enough to show 12px of it.
+				const at = await ev((i2) => {
+					const st = document.querySelector('#mnav .panel-tags'); const c = st && st.querySelector(`.ptag[data-panel="${i2}"]`);
+					if (!c) return null;
+					const vis = () => { const a = st.getBoundingClientRect(), b = c.getBoundingClientRect(); return { x0: Math.max(a.left, b.left), x1: Math.min(a.right, b.right), y: b.top + b.height / 2, a, b }; };
+					let v = vis();
+					if (v.x1 - v.x0 < 8) { st.scrollLeft += v.b.left >= v.a.right ? (v.b.left - v.a.right + 12) : (v.b.right - v.a.left - 12); v = vis(); }
+					return v.x1 - v.x0 >= 4 ? { x: (v.x0 + v.x1) / 2, y: v.y } : null;
+				}, id);
+				if (at) await S.page.touchscreen.tap(at.x, at.y);
 				await sleep(450);
+				// The rail chip's place is home, where the strip is not on screen: "once shown" does not arise.
+				if (await ev(() => window.DaimondStack.top() === 'home')) continue;
 				const m = await ev(MEAS, { id, fade: FADE });
 				if (m.gone) continue;
 				const tol = -0.5;
@@ -848,7 +1062,10 @@ await section('ST', async () => {
 				if (m.inBarFade) barFade.push(`${look}/${code} ${id}`);
 				if (look === 'obsidian' && code === 'en' && id === 'work') await shot('ST_work_en', { x: 0, y: 700, width: 390, height: 144 });
 			}
-			await ev(() => { const s = document.getElementById('scrim'); if (document.body.classList.contains('drawer-open')) s.click(); const sh = document.getElementById('msheet-close'); if (document.body.classList.contains('sheet-open') && sh) sh.click(); const a = document.querySelector('#mnav .ptag[data-panel="ai"]'); if (a) a.click(); });
+			await ev(() => { if (document.getElementById('app').dataset.stack === 'home') window.DaimondShell.turn(); });
+			await sleep(150);
+			if (await ev(() => document.body.classList.contains('sheet-open'))) await clk('#msheet-close');
+			await clk('#mnav .ptag[data-panel="ai"]');
 			await sleep(300);
 		}
 	}

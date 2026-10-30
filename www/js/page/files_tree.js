@@ -2182,8 +2182,27 @@ function handlePermissionLoss() {
 }
 // page-split: install 43
 
+/// Seat the Workspace card on the Diamond page's Files face (`on`), or back in its panel.
+///
+/// A phone's Diamond has a Files face (Stack A4, b4), and it is this card, MOVED, not a
+/// second tree: the one renderer, its paths, its search and its ⋯ menus stay bound to
+/// the one set of nodes, as the rail is moved onto the phone's home page.
+export function seatOnDiamond(on) {
+	var host = document.getElementById('diamond-files');
+	var panel = document.getElementById('panel-work');
+	var card = treeEl ? treeEl.closest('.files-card') : null;
+	if (!host || !panel || !card) return;
+	if (on && card.parentNode !== host) {
+		host.appendChild(card);
+		refresh();
+	} else if (!on && card.parentNode === host) {
+		panel.appendChild(card);
+	}
+	host.hidden = !on;
+}
+
 export function isOpen() {
-	if (isMobile()) return document.body.dataset.mpanel === 'work';
+	if (isMobile()) return document.body.dataset.mpanel === 'work' || !!(treeEl && treeEl.closest('#diamond-files'));
 	return DaimondPanels.isOpen('work');
 }
 

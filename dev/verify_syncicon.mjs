@@ -60,7 +60,7 @@ const probe = () => page.evaluate(() => {
 		shadow: cs.boxShadow, color: cs.color, cursor: cs.cursor, tab: n.tabIndex, anims: n.getAnimations().length,
 		rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
 		vis: r.width > 0 && r.height > 0 && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight && cs.visibility !== 'hidden' && cs.display !== 'none',
-		hitOk: !!hit && (hit === n || n.contains(hit)), line, shown, drawer: document.body.classList.contains('drawer-open'),
+		hitOk: !!hit && (hit === n || n.contains(hit)), line, shown, home: (document.getElementById('app') || { dataset: {} }).dataset.stack === 'home',
 	};
 });
 // The lens, read the same way. `ring` is the box-shadow's colour as 0-255 numbers, whichever way the
@@ -120,7 +120,7 @@ for (const [w, h, touch] of SIZES) {
 
 	// 1. Place.
 	const rest = await probe();
-	check(tag + ' icon exists and is visible with the rail shut', !!rest && rest.vis && !rest.drawer && rest.hitOk, JSON.stringify(rest && rest.rect));
+	check(tag + ' icon exists and is visible with the rail shut', !!rest && rest.vis && !rest.home && rest.hitOk, JSON.stringify(rest && rest.rect));
 	const next = await page.evaluate(() => {
 		const l = document.querySelector('.ds-indicator'), n = document.getElementById('sync-ico');
 		const a = l.getBoundingClientRect(), b = n.getBoundingClientRect();
