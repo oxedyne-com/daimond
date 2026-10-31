@@ -1339,6 +1339,7 @@
 	'change.head': '{name}을(를) 변경할까요?',
 	'change.yours': '내 파일 {name} 변경됨',
 	'change.file': '{name} 변경됨',
+	'change.made': '{name} 생성됨',
 	'change.head_delete': '{name}을(를) 삭제할까요?',
 	'change.head_move': '{name}을(를) 이동할까요?',
 	'change.in': '{folder} 안',

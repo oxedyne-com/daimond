@@ -1334,6 +1334,7 @@
 	'change.head': '更改 {name}？',
 	'change.yours': '已更改你的文件 {name}',
 	'change.file': '已更改 {name}',
+	'change.made': '已创建 {name}',
 	'change.head_delete': '删除 {name}？',
 	'change.head_move': '移动 {name}？',
 	'change.in': '位于 {folder}',

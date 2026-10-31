@@ -1387,6 +1387,11 @@ export function appendFilesLog(m) {
 	return tile;
 }
 
+/// The line a turn's file says: made by the turn (UNDO-REACH), his, or one not judged his.
+function _yoursKey(y) {
+	return y.created ? 'change.made' : (y.unsure ? 'change.file' : 'change.yours');
+}
+
 /// "Changed your file <name>" (UNBLOCK-26, his ruling 26 Oct: "Change it, show it, Undo"). A
 /// runner turn changes a file of his without asking, having kept it first, so the turn shows
 /// each such change as his ask would have, and the runner turn's own Undo under them. Which
@@ -1405,7 +1410,7 @@ function appendYoursTile(m) {
 		names.push(at.name);
 		var head = document.createElement('div');
 		head.className = 'turn-yours-head';
-		head.textContent = t(y.unsure ? 'change.file' : 'change.yours', { name: at.name });
+		head.textContent = t(_yoursKey(y), { name: at.name });
 		box.appendChild(head);
 		var where = document.createElement('div');
 		where.className = 'rail-note pend-change-in';
@@ -1419,7 +1424,7 @@ function appendYoursTile(m) {
 	if (m.away && m.away.run) box.appendChild(histAwayUndo(String(m.away.keeper || ''), { away: m.away, cause: 'turn' }, _turnUndoRows));
 	var tile = buildTile('tool', { who: tOr('chat.who_files', 'Files'), expanded: true, result: true, copy: names.join('\n'), ts: m.ts });
 	tile._body.appendChild(box);
-	tilePeek(tile, t(first.unsure ? 'change.file' : 'change.yours', { name: names[0] }));
+	tilePeek(tile, t(_yoursKey(first), { name: names[0] }));
 	postToChat(tile);
 	pinBottom();
 	return tile;

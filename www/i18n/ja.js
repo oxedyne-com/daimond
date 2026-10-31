@@ -1338,6 +1338,7 @@
 	'change.head': '{name} を変更しますか？',
 	'change.yours': 'あなたのファイル {name} を変更しました',
 	'change.file': '{name} を変更しました',
+	'change.made': '{name} を作成しました',
 	'change.head_delete': '{name} を削除しますか？',
 	'change.head_move': '{name} を移動しますか？',
 	'change.in': '{folder} 内',

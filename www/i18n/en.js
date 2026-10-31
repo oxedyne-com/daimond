@@ -72,6 +72,8 @@
 	// keys behind a string a widget was handed. Every one of them is handed a
 	// name from somewhere else, so no list here could be right.
 	// i18n-indirect: i18n.js key + (n === 1 ? '.one' : '.other') = open -- `tn` appends the plural form to the key its own caller named
+	// i18n-indirect: daimond.js _yoursKey(y) = change.made change.file change.yours
+	// i18n-indirect: daimond.js _yoursKey(first) = change.made change.file change.yours
 	// i18n-indirect: settingsgroups.js k = devices.runner_code home.sec_account home.sec_devices home.sec_accounts home.sec_lens home.sec_prompts home.sec_running home.sec_push home.sec_sync home.sec_diag home.sec_debugshare home.export_backup home.import_backup devices.runner_mint home.limits safe.turn_off safe.turn_on home.lock home.log_out identity.forget
 	// i18n-indirect: settingsgroups.js g.name = settings.group_models settings.group_tools settings.group_you settings.group_prompts settings.group_data settings.group_help
 	// i18n-indirect: settingsgroups.js g.what = settings.group_models_what settings.group_tools_what settings.group_you_what settings.group_prompts_what settings.group_data_what settings.group_help_what
@@ -3797,6 +3799,7 @@
 	'change.head': 'Change {name}?',
 	'change.yours': 'Changed your file {name}',
 	'change.file': 'Changed {name}',
+	'change.made': 'Created {name}',
 	'change.head_delete': 'Delete {name}?',
 	'change.head_move': 'Move {name}?',
 	'change.in': 'In {folder}',

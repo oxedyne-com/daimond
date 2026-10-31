@@ -100,13 +100,15 @@ async function carriedFilesRow(chat, rec, said) {
 	// UNBLOCK-26: the files of his the turn changed, which the runner kept first and marks `his`,
 	// each with its change, and the turn's away Undo as History offers it.
 	// A file kept first whose authorship the runner could not judge (`unsure`) is shown, but never
-	// as his.
+	// as his. UNDO-REACH (D-20261031-13): each file the turn created is shown too, as `created`,
+	// wherever it made it, since the same Undo sets it aside.
 	var yours = (rec.files || []).filter(function (f) {
-		return f && (f.his === true || f.unsure === true) && !f.created && f.path;
+		return f && (f.his === true || f.unsure === true || f.created === true) && f.path;
 	})
 		.map(function (f) {
 			var y = { path: String(f.path) };
-			if (f.his !== true) y.unsure = true;
+			if (f.created === true) y.created = true;
+			else if (f.his !== true) y.unsure = true;
 			if (typeof f.add === 'number') y.add = f.add;
 			if (typeof f.del === 'number') y.del = f.del;
 			if (f.change && typeof f.change === 'object') y.change = f.change;

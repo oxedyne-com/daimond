@@ -1160,6 +1160,7 @@
 	'change.head': '{name} ändern?',
 	'change.yours': 'Deine Datei {name} geändert',
 	'change.file': '{name} geändert',
+	'change.made': '{name} erstellt',
 	'change.head_delete': '{name} löschen?',
 	'change.head_move': '{name} verschieben?',
 	'change.in': 'In {folder}',

@@ -1161,6 +1161,7 @@
 	'change.head': 'Modifier {name} ?',
 	'change.yours': 'Votre fichier {name} modifié',
 	'change.file': '{name} modifié',
+	'change.made': '{name} créé',
 	'change.head_delete': 'Supprimer {name} ?',
 	'change.head_move': 'Déplacer {name} ?',
 	'change.in': 'Dans {folder}',

@@ -1157,6 +1157,7 @@
 	'change.head': '¿Cambiar {name}?',
 	'change.yours': 'Cambió tu archivo {name}',
 	'change.file': 'Cambió {name}',
+	'change.made': 'Creó {name}',
 	'change.head_delete': '¿Eliminar {name}?',
 	'change.head_move': '¿Mover {name}?',
 	'change.in': 'En {folder}',

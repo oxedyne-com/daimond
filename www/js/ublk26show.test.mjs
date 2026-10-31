@@ -61,8 +61,10 @@ test('A: the carried turn\'s row names his changed file, with its change and the
 	const row = await f(chat, REC, { version: 3, note: NOTE });
 	assert.ok(row && row.mid === 'e-R1-files', JSON.stringify(row));
 	assert.deepEqual(row.yours, [{ path: '/w/bio/biography_ReitHoogland.typ', add: 1, del: 1, change: CHANGE },
+		{ path: '/w/ocr/letters.typ', created: true, add: 40, del: 0 },
 		{ path: '/w/media/big.wav', unsure: true }],
-		'his file, from the runner\'s mark, with its change; one it could not judge, never as his; never the Diamond\'s own');
+		'his file, from the runner\'s mark, with its change; the file it made (UNDO-REACH); one it could not judge, '
+		+ 'never as his; never the Diamond\'s own it changed');
 	assert.deepEqual(row.away, { keeper: 'D1', on: 'RUN', onName: 'argonaut', run: 'e-R1', since: 1700, until: 9e15 });
 });
 
@@ -77,7 +79,7 @@ function all(e) { return [e].concat(...e.children.map(all)); }
 function draw(m) {
 	const posted = [], undos = [];
 	const f = new Function('document', 't', 'tn', 'tOr', 'buildTile', 'tilePeek', 'postToChat', 'pinBottom',
-		'histAwayUndo', '_turnUndoRows', [lift('changeName'), lift('changeDiff'), lift('appendYoursTile'),
+		'histAwayUndo', '_turnUndoRows', [lift('changeName'), lift('changeDiff'), lift('_yoursKey'), lift('appendYoursTile'),
 			'return appendYoursTile;'].join('\n'))(
 		{ createElement: el }, t, tn, tOr,
 		(kind, o) => { const d = el('div'); d.kind = kind; d.o = o; d._body = el('div'); d.children.push(d._body); return d; },
@@ -117,6 +119,43 @@ test('B4: a file whose authorship the runner could not judge says "Changed <name
 	assert.deepEqual(head, ['Changed big.wav', 'Changed your file a.md']);
 });
 
+// UNDO-REACH (D-20261031-13, DRIVE-REACH 31 Oct): a turn whose only change was a file it made,
+// `~/k-reach-test/hello.txt`, outside ~/usr, drew the generic Files card alone, with no line for
+// the file and no Undo.  Red at release/hot1 339feb876: the carried row left every created file out
+// of `yours`, so no tile and no Undo were drawn.
+test('D: a turn that only made a file says "Created <name>", shows it, and offers the turn\'s Undo', async () => {
+	const HELLO = { text: true, add: 1, del: 0, more: 0, rows: [{ k: '+', t: 'hi' }] };
+	const rec = { keeper: 'D9', run: 'e-R9', turnId: 'u9', on: 'RUN', onName: 'argonaut', ts: 50, since: 1800, until: 9e15,
+		files: [{ path: '/home/jason/k-reach-test/hello.txt', hash: 'h9', created: true, add: 1, del: 0, change: HELLO }] };
+	const NOTE = { role: 'user', content: '[Daimond: this turn changed 1 file (v4): /home/jason/k-reach-test/hello.txt.]' };
+	const chat = { id: 'c9', diamondId: 'D9', messages: [{ mid: 'u9', role: 'user', content: 'write hello', ts: 10 },
+		{ mid: 'e-R9-end', role: 'end_log', content: '', ts: 55, iturn: 'u9' }] };
+	const env = {
+		DaimondVersions: {
+			manifests: async () => [{ version: 4, ts: 40, files: [
+				{ path: '/home/jason/k-reach-test/hello.txt', hash: 'h9', by: { role: 'm-1' } }] }],
+			diff: async () => null,
+		},
+		DaimondProvenance: { h: { file: (s, v, p) => 'v1:file:' + s + ':' + v + ':' + p } },
+	};
+	const carried = new Function('window', 'DaimondVersions', 'DaimondProvenance', [
+		'function stampProd(p) { return p; } function selfDeviceId() { return "ASK"; }',
+		'function carriedProdBase() { return null; }',
+		lift('turnFileProds'), lift('turnFileList'), lift('carriedFilesRow'), 'return carriedFilesRow;'].join('\n'))(
+		env, env.DaimondVersions, env.DaimondProvenance);
+	const row = await carried(chat, rec, { version: 4, note: NOTE });
+	assert.ok(row, 'a row');
+	assert.deepEqual(row.yours, [{ path: '/home/jason/k-reach-test/hello.txt', created: true, add: 1, del: 0, change: HELLO }]);
+	assert.deepEqual(row.away, { keeper: 'D9', on: 'RUN', onName: 'argonaut', run: 'e-R9', since: 1800, until: 9e15 });
+	const { undos, nodes } = draw(row);
+	const head = nodes.filter((n) => /turn-yours-head/.test(n.className)).map((n) => n.textContent);
+	assert.deepEqual(head, ['Created hello.txt'], 'never "your file": the turn made it');
+	assert.deepEqual(nodes.filter((n) => /hist-diff-line/.test(n.className)).map((n) => n.className + '|' + n.textContent),
+		['hist-diff-line add|hi']);
+	assert.equal(undos.length, 1, 'the turn\'s own Undo');
+	assert.deepEqual(undos[0].r, { away: row.away, cause: 'turn' });
+});
+
 test('B3: a row with no file of his draws nothing', () => {
 	assert.equal(draw({ role: 'user', content: 'x' }).tile, null);
 });
@@ -129,5 +168,6 @@ test('C: wiring: a history row with `yours` draws the tile; the ask and the turn
 		const s = readPage(root + 'www/i18n/' + loc + '.js', 'utf8');
 		assert.match(s, /'change\.yours':/, loc + ' has change.yours');
 		assert.match(s, /'change\.file':/, loc + ' has change.file');
+		assert.match(s, /'change\.made':/, loc + ' has change.made');
 	}
 });
