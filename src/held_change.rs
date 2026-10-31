@@ -12,6 +12,7 @@ use crate::diamond_versions::{
 	Row,
 };
 use crate::llm::json_escape;
+use crate::tools::refusal_line;
 
 use oxedyne_fe2o3_core::prelude::*;
 
@@ -60,18 +61,24 @@ impl Answer {
 
 	/// What the model is told when the change was not made, or `None` on Apply.  The sentence
 	/// forbids the way round, because a model told only "no" reaches for `run` and `sed`.
+	///
+	/// Every answer but Apply is a refusal, and is composed by [`refusal_line`] so that
+	/// [`crate::tools::call_outcome`] reads it back as one.  Until 31 Oct 2026 these opened with
+	/// their own words, so a change Kimberlite could not keep a copy of, or one the person
+	/// declined, was booked as done and drawn `file_write · ok` (TOOLROW-STATUS).
 	pub fn told(&self, path: &str) -> Option<String> {
 		let why = match self {
 			Self::Apply			=> return None,
 			Self::Refused		=> "The user chose not to have",
 			Self::Unanswered	=> "The user did not answer whether to have",
-			Self::Unkept(why)	=> return Some(fmt!("A copy of '{}' could not be kept first, so \
-				that it could be put back: {}. Nothing was changed. Do not make this change \
-				another way; finish the rest and say in your answer what you would have changed.",
-				path, why.trim_end_matches('.'))),
+			Self::Unkept(why)	=> return Some(refusal_line(&fmt!("A copy of '{}' could not be \
+				kept first, so that it could be put back: {}. Nothing was changed. Do not make this \
+				change another way; finish the rest and say in your answer what you would have \
+				changed.", path, why.trim_end_matches('.')))),
 		};
-		Some(fmt!("{} '{}' changed. Nothing was changed. Do not make this change another way; \
-			finish the rest and say in your answer what you would have changed.", why, path))
+		Some(refusal_line(&fmt!("{} '{}' changed. Nothing was changed. Do not make this change \
+			another way; finish the rest and say in your answer what you would have changed.",
+			why, path)))
 	}
 }
 

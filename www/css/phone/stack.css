@@ -5,6 +5,13 @@
 #stack-back,
 #stack-title { display: none; }
 
+/* The host takes no room in #app at any width. js/page/phone_stack.js appends it
+   after #mnav, and its pages are fixed, but a flex item with no height still costs
+   #app one `gap`: the phone's bar stood 6px off the screen's foot and every sheet,
+   placed from `--mnav-h`, ended 6px under it (CCP29-CANON-c). Parked at a desktop
+   width it would cost the composer the same. Out of flow, it costs nothing. */
+#phone-stack { position: absolute; top: 0; left: 0; }
+
 @media (max-width: 760px) {
 	/* ── The stack bar ─────────────────────────────────────────
 	   The top bar on a phone: Back while a page lies behind this one, the page's

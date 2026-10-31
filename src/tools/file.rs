@@ -1643,24 +1643,24 @@ pub(super) fn overwrite_unkept_refusal(raw: &str, why: &str) -> String {
 /// A change to a file of the user's that the person already declined this turn, or one inside or
 /// around it (UNBLOCK-26 U3): refused without asking again.
 pub(super) fn change_declined_refusal(raw: &str) -> String {
-    fmt!("The user already chose not to have '{}' changed in this turn. Nothing was changed. Do \
-        not ask again or make this change another way; finish the rest and say in your answer \
-        what you would have changed.", raw)
+    refusal_line(&fmt!("The user already chose not to have '{}' changed in this turn. Nothing \
+        was changed. Do not ask again or make this change another way; finish the rest and say in \
+        your answer what you would have changed.", raw))
 }
 
 /// The user's file changed while they were asked about changing it: the change they agreed to was
 /// to the file as it was shown, so it is not written over what stands there now.
 pub(super) fn changed_while_asked_refusal(raw: &str) -> String {
-    fmt!("'{}' changed while the user was being asked, so nothing was written: they agreed to the \
-        change against the file as it was then. Read it again, and if the change is still wanted, \
-        make it against the file as it is now.", raw)
+    refusal_line(&fmt!("'{}' changed while the user was being asked, so nothing was written: they \
+        agreed to the change against the file as it was then. Read it again, and if the change is \
+        still wanted, make it against the file as it is now.", raw))
 }
 
 /// A change to a file of the user's that cannot be shown to them, so cannot be asked about.
 pub(super) fn change_unshown_refusal(raw: &str) -> String {
-    fmt!("'{}' is the user's file and this change to it cannot be shown to them (it is not text), \
-        so it was not made. Nothing was changed. Tell the user what you would change and let \
-        them do it.", raw)
+    refusal_line(&fmt!("'{}' is the user's file and this change to it cannot be shown to them (it \
+        is not text), so it was not made. Nothing was changed. Tell the user what you would \
+        change and let them do it.", raw))
 }
 
 /// The file's own bytes out of a whole-file read, or the reason they are not recoverable.
@@ -1862,6 +1862,11 @@ impl WriteBound {
 
     /// The refusal for a write that found `found` where it was bound to [`Self::seen`].
     pub fn refusal(&self, tool: &str, path: &str, found: &crate::diamond_versions::Seen) -> String {
+        refusal_line(&self.refusal_said(tool, path, found))
+    }
+
+    // The sentence alone; refusal composes it as a refusal (TOOLROW-STATUS).
+    fn refusal_said(&self, tool: &str, path: &str, found: &crate::diamond_versions::Seen) -> String {
         use crate::diamond_versions::Seen;
         match (self, found) {
             (Self::Shown(_), _)          => fmt!("{}: {}", tool, changed_while_asked_refusal(path)),
@@ -1880,6 +1885,11 @@ impl WriteBound {
     /// The refusal for a machine write the hand refused as changed since it was read: `None`
     /// where `said` is not that refusal ([`hand_found`]).
     pub fn hand_refusal(&self, tool: &str, path: &str, said: &str) -> Option<String> {
+        self.hand_refusal_said(tool, path, said).map(|s| refusal_line(&s))
+    }
+
+    // The sentence alone; hand_refusal composes it as a refusal (TOOLROW-STATUS).
+    fn hand_refusal_said(&self, tool: &str, path: &str, said: &str) -> Option<String> {
         hand_found(said).map(|found| self.refusal(tool, path, &found))
     }
 }

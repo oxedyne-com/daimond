@@ -518,7 +518,7 @@ impl<H: Host> ToolContext<H> {
     /// * `path` - The workspace-relative path that was refused.
     /// * `writing` - Whether the refused call was a write.
     pub fn refusal(&self, path: &str, writing: bool) -> String {
-        self.refusal_of(path, writing).1
+        refusal_line(&self.refusal_of(path, writing).1)
     }
 
     // The refusal and its kind, which [`ToolContext::refuse`] counts.
@@ -2679,6 +2679,11 @@ pub(super) fn read_many_ask(args: &str) -> Option<Vec<String>> {
 
 /// A window names a place in ONE file, so it cannot be asked of several.
 pub(super) fn read_many_window_refusal(args: &str) -> Option<String> {
+    read_many_window_refusal_said(args).map(|s| refusal_line(&s))
+}
+
+// The sentence alone; read_many_window_refusal composes it as a refusal (TOOLROW-STATUS).
+fn read_many_window_refusal_said(args: &str) -> Option<String> {
     if arg_given(args, "offset") || arg_given(args, "limit") || arg_given(args, "end") {
         return Some(fmt!(
             "file_read: 'offset', 'limit' and 'end' name a window inside ONE file, and this call \

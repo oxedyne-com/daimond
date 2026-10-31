@@ -1,1 +1,1 @@
-{"build":"38e03f7aae83","note":"A device whose live channel is down now sees a turn run on another device within seconds, not at the next sync."}
+{"build":"98f4df69e02d","note":"A refused change shows as refused, never as done; on a phone the bar sits on the screen foot, Settings taps full-size."}

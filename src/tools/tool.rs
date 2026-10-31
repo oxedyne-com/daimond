@@ -1653,6 +1653,11 @@ impl Tool {
     /// * `args_json` - Its arguments, as the model sent them.
     /// * `ctx` - The turn's context.
     pub(super) fn link_owner_refusal<H: Host>(tool: &Tool, args_json: &str, ctx: &ToolContext<H>) -> Option<String> {
+        Self::link_owner_refusal_said(tool, args_json, ctx).map(|s| refusal_line(&s))
+    }
+
+    // The sentence alone; link_owner_refusal composes it as a refusal (TOOLROW-STATUS).
+    fn link_owner_refusal_said<H: Host>(tool: &Tool, args_json: &str, ctx: &ToolContext<H>) -> Option<String> {
         if !matches!(tool, Tool::LinkAdd | Tool::LinkRemove) {
             return None;
         }
@@ -1820,6 +1825,11 @@ impl Tool {
     /// pack is bought, and that it is a one-off -- so the answer arrives in the conversation and
     /// nothing has to be put up in front of them to deliver it.
     pub(super) fn pack_refusal(&self) -> Option<String> {
+        self.pack_refusal_said().map(|s| refusal_line(&s))
+    }
+
+    // The sentence alone; pack_refusal composes it as a refusal (TOOLROW-STATUS).
+    fn pack_refusal_said(&self) -> Option<String> {
         let pack = match self.pack() {
             Some(p) => p,
             None    => return None,

@@ -8,6 +8,7 @@
 // and to record what it was shown:
 //
 //   A1. file_edit of his file asks, and on No writes nothing; on Apply it writes.
+//       The No is a refusal end to end: the engine's outcome and the page's tile both say so.
 //   A2. the same through a worker.
 //   A3. file_move of his file asks, and on No moves nothing.
 //   A4. a folder move carrying one of his files asks, and on No moves nothing.
@@ -93,7 +94,8 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 			await press(id, marks);
 			await eng.steer_crystal(id, text, '[]', [],
 				(ev) => { if (ev.type === 'tool_result') seen.push({ name: String(ev.name || ''),
-					content: String(ev.content || '') }); });
+					content: String(ev.content || ''), outcome: String(ev.outcome || ''),
+					paused: String(ev.paused || '') }); });
 		} catch (e) { seen.push({ name: '', content: 'THREW: ' + String(e && e.message || e) }); }
 		return seen;
 	};
@@ -148,10 +150,23 @@ const arm = (fn, arg) => p.evaluate(async ({ id, src, arg }) => {
 const short = (x) => JSON.stringify(x).slice(0, 260);
 
 if (want('A1')) {
-	const r = await arm(async ({ mod, read, turn, id, asks, answer }) => {
+	const r = await arm(async ({ mod, read, turn, turnEv, id, asks, answer }) => {
 		await mod.write_file('vault/a1.md', 'Dear Jason,\nline two\n');
-		const no = await turn(id, ['vault'], 'file_edit',
-			{ path: 'vault/a1.md', old_string: 'line two', new_string: 'LINE TWO' });
+		const evs = await turnEv(id, ['vault'], '@tool file_edit ' + JSON.stringify(
+			{ path: 'vault/a1.md', old_string: 'line two', new_string: 'LINE TWO' }));
+		const no = evs.map((e) => e.content).join(' | ').slice(0, 400);
+		// TOOLROW-STATUS (31 Oct 2026): a refused change was drawn "· ok". Drawn here through the
+		// page's own tile with the outcome the engine sent, as a live turn and a reload draw it.
+		const ev = evs.find((e) => e.name === 'file_edit') || {};
+		window.DaimondCore.drawToolResult(ev.name || 'file_edit', ev.content || '', ev.outcome || '',
+			ev.paused || '');
+		const tile = [...document.querySelectorAll('.tool-block')].pop();
+		const drawn = {
+			outcome: ev.outcome || '',
+			label:   tile && tile._meta ? tile._meta.textContent : '',
+			refused: !!(tile && tile.classList.contains('refused')),
+			body:    tile ? ((tile.querySelector('.tool-result') || {}).textContent || '') : '',
+		};
 		const afterNo = await read('vault/a1.md');
 		const askedNo = asks().map((a) => ({ act: a.act, path: a.path, add: a.add, del: a.del }));
 		window.__changeAsks = [];
@@ -159,12 +174,16 @@ if (want('A1')) {
 		await mod.write_file('vault/a1b.md', 'Dear Jason,\nline two\n');
 		const yes = await turn(id, ['vault'], 'file_edit',
 			{ path: 'vault/a1b.md', old_string: 'line two', new_string: 'LINE TWO' });
-		return { no, afterNo, askedNo, yes, afterYes: await read('vault/a1b.md'), askedYes: asks().length };
+		return { no, drawn, afterNo, askedNo, yes, afterYes: await read('vault/a1b.md'), askedYes: asks().length };
 	});
 	check('A1. file_edit of his file asks first', r.askedNo.length === 1 && r.askedNo[0].act === 'change'
 		&& /a1\.md$/.test(r.askedNo[0].path), short(r.askedNo));
 	check('A1. on No nothing is written, and the model is told', r.afterNo === 'Dear Jason,\nline two\n'
 		&& /chose not to have/.test(r.no), r.no.slice(0, 200));
+	check('A1. a declined change is a refusal end to end: the engine says so and the row is drawn refused, '
+		+ 'with its reason, never "ok"', r.drawn.outcome === 'refused' && r.drawn.refused
+		&& / · /.test(r.drawn.label) && !/ · ok$/.test(r.drawn.label)
+		&& /chose not to have/.test(r.drawn.body), short(r.drawn));
 	check('A1. on Apply the edit lands', r.askedYes === 1 && r.afterYes === 'Dear Jason,\nLINE TWO\n',
 		r.yes.slice(0, 160));
 }

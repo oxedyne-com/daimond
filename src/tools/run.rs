@@ -3177,6 +3177,11 @@ pub(crate) fn based_args(tool: &Tool, args: &str, ws: &Workspace) -> Option<Stri
 /// non-canonical path is refused rather than mended, and the refusal names the one spelling to
 /// write where there is one.  `""` and `"."` name the workspace root and pass.
 pub(crate) fn path_refusal(tool: &Tool, path: &str) -> Option<String> {
+    path_refusal_said(tool, path).map(|s| refusal_line(&s))
+}
+
+// The sentence alone; path_refusal composes it as a refusal (TOOLROW-STATUS).
+fn path_refusal_said(tool: &Tool, path: &str) -> Option<String> {
     if path.is_empty() || path == "." {
         return None;
     }
@@ -3254,6 +3259,11 @@ pub(crate) fn trailing_slash_args(tool: &Tool, args: &str) -> Option<String> {
 /// name in it is refused rather than mended, because it is almost always a slip and a quiet trim
 /// would teach the model nothing.  A space INSIDE a name is an ordinary name.
 pub(crate) fn padded_name_refusal(tool: &str, raw: &str) -> Option<String> {
+    padded_name_refusal_said(tool, raw).map(|s| refusal_line(&s))
+}
+
+// The sentence alone; padded_name_refusal composes it as a refusal (TOOLROW-STATUS).
+fn padded_name_refusal_said(tool: &str, raw: &str) -> Option<String> {
     raw.split(|c| c == '/' || c == '\\')
         .find(|seg| seg.trim() != *seg)
         .map(|seg| fmt!("'{}' has a name that starts or ends with a space or other blank ({:?}), \
@@ -3272,6 +3282,11 @@ pub(crate) fn padded_name_refusal(tool: &str, raw: &str) -> Option<String> {
 /// `diamonds/d/shots/../crystal.json` and had to find `diamonds/d/crystal.json` itself.  A path
 /// that climbs above the root gets no such line, since there is no workspace path to offer.
 pub(crate) fn dotdot_refusal(tool: &str, raw: &str) -> String {
+    refusal_line(&dotdot_refusal_said(tool, raw))
+}
+
+// The sentence alone; dotdot_refusal composes it as a refusal (TOOLROW-STATUS).
+fn dotdot_refusal_said(tool: &str, raw: &str) -> String {
     let hint = match dotdot_fold(raw) {
         Some(fix)   => fmt!(" Write it as '{}'.", fix),
         None        => fmt!(" Paths start at the workspace root, e.g. 'notes/a.md'."),
@@ -3315,6 +3330,11 @@ pub(crate) fn dotdot_fold(raw: &str) -> Option<String> {
 /// # Arguments
 /// * `raw` - The path as the model wrote it.
 pub(super) fn delete_path_refusal(raw: &str) -> Option<String> {
+    delete_path_refusal_said(raw).map(|s| refusal_line(&s))
+}
+
+// The sentence alone; delete_path_refusal composes it as a refusal (TOOLROW-STATUS).
+fn delete_path_refusal_said(raw: &str) -> Option<String> {
     let t = raw;
     if t.starts_with('/') || t.starts_with('\\') || t.get(1..2) == Some(":") {
         return Some(fmt!(
@@ -3342,12 +3362,22 @@ pub(super) const DELETE_ASK: &str = "file_delete removes one file at a time and 
 
 /// The refusal for a `file_delete` whose target is a folder.
 pub(super) fn delete_dir_refusal(raw: &str) -> String {
+    refusal_line(&delete_dir_refusal_said(raw))
+}
+
+// The sentence alone; delete_dir_refusal composes it as a refusal (TOOLROW-STATUS).
+fn delete_dir_refusal_said(raw: &str) -> String {
     fmt!("'{}' is a folder. {}", raw, DELETE_ASK)
 }
 
 /// The refusal for a turn's `file_delete` of a file larger than a version keeps: its bytes
 /// could not be held, so the delete could not be put back.
 pub(super) fn delete_size_refusal(raw: &str, bytes: u64) -> String {
+    refusal_line(&delete_size_refusal_said(raw, bytes))
+}
+
+// The sentence alone; delete_size_refusal composes it as a refusal (TOOLROW-STATUS).
+fn delete_size_refusal_said(raw: &str, bytes: u64) -> String {
     fmt!("'{}' is {} bytes, more than the {} bytes Daimond keeps a copy of, so deleting it could not be \
         undone. Nothing was deleted. Do not look for another way to remove it. If it should go, \
         tell the user which file and why, and let them delete it themselves from the Files panel.",
@@ -3357,6 +3387,11 @@ pub(super) fn delete_size_refusal(raw: &str, bytes: u64) -> String {
 /// The refusal for a turn's `file_delete` of a file that is here and would not read, so no
 /// copy of it could be kept.
 pub(super) fn delete_unread_refusal(raw: &str) -> String {
+    refusal_line(&delete_unread_refusal_said(raw))
+}
+
+// The sentence alone; delete_unread_refusal composes it as a refusal (TOOLROW-STATUS).
+fn delete_unread_refusal_said(raw: &str) -> String {
     fmt!("'{}' is here but could not be read just now -- something else may be writing it -- so \
         no copy of it could be kept and deleting it could not be undone. Nothing was deleted. Do \
         not look for another way to remove it. If it should go, tell the user which file and why, \
@@ -3368,6 +3403,11 @@ pub(super) fn delete_unread_refusal(raw: &str) -> String {
 /// The hand has no delete verb (`FileOp` in `hand/src/wire.rs`), so no copy could be kept and
 /// the file could not be removed. The sentence sends the model to the user, never to `run`.
 pub(super) fn delete_machine_refusal(raw: &str) -> String {
+    refusal_line(&delete_machine_refusal_said(raw))
+}
+
+// The sentence alone; delete_machine_refusal composes it as a refusal (TOOLROW-STATUS).
+fn delete_machine_refusal_said(raw: &str) -> String {
     fmt!("'{}' is in a folder on this computer that Daimond reaches through the machine hand, and \
         the hand does not delete files, so file_delete cannot remove it. Nothing was deleted. Do \
         not look for another way to remove it -- not a move, not emptying it, not a command. If \
@@ -3381,6 +3421,11 @@ pub(super) fn delete_machine_refusal(raw: &str) -> String {
 /// metered connection -- only to delete it.  The user deletes it from the Files panel, where it
 /// is their act.
 pub(super) fn delete_cloud_refusal(raw: &str) -> String {
+    refusal_line(&delete_cloud_refusal_said(raw))
+}
+
+// The sentence alone; delete_cloud_refusal composes it as a refusal (TOOLROW-STATUS).
+fn delete_cloud_refusal_said(raw: &str) -> String {
     fmt!("'{}' is only in cloud storage, not on this device, so no copy of it could be kept here \
         and deleting it would remove it from every device at once. Nothing was deleted. If it \
         should go, tell the user which file and why, and let them delete it themselves from the \
@@ -3445,6 +3490,11 @@ pub fn open_delete_stopped_refusal(raw: &str, count: usize, limit: usize) -> Str
 /// * `bytes` - The length of the copy the act would keep: the file as it stands.
 /// * `max`   - The cap on one copy, in bytes.
 pub fn keep_size_refusal(raw: &str, bytes: u64, max: u64) -> String {
+    refusal_line(&keep_size_refusal_said(raw, bytes, max))
+}
+
+// The sentence alone; keep_size_refusal composes it as a refusal (TOOLROW-STATUS).
+fn keep_size_refusal_said(raw: &str, bytes: u64, max: u64) -> String {
     fmt!("'{}' is {} bytes, more than the {} bytes Daimond keeps a copy of, so changing it \
         could not be undone. Nothing was changed. Do not look for another way to change it. If it \
         should change, tell the user which file and why, and let them change it themselves from \
@@ -3674,6 +3724,11 @@ impl OpenAct {
 /// * `args_json` - Its arguments, whose `path` is the file or folder that would go.
 /// * `ctx` - The context, whose allow-lists are the places the turn was given.
 pub(super) fn mark_root_refusal<H: Host>(tool: &Tool, args_json: &str, ctx: &ToolContext<H>) -> Option<String> {
+    mark_root_refusal_said(tool, args_json, ctx).map(|s| refusal_line(&s))
+}
+
+// The sentence alone; mark_root_refusal composes it as a refusal (TOOLROW-STATUS).
+fn mark_root_refusal_said<H: Host>(tool: &Tool, args_json: &str, ctx: &ToolContext<H>) -> Option<String> {
     let moving = match tool {
         Tool::FileDelete => false,
         Tool::FileMove   => true,
@@ -3780,6 +3835,11 @@ impl PathClass {
 /// Native only: the File System Access API gives the browser no way to see a link at all.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn link_escape_refusal(tool: &str, raw: &str) -> String {
+    refusal_line(&link_escape_refusal_said(tool, raw))
+}
+
+// The sentence alone; link_escape_refusal composes it as a refusal (TOOLROW-STATUS).
+fn link_escape_refusal_said(tool: &str, raw: &str) -> String {
     fmt!("'{}' passes through a link to a place outside the workspace, so {} will not act on it. \
         Nothing was changed. If it matters, tell the user what you wanted to do there.", raw, tool)
 }
@@ -3811,6 +3871,11 @@ pub(super) fn followed<H: Host>(ctx: &ToolContext<H>, tool: &str, raw: &str) -> 
 /// turn may not reach.  It names the spelling only: where the link leads is the thing withheld.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn link_inward_refusal(tool: &str, raw: &str) -> String {
+    refusal_line(&link_inward_refusal_said(tool, raw))
+}
+
+// The sentence alone; link_inward_refusal composes it as a refusal (TOOLROW-STATUS).
+fn link_inward_refusal_said(tool: &str, raw: &str) -> String {
     fmt!("'{}' passes through a link to a place this turn may not reach, so {} will not act on \
         it. Nothing was read or changed.", raw, tool)
 }
@@ -3899,6 +3964,11 @@ pub(super) fn admits_real<H: Host>(ctx: &ToolContext<H>, rel: &str, real: &std::
 
 /// The refusal for a `file_move` that would put a folder inside itself.
 pub(super) fn move_into_itself_refusal(from: &str, to: &str) -> String {
+    refusal_line(&move_into_itself_refusal_said(from, to))
+}
+
+// The sentence alone; move_into_itself_refusal composes it as a refusal (TOOLROW-STATUS).
+fn move_into_itself_refusal_said(from: &str, to: &str) -> String {
     fmt!("'{}' is inside '{}', so this would move a folder into itself. Nothing was moved. \
         Choose a destination outside '{}'.", to, from, from)
 }

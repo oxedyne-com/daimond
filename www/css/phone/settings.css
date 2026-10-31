@@ -97,7 +97,15 @@
 	}
 	.sg-page #settings-menu .ap-row .seg button,
 	.sg-page #settings-menu .ap-row .size-row button {
-		flex: 0 0 auto; min-width: 0; font-size: 16px; height: 38px; min-height: 38px; padding: 0 12px;
+		flex: 0 0 auto; min-width: 44px; font-size: 16px; height: 38px; min-height: 38px; padding: 0 12px;
+		position: relative;
+	}
+	/* A segment is a 44px target each way (D-20260929-03), drawn 38 high on its track:
+	   44 high about its centre, over the track's 3px and its own border, and no segment, a
+	   reading-size A or a grid choice, is narrower than 44 (CCP29-CANON-c, tap 8). */
+	.sg-page #settings-menu .ap-row .seg button::after,
+	.sg-page #settings-menu .ap-row .size-row button::after {
+		content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 44px; transform: translateY(-50%);
 	}
 	/* The chosen segment is a raised pill on the track (b5), not a darker well. */
 	#phone-stack > .sg-page #settings-menu .ap-row .seg button { border-radius: 8px; background: transparent; box-shadow: none; }
