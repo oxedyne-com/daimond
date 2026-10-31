@@ -26,6 +26,10 @@
              tile (or adds an empty one); not_run adds the "not run" row
              with Retry (mid <turn>-nr, `isNotRunRow`), its cause from
              the end's `not_run`; a Diamond's is tagged `notrun`
+     ARRIVE  a row the log draws that this device did not hold is one
+             `{k:'tile', via:'log'}` arrival carrying its `made`, so the
+             lens can time the log path (LAG-1); a row already held, one
+             older than the fresh floor, and a re-read add none
 
      node www/js/turnlog.test.mjs
 
@@ -228,6 +232,32 @@ check('ENDS not_run joins a row already held', e.messages.filter((m) => m.mid ==
 	await load(paired);
 	await TL.readChat(paired, deps(doorOf(wlog), []));
 	check('WHOLE once the store settles it folds under the transcript', mids(paired) === 'j1,u8', mids(paired));
+}
+
+// ── ARRIVE ──
+// LAG-1: a tile that came by the log was invisible to the latency instrument; only the
+// parcel and the hand-off note reported. `logArrivals` is pure, the page's `onRows` hands
+// its records to `noteArrive`.
+{
+	const alog = [
+		wire('T7', 1, 'msg', { mid: 'u7', role: 'user', text: 'q' }, 'acct'),
+		wire('T7', 2, 'msg', { mid: 'a7', role: 'assistant', text: 'A' }, 'acct'),
+	];
+	const floor = alog[0].at;		// u7 is at the floor, so not fresh
+	const got = [];
+	const ac = { id: 'c7', _loaded: true, messages: [{ mid: 'u0', role: 'user', content: 'old', ts: 10 }] };
+	const D = deps(doorOf(alog), []);
+	D.onRows = (c, t, fresh) => { got.push.apply(got, TL.logArrivals ? TL.logArrivals(c, fresh, floor) : []); };
+	await TL.readChat(ac, D);
+	check('ARRIVE a fresh drawn row is one log tile', got.length === 1 && got[0].k === 'tile' && got[0].via === 'log'
+		&& got[0].cid === 'c7' && got[0].mid === 'a7' && got[0].made === alog[1].at && got[0].role === 'assistant'
+		&& got[0].tid === 'T7', JSON.stringify(got));
+	got.length = 0;
+	await TL.readChat(ac, D);
+	check('ARRIVE a re-read adds none', got.length === 0, JSON.stringify(got));
+	const held = { id: 'c8', _loaded: true, messages: [{ mid: 'a7', role: 'assistant', content: 'A', ts: alog[1].at }] };
+	await TL.readChat(held, D);
+	check('ARRIVE a row already held is not an arrival', got.length === 0, JSON.stringify(got));
 }
 
 if (failures) { console.log(failures + ' failed'); process.exit(1); }

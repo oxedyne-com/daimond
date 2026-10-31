@@ -4292,11 +4292,7 @@
 			// live generation's business and nobody else's.
 			if (gen !== wakeGen || !wakeWanted()) return;
 			if (res.status !== 200) { wakeRetry(); return; }
-			if (!res.json || res.json.waited !== true) {
-				log('wake channel: this gateway does not park requests; channel off');
-				wakeMode = 'off';
-				return;
-			}
+			if (!res.json || res.json.waited !== true) { wakeNotParked(''); return; }
 			wakeBackoff = WAKE_RETRY_MIN_MS;
 			wakeLostAt  = 0;
 			wakeMode    = 'ws';
@@ -4413,6 +4409,32 @@
 		wakeStart();
 	}
 
+	/// A 200 that did not park (no `waited: true`): the channel goes off FOR A WHILE, and
+	/// comes back to `mode` after the next wait of the ladder (`wakeWait`), while the
+	/// catch-up reads in its place. Either a gateway too old to park, or a road that dropped
+	/// the query and served an ordinary pull, or a 200 that was not a park for a passing
+	/// reason.
+	///
+	/// IT WAS FOR THE PAGE'S LIFE, and that is what one bad answer cost (LAG-1f, 31 Oct): the
+	/// gateway served `?above=N&log=1` as a read of chat "1"'s log, the page took that one
+	/// answer for a road that cannot park, and B parked 0 times in a 256 s rig run; nothing but
+	/// a reload re-armed it. Coming back costs a road that really strips queries one ordinary
+	/// pull per rung of the ladder, at most one per `WAKE_RETRY_MAX_MS` jittered, which is
+	/// the catch-up's own order. Oxedyne's road carries the query (checked 2026-08-28: jarrah's
+	/// Steel `proxy_route` on `/api/` re-appends it verbatim; an `api_route` in proxy mode
+	/// would not). An 'off' asked for (`wakeVia('off')`, `wakeShut`) is never undone here.
+	function wakeNotParked(mode) {
+		log('wake channel: answered without parking; channel off, asking again later');
+		wakeMode = 'off';
+		if (wakeTimer) return;
+		wakeTimer = setTimeout(function () {
+			wakeTimer = null;
+			if (wakeMode !== 'off' || wakeShut) return;
+			wakeMode = mode;
+			wakeStart();
+		}, wakeWait());
+	}
+
 	/// Come back to the socket after a pause that grows, with jitter on it.
 	function wakeRetry() {
 		if (wakeTimer || !wakeWanted()) return;
@@ -4474,7 +4496,11 @@
 					wakeParkPres = presHeld;
 					res = await call('GET', undefined,
 						'?above=' + heardUpTo() + '&ms=' + WAKE_POLL_MS + '&w=' + encodeURIComponent(WAKE_ID)
-						+ (prog ? '&prog=1' : '') + (presHeld != null ? '&pres=' + presHeld : ''),
+						+ (prog ? '&prog=1' : '') + (presHeld != null ? '&pres=' + presHeld : '')
+						// Chat log taps, the socket's `c<chat>:<head>`, for a page that
+						// hears them (LAG-1c): without them a device on this fallback saw
+						// a turn run elsewhere only at the next parcel.
+						+ (logListeners.length ? '&log=1' : ''),
 						{ timeoutMs: 0, hold: wakeHold });
 					wakeParkPres = null;
 				} catch (e) {
@@ -4505,6 +4531,10 @@
 					&& gen === wakeGen) {
 					progressTapped();
 				}
+				// Chat logs moved elsewhere: each tap goes where the socket's would.
+				if (res.status === 200 && res.json && Array.isArray(res.json.log) && wakeWanted()) {
+					res.json.log.forEach(function (d) { if (typeof d === 'string' && d.charAt(0) === 'c') logTapped(d); });
+				}
 				// STOP-ON-PEER: the lease door moved (a gateway with the Lease channel).
 				if (res.status === 200 && res.json && res.json.lease === true && wakeWanted()) leaseWake(0);
 				// Presence moved above what this connection holds (HT1's `pres`).
@@ -4527,36 +4557,9 @@
 					continue;
 				}
 				if (!res.json || res.json.waited !== true) {
-					// Answered, and did not park. Either the gateway is too old to
-					// know how, or something between here and it dropped the query
-					// and served an ordinary pull. That is a property of the road,
-					// not of the moment, so this one does end the channel -- one
-					// such answer per page load is the whole cost of finding out.
-					//
-					// AND IT IS THE ONLY DOOR OUT OF THIS CHANNEL THAT DOES NOT
-					// COME BACK. Everything else recovers: a socket that had
-					// opened and went away is waited out, two that never opened
-					// fall through to parking, a 401 takes a fresh session and a
-					// 5xx from a restarting gateway backs off and asks again.
-					// `wakeMode = 'off'` alone makes `wakeWanted()` false, and
-					// with it the supervisor, the retry and `onAuthed`'s own
-					// `wakeStart()` all decline -- so nothing but a reload or
-					// `wakeVia` re-arms it. That is right for a road that strips
-					// queries and wrong for a 200 that was not a park for some
-					// passing reason, and the catch-up below is what now bounds
-					// the second case at twenty seconds instead of the session.
-					//
-					// OXEDYNE'S OWN ROAD DOES CARRY IT, checked 2026-08-28 rather
-					// than assumed: jarrah's `daimond.oxedyne.com` vhost reaches
-					// the gateway through a Steel `proxy_route` on `/api/`, which
-					// re-appends the query verbatim on the plain hop and on the
-					// upgrade, and tunnels the WebSocket. It is Steel's OTHER
-					// shape that would break this -- an `api_route` in proxy mode
-					// forwards a configured path and never reads the query at all
-					// -- so a front door moved onto one would take every device's
-					// channel with it and say nothing.
-					log('wake channel: this gateway does not park requests; channel off');
-					wakeMode = 'off';
+					// Answered, and did not park: off for now, never for the page's life.
+					// See `wakeNotParked`.
+					wakeNotParked('poll');
 					break;
 				}
 				wakeBackoff = WAKE_RETRY_MIN_MS;

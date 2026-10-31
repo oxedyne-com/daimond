@@ -397,21 +397,6 @@ export function gatewayNow() {
 	return Date.now();	// Real time: the gateway runs on the system clock.
 }
 
-/// The environment a verifier spawns its own gateway with: `extra` over this process's, the gate's
-/// instant carried to the gateway through the setting it reads.
-///
-/// `DAIMOND_CLOCK` is two things. To a gate script it is the instant its pages open at (gateclock.mjs),
-/// and to the gateway it is the process clock spec, `system` or `driven:<path>`, which refuses an
-/// instant and so never comes up. Passing it through stopped every own-gateway verifier under the gate
-/// clock; dropping it left the gateway on today's date while the pages ran at the gate's, so a
-/// signature the page dates (an account binding, 300 s of tolerance) was refused 401, which turn_parity
-/// --two met as "Sign in on this device before linking another" (2026-10-26).
-///
-/// So a gate instant becomes a driven clock: the run clock (gateclock.mjs startRunClock: the kit's, else
-/// this process's), as `driven:<file>` with `DAIMOND_GW_DEV=1`, which the gateway requires for a driven
-/// clock (and refuses on its production port). The pages, node and the gateway then read the one clock
-/// (ONE CLOCK PER RUN, rc-b 26 Oct). A spec (`system`, `driven:…`) or no `DAIMOND_CLOCK` at all is passed
-/// through unchanged.
 /// The dev net's environment, `dev/devgw/net.env` (devgw.sh writes it from `dev/devgw.env`): the one
 /// source of `DAIMOND_NETWORK` and the per-net values a gateway will not start without (REL-1c). The
 /// caller's environment and `extra` override a value, bar the net, which is always the file's.
@@ -435,14 +420,68 @@ export function devNetTag() {
 	return n ? { net: n } : {};
 }
 
+/// Is `c`, a `DAIMOND_CLOCK`, a gate instant, which the gateway must be given as the run clock? A spec
+/// (`system`, `driven:…`) or none is the gateway's own.
+export function isGateInstant(c) {
+	return !(c == null || c === '' || c === 'system' || c.startsWith('driven:'));
+}
+
+/// The environment a verifier spawns its own gateway with: `extra` over this process's, the gate's
+/// instant carried to the gateway through the setting it reads.
+///
+/// `DAIMOND_CLOCK` is two things. To a gate script it is the instant its pages open at (gateclock.mjs),
+/// and to the gateway it is the process clock spec, `system` or `driven:<path>`, which refuses an
+/// instant and so never comes up. Passing it through stopped every own-gateway verifier under the gate
+/// clock; dropping it left the gateway on today's date while the pages ran at the gate's, so a
+/// signature the page dates (an account binding, 300 s of tolerance) was refused 401, which turn_parity
+/// --two met as "Sign in on this device before linking another" (2026-10-26).
+///
+/// So a gate instant becomes a driven clock: the run clock (gateclock.mjs startRunClock: the kit's, else
+/// this process's), as `driven:<file>` with `DAIMOND_GW_DEV=1`, which the gateway requires for a driven
+/// clock (and refuses on its production port). The pages, node and the gateway then read the one clock
+/// (ONE CLOCK PER RUN, rc-b 26 Oct). A spec (`system`, `driven:…`) or no `DAIMOND_CLOCK` at all is passed
+/// through unchanged.
+///
+/// A launcher outside node (run_all.sh start_gateway) asks for this same environment through the CLI
+/// below, so the gateway it starts is given what a verifier's own gateway is (LAG-1e, 31 Oct: run_all
+/// passed the gate instant through and its gateway refused to start).
 export function gatewayEnv(extra) {
 	const net = netEnv();
 	const env = { ...net, ...process.env, ...extra };
 	if (net.DAIMOND_NETWORK) env.DAIMOND_NETWORK = net.DAIMOND_NETWORK;
-	const c = env.DAIMOND_CLOCK;
-	if (c == null || c === '' || c === 'system' || c.startsWith('driven:')) return env;
+	if (!isGateInstant(env.DAIMOND_CLOCK)) return env;
 	env[RUN_CLOCK] = startRunClock();
 	env.DAIMOND_CLOCK = 'driven:' + env[RUN_CLOCK];
 	env.DAIMOND_GW_DEV = '1';
 	return env;
+}
+
+// The CLI, for a launcher written in bash:
+//	node dev/gwbin.mjs env [K=V…]	gatewayEnv({K: V…}), NUL-separated `K=V` entries; exit 2 when it would start a run clock of
+//					its own, which would end with this process: start the run's first (gateclock.mjs tick <file> <pid>)
+//	node dev/gwbin.mjs clock-needed	exit 0 when DAIMOND_CLOCK is a gate instant and no run clock is running, else 1
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	const [verb, ...rest] = process.argv.slice(2);
+	const rc = process.env[RUN_CLOCK];
+	const needed = isGateInstant(process.env.DAIMOND_CLOCK) && !(rc && fs.existsSync(rc));
+	switch (verb) {
+		case 'clock-needed':	process.exit(needed ? 0 : 1); break;
+		case 'env': {
+			if (needed) {
+				console.error(`gwbin env: DAIMOND_CLOCK '${process.env.DAIMOND_CLOCK}' is a gate instant and no run clock runs (${RUN_CLOCK}); start one first: node dev/rig/gateclock.mjs tick <file> <pid>`);
+				process.exit(2);
+			}
+			const extra = {};
+			for (const kv of rest) {
+				const i = kv.indexOf('=');
+				if (i < 1) { console.error(`gwbin env: '${kv}' is not K=V`); process.exit(2); }
+				extra[kv.slice(0, i)] = kv.slice(i + 1);
+			}
+			process.stdout.write(Object.entries(gatewayEnv(extra)).map(([k, v]) => `${k}=${v}\0`).join(''));
+			break;
+		}
+		default:
+			console.error('gwbin: env [K=V…] | clock-needed');
+			process.exit(2);
+	}
 }

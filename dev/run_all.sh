@@ -39,7 +39,8 @@
 # sources it from ~/usr/code/ai/claude/notes/daimond_nightly/tools, so on 2026-09-25
 # every one of its 14 automatic reruns started in the notes directory, found no
 # `dev/verify_*.mjs` there and ran nothing -- and an "ENV 0" bucket read as a finding.
-bash "$(dirname "$0")/predeploy_guard.sh" run_all.sh "$@" || exit $?	# first: deploy first, refused (41) on code that is not live (D-20261023-04)
+# A file that sources this for its functions alone (RUN_ALL_FUNCTIONS_ONLY=1, below) runs no suite, so it is not asked.
+[ "${RUN_ALL_FUNCTIONS_ONLY:-}" = 1 ] || bash "$(dirname "$0")/predeploy_guard.sh" run_all.sh "$@" || exit $?	# first: deploy first, refused (41) on code that is not live (D-20261023-04)
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT=$(pwd)
 
@@ -51,6 +52,10 @@ mkdir -p "$SCRATCH"
 
 LOG=${LOG:-$SCRATCH/suite.log}          # override with LOG=... ; session-independent
 GW_BIN=${GW_BIN:-gateway/target/release/daimond_gateway}
+# The gateway's environment and the run clock come from the tree's own dev/gwbin.mjs, named once at
+# source time: a breakproof sources a copy of this file from scratch and moves ROOT, so it names the
+# tree's with GWBIN_MJS.
+GWBIN_MJS=${GWBIN_MJS:-$ROOT/dev/gwbin.mjs}
 CTL_BIN=${CTL_BIN:-gateway/target/release/daimond_ctl}
 # GW_BIN and CTL_BIN may be relative (to $ROOT) or absolute, e.g. a prebuilt gateway in
 # another tree. They are run from $GW_CWD, so a relative one is joined to $ROOT there; an
@@ -426,6 +431,9 @@ budget_floor() {
 		# MEASURED at 633s and 657s alone on release 5 (2026-09-25 triage), against 477s
 		# on release 4: over the 600 it had, so the release-5 nightly would read exit 124.
 		verify_style)                     echo 900 ;;
+		# A base run waits out the 190 s parcel hold (LAGPOLL_PARCEL_HOLD_MS) and then the watch,
+		# after about 60 s of pairing: killed at the 180 s default (LAG-1e, 31 Oct). Ceiling 300 s + setup.
+		verify_handoff_lagpoll)           echo 480 ;;
 		# Two engines, one after the other: 172 s + 171 s on world 65 (r569, 17 Oct, load 14),
 		# so the 180 s default killed WebKit every time. Twice the finished 343 s.
 		verify_transcript_gaps)           echo 720 ;;
@@ -844,6 +852,18 @@ GW_CWD=gateway
 #
 # So the port is checked BEFORE spawning, and the pid this run started is checked
 # AFTER: "something is answering" was never the question.
+# ONE CLOCK PER RUN: a run under a gate instant (DAIMOND_CLOCK) gets the kit's run clock, gateclock.mjs
+# tick from the instant until this run ($$) ends, exported as DAIMOND_RUN_CLOCK for its gateway and every
+# verifier after it. A run with none, or with a clock spec, needs none; one already running is kept.
+run_clock() {
+	node "$GWBIN_MJS" clock-needed || return 0
+	local f="$SCRATCH/run.clock.$$" i
+	node "$(dirname "$GWBIN_MJS")/rig/gateclock.mjs" tick "$f" $$ >>"$SCRATCH/suite-runclock.log" 2>&1 &
+	for i in $(seq 1 50); do [ "$(stat -c %s "$f" 2>/dev/null)" = 8 ] && break; sleep 0.1; done
+	[ "$(stat -c %s "$f" 2>/dev/null)" = 8 ] \
+		|| { say "      run clock: gateclock.mjs tick wrote no 8-byte $f in 5 s ($SCRATCH/suite-runclock.log)"; return 1; }
+	export DAIMOND_RUN_CLOCK=$f
+}
 start_gateway() {
 	[ -x "$GW_BIN" ] || return 1
 	if gateway_up; then
@@ -862,10 +882,16 @@ start_gateway() {
 	# failed left the wrapper's pid alone in the file, and `stop_gateway` stopped the wrapper
 	# and orphaned the gateway. Found on 2026-09-27: a nightly rerun's gateway (pid 1957255,
 	# under wrapper 1957254) had held :9002 on a deleted worktree's store since 09-25.
-	# The dev net's environment: devgw.sh's net.env, the one file every dev launcher loads (REL-1c).
-	local ne=()
-	[ -f "$GW_CWD/net.env" ] && mapfile -t ne < <(grep -E '^[A-Z_][A-Z0-9_]*=' "$GW_CWD/net.env")
-	( cd "$GW_CWD" && APP_MODE=sandbox exec nohup env "${ne[@]}" "$(rootpath "$GW_BIN")" >>"$SCRATCH/suite-gw.log" 2>&1 &
+	# The gateway's environment is gwbin.mjs gatewayEnv's, the one every own-gateway verifier and the
+	# kit's launcher start a gateway with: devgw.sh's net.env (REL-1c), and a gate instant in
+	# DAIMOND_CLOCK carried as the run clock, `driven:<file>` with DAIMOND_GW_DEV=1. Passed through
+	# as it was, the instant stopped this gateway starting at all: "neither 'system' nor
+	# 'driven:<path>'" (LAG-1e, 31 Oct). One function, so the two launchers cannot disagree again.
+	run_clock || return 1
+	local ge=()
+	mapfile -d '' -t ge < <(node "$GWBIN_MJS" env APP_MODE=sandbox)
+	wait $! || { say "      $GWBIN_MJS env gave no gateway environment, so no gateway is started."; return 1; }
+	( cd "$GW_CWD" && APP_MODE=sandbox exec nohup env "${ge[@]}" "$(rootpath "$GW_BIN")" >>"$SCRATCH/suite-gw.log" 2>&1 &
 		echo $! > "$SCRATCH/suite-gw.pid" )
 	wait_gateway 25 || return 1
 	# AND THE PID THAT SERVES IS NOT THE PID THAT WAS SPAWNED, which is the whole

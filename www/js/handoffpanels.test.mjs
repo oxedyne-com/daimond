@@ -124,7 +124,8 @@ if (lifted.every(Boolean)) {
 	await settle();
 	check('OPEN nothing twice, nothing for another device\'s hand-off, nothing for a turn not handed off',
 		shown.length === 0, JSON.stringify(shown));
-	check('OPEN the reader is wired: readChatLog passes onRows', /onRows:\s*onLogRows/.test(hsrc));
+	// Since LAG-1b readChatLog's onRows also tells the arrivals, then hands the rows to onLogRows.
+	check('OPEN the reader is wired: readChatLog passes onRows', /onRows:\s*(onLogRows|function\s*\(c, t, fresh, changed\)\s*\{[\s\S]{0,300}?onLogRows\(c, t, fresh, changed\);\s*\})/.test(hsrc));
 
 	// A show the runner refused is not the asker's to retry: its tool row's result says so (P2.3d).
 	shown.length = 0;

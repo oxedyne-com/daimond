@@ -153,6 +153,19 @@ export function drawTurn(chat, view, deps) {
 	if (deps.onRows) deps.onRows(chat, turn, fresh, changed);
 }
 
+/// The arrivals a draw's `fresh` rows are, as records for the latency instrument
+/// (`noteArrive`): one `{k:'tile', via:'log'}` per row made after `floor` (the caller's fresh
+/// line), carrying the row's `made`. The page owns the instrument, so this only reads (LAG-1).
+export function logArrivals(chat, fresh, floor) {
+	var out = [];
+	(fresh || []).forEach(function (m) {
+		if (!m || m.mid == null || !((+m.ts || 0) > floor)) return;
+		out.push({ k: 'tile', via: 'log', cid: chat && chat.id, mid: m.mid, made: +m.ts, role: m.role,
+			tid: m.iturn != null ? String(m.iturn) : undefined });
+	});
+	return out;
+}
+
 /// Draw an ended turn's end from its `end` row, as the transcript drew each end before the
 /// log: `done` and `stopped` add nothing (the rows stand); `interrupted` is the runner-lost
 /// tile (`why: 'runner'`) on the turn's last answer, or an empty one where it has none;

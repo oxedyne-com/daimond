@@ -16,7 +16,7 @@ import { errandModelOf, storedEffort, storedPre, turnEffortOf } from './rating.j
 import { _electionTrace, _handoffStart, answerUnhanded, autoLogHandoffLatency, continueTurn,
 	notRunCause, presenceTick, renderSeatSwitch, seatReason, seatSwitchFor } from './sourcemenu.js';
 import { diag, toast } from './passkey_phrase.js';
-import { logCursor, panelIntent, readChat, transcriptWhole, turnEnded, turnView, viewMessages } from './turnlog.js';
+import { logArrivals, logCursor, panelIntent, readChat, transcriptWhole, turnEnded, turnView, viewMessages } from './turnlog.js';
 import { cutAccount, dispatchedAnswerPresent, followActivity, followsEnd, handoffTargetLabel,
 	isLostRow, renderHistory, sigsOf, tilePeek } from './turns.js';
 import { _openAsk, _peerStopping, _runnerCtx, _runnerParked, adoptRemoteGrant, busyForChat,
@@ -1807,7 +1807,10 @@ export async function readChatLog(chat) {
 				read:   function (id, since) { return DaimondSync.readLog(id, since); },
 				join:   msgJoin,
 				isTile: isStateTile,
-				onRows: onLogRows,
+				onRows: function (c, t, fresh, changed) {
+					logArrivals(c, fresh, Date.now() - ARRIVE_FRESH_MS).forEach(function (r) { noteArrive(r.k, r); });
+					onLogRows(c, t, fresh, changed);
+				},
 				onEnd:  onLogEnd,
 			});
 			for (var vt in chat.logViews || {}) {
