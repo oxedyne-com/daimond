@@ -49,8 +49,10 @@ import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, chat, errors, scratch, BROWSER, checker } from './harness.mjs';
+import { open, chat, errors, scratch, BROWSER, checker, drives } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
+// The shell this verifier drives: refused at once on a page without it (FIX-armsred F6).
+drives('#stack-back', 'DaimondShell.home');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');

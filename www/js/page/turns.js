@@ -4712,8 +4712,8 @@ function seatTileNote(m, st) {
 	}
 	if (st === 'no-peer-awake' && isMobileDeviceSelf()) {
 		var plan = seatPlanNow();
-		var why  = seatReason((plan && plan.why === 'runner-silent')
-			? { k: 'runner_silent',
+		var why  = seatReason((plan && (plan.why === 'runner-silent' || plan.why === 'runner-checking'))
+			? { k: plan.why === 'runner-checking' ? 'runner_checking' : 'runner_silent',
 				vars: { name: (plan.runnerId && deviceLabelFor(plan.runnerId)) || t('devices.unknown') } }
 			: { k: 'no_desktop' }).why;
 		// One clause on the tile, the reason on its tooltip -- the seat switch's rule.

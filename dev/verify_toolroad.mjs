@@ -103,6 +103,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open, newChat, scratch, shot, storedChats } from './harness.mjs';
+import { readPage } from './pagesrc.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LOG  = process.env.DAIMOND_MOCK_LOG || path.join(HERE, 'mockllm.log');
@@ -149,7 +150,7 @@ for (const [k, [rel, from]] of Object.entries(ANCHORS)) {
 // (`roadMark`, www/js/gateway.js). Neither can see the other, so the coupling is asserted here:
 // a change to one of them fails this file rather than quietly stopping the classification.
 const RUST_MARK = (() => {
-	const s = fs.readFileSync(path.join(HERE, '..', 'src/tools.rs'), 'utf8');
+	const s = readPage(path.join(HERE, '..', 'src/tools.rs'), 'utf8');
 	const m = s.match(/pub const ROAD_MARK: &str = "([^"]+)";/);
 	return m ? m[1] : '';
 })();

@@ -8,8 +8,10 @@
 //
 // iOS auto-zoom itself is a Safari behaviour Chromium cannot reproduce, so we test
 // its CAUSE instead: no focusable control may be under 16px on a phone.
-import { open, signInAs, connectMock, workMenu, workMenuItems } from './harness.mjs';
+import { open, signInAs, connectMock, workMenu, workMenuItems, drives } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
+// The shell this verifier drives: refused at once on a page without it (FIX-armsred F6).
+drives('#stack-back', 'DaimondStack.top', 'DaimondShell.home');
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {

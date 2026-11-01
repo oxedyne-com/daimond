@@ -561,6 +561,37 @@
 	var TICK_MIN  = 250;		// never busier than this, whatever a folder asks for
 	var TICK_MAX  = 60000;		// and never asleep longer, so a resume is felt
 
+	// THE LINK (UNBLOCK-73). A request that never left this device says nothing about the
+	// folder it was for: every other folder would fail the same way. So a road failure holds
+	// the whole schedule on the main sync's own backoff and online check (`DaimondSync.link`,
+	// one mechanism, not a copy), and the first poll that lands releases it. On 1 Nov 01:22
+	// twelve overdue folders were tried in four seconds while gilgamesh was offline.
+	var linkTries = 0;			// road failures in a row
+	var linkUntil = 0;			// no automatic poll before this, in epoch ms
+
+	/// The main sync's link, or null on a page without sync.js.
+	function syncLink() { return (window.DaimondSync && DaimondSync.link) || null; }
+
+	/// Is the link known to be down: the browser says offline, or a road failure's wait runs?
+	function linkDown() {
+		var L = syncLink();
+		return !!(L && L.offline()) || Date.now() < linkUntil;
+	}
+
+	/// A poll failed. Only the road holds the schedule: an IMAP or account error is the
+	/// folder's own, and costs that folder its interval (`dueAt`).
+	function linkFailed(e) {
+		var L = syncLink();
+		if (!L || !(e && e.mailRoad)) return;
+		linkUntil = Date.now() + L.wait(linkTries++);
+	}
+
+	/// A poll landed: the link is up.
+	function linkOk() { linkTries = 0; linkUntil = 0; }
+
+	// The link's return re-arms at once rather than at the end of the long sleep.
+	try { if (syncLink()) syncLink().back(function () { linkUntil = 0; arm(); }); } catch (e) { /* not up */ }
+
 	/// When this folder is next due, in epoch ms; 0 when it is never due.
 	/// A folder with a frequency and no attempt behind it is due NOW, which is
 	/// what setting one means.
@@ -601,7 +632,7 @@
 				if (!pick || d < worst) { pick = { address: a.address, name: n }; worst = d; }
 			});
 		});
-		if (pick && !state.busy && !state.draining) {
+		if (pick && !state.busy && !state.draining && !linkDown()) {
 			await syncAccount(pick.address, false, pick.name, true);
 		}
 		arm();
@@ -629,10 +660,14 @@
 		// A schedule exists but nothing can act on it — the device is locked, or
 		// every folder is held. Look again shortly rather than never: the unlock
 		// and the resume both happen outside this module.
-		if (!soonest || !canPoll()) {
+		// So is a link the browser says is down: its return (`DaimondSync.link.back`) re-arms.
+		var L = syncLink();
+		if (!soonest || !canPoll() || (L && L.offline())) {
 			timer = setTimeout(function () { tick(); }, TICK_MAX);
 			return;
 		}
+		// A road failure's wait holds every folder, however overdue (`linkFailed`).
+		if (linkUntil > soonest) soonest = linkUntil;
 		// A sync already in flight makes every overdue folder look due on the next
 		// tick, and `syncAccount` refuses a second one. Look again in a second
 		// rather than spinning at the floor while a large fetch runs.
@@ -1710,7 +1745,9 @@
 			state.note = parts.join(' · ')
 				+ (msgs.length && j.charged_minor ? ' ' + priceMark(j.charged_minor) : '');
 			if (deps.refreshFiles) deps.refreshFiles();
+			linkOk();
 		} catch (e) {
+			linkFailed(e);
 			// A poll nobody asked for says nothing the first time: Gmail drops a connection
 			// now and then and the next poll succeeds. It is told once the failure persists.
 			if (DaimondQuiet.failed(key, asked || !auto)) {
@@ -2679,19 +2716,29 @@
 	// copies across the app. There is one now, in gateway.js, beside the renewal
 	// it drives.
 
+	/// `e`, marked as a request that never reached the gateway.
+	function roadErr(e) { try { e.mailRoad = true; } catch (e2) { /* frozen: unmarked */ } return e; }
+
 	async function post(path, body) {
 		if (!window.DaimondGateway) throw new Error(t('mail.err.service_unavailable'));
 		var st = DaimondGateway.state();
+		// THE ROAD (UNBLOCK-73): a request that never reached the gateway is marked
+		// `mailRoad`, so the schedule holds on the link rather than trying every folder.
 		if (!st.authed) {
 			var ok = await DaimondGateway.bootstrap();
-			if (!ok) throw new Error(t('mail.err.service_unreachable'));
+			if (!ok) throw roadErr(new Error(t('mail.err.service_unreachable')));
 		}
-		var r = await DaimondGateway.gwFetch(path, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			credentials: 'same-origin',
-			body: JSON.stringify(body || {}),
-		});
+		var r;
+		try {
+			r = await DaimondGateway.gwFetch(path, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				credentials: 'same-origin',
+				body: JSON.stringify(body || {}),
+			});
+		} catch (e) {
+			throw (DaimondGateway.isRoad && DaimondGateway.isRoad(e)) ? roadErr(e) : e;
+		}
 		// A 401 that survived the renewal is this device signed out, and it is
 		// said in those terms. The gateway's "No valid session." was appearing
 		// verbatim on the mail panel where a sync result belongs.
@@ -2989,6 +3036,9 @@
 			var names = allFolders(a);
 			for (var k = 0; k < names.length; k++) {
 				if (pollStop(a.address, names[k])) { held++; continue; }
+				// A link that is down fails every folder alike: the walk stops at the first
+				// road failure, which has been told, and does not send the rest into it.
+				if (done && linkDown()) break;
 				// Quiet, as a walk of a dozen folders must be, but pressed: a failure is told.
 				await syncAccount(a.address, false, names[k], true, true);
 				done++;

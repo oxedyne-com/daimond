@@ -61,9 +61,11 @@
 import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import { open, signInAs, scratch, APP } from './harness.mjs';
+import { open, signInAs, scratch, APP, drives } from './harness.mjs';
 import { standInPools } from './ownereye_pools.mjs';
 import { railWinFindings } from './railwin.mjs';
+// The shell this verifier drives: refused at once on a page without it (FIX-armsred F6).
+drives('DaimondShell.home');
 
 const arg = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : null; };
 const CITE = arg('--cite'), ONLY = (arg('--only') || process.env.OE_ONLY || '').split(',').filter(Boolean);	// OE_ONLY / OE_VP: the same through dk arms

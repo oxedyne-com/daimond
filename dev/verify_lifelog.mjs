@@ -55,6 +55,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { guardRan } from './verdict.mjs';
+import { readPage } from './pagesrc.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Derived from this file, so it is the same tree whatever the working directory is: `run_all.sh`
@@ -75,7 +76,7 @@ const { open, signInAs, connectMock, errors, scratch } = H;
 // 1,500 bytes short of it. Read from there rather than restated, so a page that fits a ceiling
 // this file believes in but the engine does not is caught here instead of at delivery.
 const PAGE_CAP = (() => {
-	const src = fs.readFileSync(path.join(ROOT, 'src', 'tools.rs'), 'utf8');
+	const src = readPage(path.join(ROOT, 'src', 'tools.rs'), 'utf8');
 	const m = /CRYSTAL_PAGE_CAP_DEFAULT:\s*usize\s*=\s*(\d+)\s*\*\s*(\d+)/.exec(src);
 	if (!m) throw new Error('verify_lifelog: CRYSTAL_PAGE_CAP_DEFAULT not found in src/tools.rs');
 	return Number(m[1]) * Number(m[2]);

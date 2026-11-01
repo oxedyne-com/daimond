@@ -487,8 +487,42 @@ export const answerChanges = (page, word) => page.evaluate((w) => {
 }, word);
 
 const LIVE_PROFILES = new Set();	// the scratch profiles of the sessions now open in this process
+/// The page's shell a verifier drives (FIX-armsred F6, 30 Oct 2026): dotted globals
+/// (`'DaimondShell.closeDrawer'`) and `#id`s of the static page. Every later `open()` checks
+/// them right after the page loads and, when one is missing, refuses at once, naming it:
+/// a verifier for another release's shell run on this page (ccp29's phone_shell on ccp28,
+/// runs 25 and 26) otherwise waited out the 120 s sign-in nine times, 967 s, and reported
+/// a stuck boot. Once refused, every later `open()` of the run refuses without a browser.
+const DRIVES = [];
+let SHELL_MISSING = null;
+// How long a declared shell may take to appear after DOMContentLoaded (its modules have run by then).
+const SHELL_WAIT_MS = Number(process.env.DAIMOND_SHELL_WAIT_MS) || 5000;
+export function drives(...names) { DRIVES.push(...names.flat()); }
+export function shellMissing() { return SHELL_MISSING; }
+async function checkShell(page, names) {
+	const look = () => page.evaluate((ns) => ns.filter((n) => {
+		if (n.startsWith('#')) return !document.getElementById(n.slice(1));
+		let o = window;
+		for (const k of n.split('.')) { if (o == null || !(k in Object(o))) return true; o = o[k]; }
+		return o == null;
+	}), names).catch(() => names);
+	let miss = await look();
+	for (const t0 = Date.now(); miss.length && Date.now() - t0 < SHELL_WAIT_MS; ) {
+		await page.waitForTimeout(100);
+		miss = await look();
+	}
+	return miss;
+}
+function shellError(miss) {
+	const e = new Error(`open(): the page lacks the shell this verifier drives: ${miss.join(', ')} `
+		+ `(declared by drives()). It is a verifier for another release's page: run it on the release it was written for, `
+		+ `or re-aim it. Refused at once, not after the sign-in wait.`);
+	e.code = 'SHELL_MISSING';
+	return e;
+}
 
 export async function open(opts = {}) {
+	if (SHELL_MISSING) throw shellError(SHELL_MISSING);
 	const {
 		headed    = false,
 		name      = 'tester',
@@ -877,6 +911,15 @@ export async function open(opts = {}) {
 			await browser.close();
 			throw new Error(`open(): this WebKit session has no OPFS (navigator.storage.getDirectory is ${gd}). `
 				+ `Every WebKit launch must carry ${WEBKIT_SAFARI_FEATURES} (dev/pw.mjs), in a persistent context.`);
+		}
+	}
+
+	if (DRIVES.length) {
+		const miss = await checkShell(page, DRIVES);
+		if (miss.length) {
+			SHELL_MISSING = miss;
+			await browser.close();
+			throw shellError(miss);
 		}
 	}
 

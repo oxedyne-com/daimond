@@ -2402,6 +2402,11 @@
 	// map held is no longer the gateway's, so it is not shown as if it were. Until a map
 	// lands, the switch reads Here, the rule a send follows when its read does not land.
 	var _presUnknown = false;
+	// NOT YET HEARD (UNBLOCK-70): until the presence door has answered once since this page
+	// loaded (or since a forget), the map is not the gateway's word on who listens: a map
+	// folded into a content pull, or none at all. The seat then says "checking", never
+	// that the runner is not listening.
+	var _presHeard = false;
 	// How far the relay's clock leads this one, from the last presence answer that
 	// carried the server's `now`; null until one has. The relay's clock is the one an
 	// errand's arrival is stamped on, so it is what a collector ages the post by.
@@ -2647,6 +2652,10 @@
 		// map is the one held: the switch drawn Here for the unknown is redrawn.
 		var wasUnknown = _presUnknown;
 		_presUnknown = false;
+		// The first door answer since the load moves the view from "checking" even when
+		// the map it brings is the one held.
+		var firstHeard = answer !== undefined && !_presHeard;
+		if (answer !== undefined) _presHeard = true;
 		// A map folded into a content pull comes without its answer: the meta stands.
 		if (answer !== undefined) {
 			_presMeta = (answer && answer.derived === true)
@@ -2760,7 +2769,7 @@
 		}
 		var before = JSON.stringify(_presence);
 		_presence = next;
-		return wasUnknown || JSON.stringify(_presence) !== before;
+		return wasUnknown || firstHeard || JSON.stringify(_presence) !== before;
 	}
 
 	/// The section as it rides the parcel, or null when empty.
@@ -2788,7 +2797,9 @@
 		return (r && r.name) || '';
 	}
 
-	function presenceForget() { _presence = {}; _relaySkew = null; _presMeta = null; _presUnknown = false; }
+	function presenceForget() {
+		_presence = {}; _relaySkew = null; _presMeta = null; _presUnknown = false; _presHeard = false;
+	}
 
 	/// A re-read did not land: the map held is unknown until one does. Answers whether
 	/// that moved the view (it was known), so the switch redraws once.
@@ -2800,6 +2811,9 @@
 
 	/// Is the map held unknown (a re-read did not land since the last map)?
 	function presenceUnknown() { return _presUnknown; }
+
+	/// Has the presence door answered since this page loaded (or since a forget)?
+	function presenceHeard() { return _presHeard; }
 
 	/// The last presence answer's own fields: `{derived, ver, mine}`, or null before one.
 	function presenceMeta() { return _presMeta; }
@@ -2849,6 +2863,7 @@
 		ingest:   announcing(presenceIngest),
 		lost:     announcing(presenceLost),
 		unknown:  presenceUnknown,
+		heard:    presenceHeard,
 		/// The awake peers, and one device's name, for the UI and auto-dispatch.
 		awake:    presenceAwake,
 		name:     presenceName,
@@ -3687,6 +3702,14 @@
 		return { dispatch: false, reason: 'desktop-local' };
 	}
 
+	/// The reason for a runner that does not show as listening: `runner-silent`, or
+	/// `runner-checking` while the presence door has not yet answered since the page
+	/// loaded (`opts.presenceChecking`) or since a re-read failed to land, as after a
+	/// gateway restart (`opts.presenceUnknown`). Either way it makes no claim (UNBLOCK-70).
+	function silentWhy(o) {
+		return (o && (o.presenceChecking || o.presenceUnknown)) ? 'runner-checking' : 'runner-silent';
+	}
+
 	/// WHERE THE NEXT TURN WILL RUN, as a line a user can read before they send.
 	///
 	/// The election was invisible: a turn left for another machine, or stayed here, and the
@@ -3703,10 +3726,11 @@
 	/// live desktop, the runner being absent) or `local` (here). `label` is the seat's
 	/// device name; `warn` is true only where running here is a thing
 	/// the user must act on -- a mobile device, which must stay foregrounded -- and `why`
-	/// then names the reason the line can give: `chat-local`, `runner-silent` or
-	/// `no-desktop`.
+	/// then names the reason the line can give: `chat-local`, `runner-silent`,
+	/// `runner-checking` or `no-desktop`.
 	function seatPlan(chat, presence, opts, now) {
 		var o = opts || {}, p = presence || {};
+		var silent = silentWhy(o);
 		// An unknown map seats nobody (`presenceUnknown`): Here, as a send whose read did
 		// not land, never a runner the map last named before the gateway went.
 		if (o.presenceUnknown) p = {};
@@ -3730,7 +3754,7 @@
 				// The line names the seat in one clause; WHY it is a fallback rather than the
 				// starred runner rides the tooltip (owner, 2026-09-13). Empty on an ordinary
 				// seat, which has nothing to explain.
-				why:        fallback ? 'runner-silent' : '',
+				why:        fallback ? silent : '',
 				reason:     d.reason,
 				dispatch:   true,
 				staleBuild: !!d.staleBuild,
@@ -3743,7 +3767,7 @@
 		var nom2  = String(o.nominatedId || '');
 		var nrec2 = nom2 ? p[nom2] : null;
 		var why = (d.reason === 'chat-local' || d.reason === 'running-here') ? 'chat-local'
-			: (nom2 && !recGenuine(nrec2, n, w)) ? 'runner-silent'
+			: (nom2 && !recGenuine(nrec2, n, w)) ? silent
 			: 'no-desktop';
 		return {
 			where:    'local',
@@ -3839,7 +3863,7 @@
 					: (mine && String(nrec.engine || '') !== mine) ? 'runner-engine' : '';
 			}
 			// RUNNER-DOOR: no rule above, yet not offered: it is not listening (no live door).
-			if (!why && !recGenuine(nrec, now, o.freshWindowMs || DISPATCH_FRESH_MS)) why = 'runner-silent';
+			if (!why && !recGenuine(nrec, now, o.freshWindowMs || DISPATCH_FRESH_MS)) why = silentWhy(o);
 			// SEATWHY-ALL: listening, yet passed over: the seating rule that kept it (reachable,
 			// busyHere). No source at all, a phone, without the chat's folder, an engine this page
 			// cannot yet check (its id unknown), or busy with another chat.
@@ -3854,9 +3878,10 @@
 			}
 			if (why) { out.why = why; out.runnerId = nomId; }
 		} else if (!runner && nomId && !nrec && !o.presenceUnknown && nomId !== String(o.selfId || '')
-			&& Object.keys(presence || {}).length) {
-			// RUNNER-DOOR: the starred runner has no presence row at all: not present.
-			out.why = 'runner-silent'; out.runnerId = nomId;
+			&& (o.presenceChecking || Object.keys(presence || {}).length)) {
+			// RUNNER-DOOR: the starred runner has no presence row at all: not present, or,
+			// before the door has answered, not yet known (UNBLOCK-70).
+			out.why = silentWhy(o); out.runnerId = nomId;
 		}
 		return out;
 	}
@@ -3888,7 +3913,7 @@
 	// in the set on purpose: "everything it needs is here" is an answer, and a reason
 	// the tooltip gives, not the absence of one.
 	var PLACE_WHYS = ['here', 'missing-files', 'too-large', 'needs-hand',
-		'runner-silent', 'no-desktop', 'chat-local'];
+		'runner-silent', 'runner-checking', 'no-desktop', 'chat-local'];
 
 	/// Is `k` a task kind this layer places?
 	function taskKind(k) { return TASK_KINDS.indexOf(String(k)) >= 0; }

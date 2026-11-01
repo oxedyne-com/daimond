@@ -35,8 +35,10 @@
 //   bash dev/world.sh 93 --up
 //   DAIMOND_APP=http://localhost:8870 node dev/verify_railheight.mjs [after.png]
 
-import { open, signInAs } from './harness.mjs';
+import { open, signInAs, drives } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
+// The shell this verifier drives: refused at once on a page without it (FIX-armsred F6).
+drives('DaimondShell.home');
 
 const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 '
 	+ '(KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';

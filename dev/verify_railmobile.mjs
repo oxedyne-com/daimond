@@ -42,8 +42,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, errors, statusRow } from './harness.mjs';
+import { open, signInAs, errors, statusRow, drives } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
+// The shell this verifier drives: refused at once on a page without it (FIX-armsred F6).
+drives('DaimondShell.foldState', 'DaimondShell.home');
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const SHOTS = path.join(HERE, 'shots');

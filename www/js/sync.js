@@ -1290,13 +1290,11 @@
 			// The read past the window climbs on from the window's cadence, not from 1 s.
 			var n    = ladderTries[ladder] | 0;
 			var grow = (failKind === 'merge') ? cap
-				: (ladder === 'readpast') ? Math.min(cap, UNSENT_READ_MAX_MS * Math.pow(2, n + 1))
-				: Math.min(cap, UNSENT_RETRY_MIN_MS * Math.pow(2, n));
+				: (ladder === 'readpast') ? backoffStep(n + 1, UNSENT_READ_MAX_MS, cap)
+				: backoffStep(n, UNSENT_RETRY_MIN_MS, cap);
 			ladderTries[ladder] = n + 1;
 			unsentTries++;
-			// Jittered, as the conflict backoff is, so devices that failed together do not
-			// retry together.
-			wait = Math.round(grow * (0.5 + Math.random()));
+			wait = jittered(grow);
 		}
 		if (floor > 0) wait = Math.max(wait, Math.round(floor * (1 + 0.5 * Math.random())));
 		diag('push retry armed', 'try=' + unsentTries + ' ' + (failKind || 'unclassified') + '/' + ladder
@@ -1304,6 +1302,23 @@
 		unsentDue   = now + wait;
 		unsentTimer = setTimeout(function () { unsentTimer = null; retryUnsent(); }, wait);
 	}
+
+	/// The `n`th rung (from 0) of a doubling ladder from `min`, never past `cap`.
+	function backoffStep(n, min, cap) { return Math.min(cap, min * Math.pow(2, n)); }
+
+	/// `ms` jittered by half either way, so devices (or folders) that failed together do not
+	/// retry together.
+	function jittered(ms) { return Math.round(ms * (0.5 + Math.random())); }
+
+	/// THE LINK (UNBLOCK-73), for any other part of the page that talks to the gateway on
+	/// its own schedule (the mail poll, mail.js). One online check and one backoff, this
+	/// file's own, so a second retry loop cannot grow beside it with neither: on 1 Nov
+	/// 01:22 the mail poll sent `/api/mail/sync` twelve times in four seconds while
+	/// gilgamesh was offline. `wait(n)` is the push retry's own wire ladder, jittered;
+	/// `back(fn)` runs `fn` when the browser says the link has returned.
+	var linkBack = [];
+	function linkWait(n) { return jittered(backoffStep(n | 0, UNSENT_RETRY_MIN_MS, UNSENT_WIRE_MAX_MS)); }
+	function onLinkBack(fn) { if (typeof fn === 'function') linkBack.push(fn); }
 
 	/// A clock no wall-clock step moves, in ms, for the read windows (`readSince`,
 	/// `wakeLostAt`), which are durations, never times (SYNCREAD-R2 LOW-4). Never 0, which
@@ -1352,6 +1367,7 @@
 	/// every flap -- only `paid()` resets it. The read window does start afresh: a link
 	/// that was down is a new outage, and the gateway is read promptly when it answers.
 	function onOnline() {
+		linkBack.forEach(function (fn) { try { fn(); } catch (e) { log('link-back listener threw', e); } });
 		readSince = 0;
 		if (!unsent || unsentTimer) return;
 		var wait = Math.max(UNSENT_RETRY_MIN_MS, unsentDue - Date.now());
@@ -2935,7 +2951,7 @@
 					// changes; the pull-merge that converges is untouched.
 					if (attempt + 1 < tries) {
 						await new Promise(function (r) {
-							setTimeout(r, Math.round(CONFLICT_BACKOFF_MS * (0.5 + Math.random())));
+							setTimeout(r, jittered(CONFLICT_BACKOFF_MS));
 						});
 					}
 					continue;
@@ -4459,7 +4475,7 @@
 		var cap  = (now - wakeLostAt < OUTAGE_READ_MS) ? UNSENT_READ_MAX_MS : WAKE_RETRY_MAX_MS;
 		var wait = Math.min(cap, wakeBackoff);
 		wakeBackoff = Math.min(cap, wakeBackoff * 2);
-		return wait * (0.5 + Math.random());
+		return jittered(wait);
 	}
 
 	/// Park a request at the gateway naming the version this device holds, and
@@ -4662,9 +4678,9 @@
 			if (unsent) armUnsent('merge');
 			return;
 		}
-		var grow = Math.min(REAPPLY_MAX_MS, REAPPLY_BASE_MS * Math.pow(2, reapplyTries));
+		var grow = backoffStep(reapplyTries, REAPPLY_BASE_MS, REAPPLY_MAX_MS);
 		reapplyTries++;
-		var wait = Math.round(grow * (0.5 + Math.random()));
+		var wait = jittered(grow);
 		// THE RE-PULL LOOP, made obvious: the try counter and the interval, so a
 		// section that keeps failing on iOS shows here as a rising count at a
 		// widening interval -- the churn the owner reports, paired with the
@@ -5234,6 +5250,8 @@
 
 	window.DaimondSync = {
 		pull:    gatedPull,
+		/// The link, shared (UNBLOCK-73): `offline()`, `wait(n)` and `back(fn)`. See linkWait.
+		link:    { offline: offline, wait: linkWait, back: onLinkBack },
 		/// Has a pull run this session -- landed, found nothing, or failed on the wire?
 		/// The same once-per-boot fact `daimond:pulled` announces, for a caller that
 		/// arrives after it fired.

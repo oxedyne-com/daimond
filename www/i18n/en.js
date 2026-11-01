@@ -2587,6 +2587,7 @@
 	'seat.why_runner_engine': '{name} runs another Daimond version; it updates itself.',
 	'seat.why_runner_quiet': '{name} is not listening for chats right now, so this one runs here.',
 	'seat.why_runner_unchecked': 'This page has not yet checked {name}’s Daimond version.',
+	'seat.why_runner_checking': 'Checking whether {name} is listening.',
 	'seat.why_page_old': 'This page runs an older Daimond than {name}; it updates itself.',
 	'seat.why_runner_busy': '{name} is busy with another chat, so this one runs here.',
 	'seat.why_runner_phone': '{name} is a phone, so this one runs here.',
@@ -2613,14 +2614,15 @@
 	'seat.why_notrun_oversize': 'The answer from {name} was too large to send back whole.',
 	// THE SEAT REASON'S LABEL (SEAT-LABELS, owner 25 Oct): 2-4 words beside the seat; the
 	// sentence above is its hover title and its tap. Drawn by daimond.js `seatReason` alone.
-	// i18n-family: seat.why_ = no_desktop runner_silent runner_credits runner_engine runner_quiet runner_busy runner_phone runner_require runner_nosource runner_unchecked page_old runner_source runner_rekey runner_road runner_road_any notrun_size notrun_door notrun_thread notrun_models notrun_models_behind notrun_refused notrun_place notrun_busy notrun_unable notrun_gone notrun_unclaimed notrun_released notrun_unchecked notrun_post notrun_oversize
-	// i18n-family: seat.label_ = no_desktop runner_silent runner_credits runner_engine runner_quiet runner_busy runner_phone runner_require runner_nosource runner_unchecked page_old runner_source runner_rekey runner_road runner_road_any notrun_size notrun_door notrun_thread notrun_models notrun_models_behind notrun_refused notrun_place notrun_busy notrun_unable notrun_gone notrun_unclaimed notrun_released notrun_unchecked notrun_post notrun_oversize
+	// i18n-family: seat.why_ = no_desktop runner_silent runner_credits runner_engine runner_quiet runner_busy runner_phone runner_require runner_nosource runner_unchecked runner_checking page_old runner_source runner_rekey runner_road runner_road_any notrun_size notrun_door notrun_thread notrun_models notrun_models_behind notrun_refused notrun_place notrun_busy notrun_unable notrun_gone notrun_unclaimed notrun_released notrun_unchecked notrun_post notrun_oversize
+	// i18n-family: seat.label_ = no_desktop runner_silent runner_credits runner_engine runner_quiet runner_busy runner_phone runner_require runner_nosource runner_unchecked runner_checking page_old runner_source runner_rekey runner_road runner_road_any notrun_size notrun_door notrun_thread notrun_models notrun_models_behind notrun_refused notrun_place notrun_busy notrun_unable notrun_gone notrun_unclaimed notrun_released notrun_unchecked notrun_post notrun_oversize
 	'seat.label_no_desktop': 'No device awake',
 	'seat.label_runner_silent': '{name} asleep',
 	'seat.label_runner_credits': '{name}: credits only',
 	'seat.label_runner_engine': '{name} updating',
 	'seat.label_runner_quiet': '{name} not listening',
 	'seat.label_runner_unchecked': '{name} not checked yet',
+	'seat.label_runner_checking': 'Checking {name}',
 	'seat.label_page_old': 'Page out of date',
 	'seat.label_runner_source': '{name} can’t use {provider}',
 	'seat.label_runner_rekey': 'Re-approve {name}',

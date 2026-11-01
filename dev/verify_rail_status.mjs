@@ -41,7 +41,9 @@
 //
 //   bash dev/world.sh 76 --up   (or the runner the lane uses)
 //   DAIMOND_APP=http://localhost:8853 node dev/verify_rail_status.mjs
-import { open, signInAs, connectMock } from './harness.mjs';
+import { open, signInAs, connectMock, drives } from './harness.mjs';
+// The shell this verifier drives: refused at once on a page without it (FIX-armsred F6).
+drives('DaimondShell.home');
 
 let bad = 0, good = 0;
 const check = (n, pass, d) => { pass ? good++ : bad++; console.log((pass ? '  ok   ' : '  FAIL ') + n + (d !== undefined && d !== '' ? ' -- ' + String(d).slice(0, 320) : '')); };

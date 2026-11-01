@@ -118,6 +118,8 @@ export function seatOpts(chat) {
 		sources:        electSources(c),
 		// A re-read did not land (a gateway restart): the map is unknown and seats nobody.
 		presenceUnknown: !!(window.DaimondPresence && DaimondPresence.unknown && DaimondPresence.unknown()),
+		// The presence door has not answered since the load: "checking", no claim (UNBLOCK-70).
+		presenceChecking: !!(window.DaimondPresence && DaimondPresence.heard && !DaimondPresence.heard()),
 	};
 }
 
@@ -339,6 +341,7 @@ function seatWhyKey(sw) {
 		case 'runner-engine':		return { k: 'runner_engine',		vars: v };
 		case 'runner-credits-only':	return { k: 'runner_credits',		vars: v };
 		case 'runner-silent':		return { k: 'runner_quiet',		vars: v };
+		case 'runner-checking':	return { k: 'runner_checking',	vars: v };
 		case 'runner-busy':		return { k: 'runner_busy',		vars: v };
 		case 'runner-phone':		return { k: 'runner_phone',		vars: v };
 		case 'runner-require':		return { k: 'runner_require',		vars: v };
