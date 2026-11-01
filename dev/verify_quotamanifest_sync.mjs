@@ -331,12 +331,12 @@ try {
 	await A.page.evaluate(() => { window.__ds = []; window.__ixRefused = 0; });
 	await push(A);
 	const aState = await A.page.evaluate(async (cid) => {
-		const ds = (window.__ds || []).filter(e => e.kind === 'sync' && e.payload && e.payload.commit);
+		const ds = (window.__ds || []).filter(e => e.kind === 'sync' && e.payload && (e.payload.commit || e.payload.chunk_index));
 		let stored = null;
 		try { stored = window.DaimondDurable ? await DaimondDurable.get('daimond-cloud-index') : null; } catch (e) { stored = null; }
 		return { indexDurable: window.DaimondCloud.indexDurable(), mayCommit: window.DaimondCore.syncMayCommitChunks(),
 			reason: (window.DaimondCore.syncCommitBlockedReason && window.DaimondCore.syncCommitBlockedReason()) || '',
-			commitEvents: ds.map(e => ({ commit: e.payload.commit, why: e.payload.why || '' })),
+			commitEvents: ds.map(e => ({ commit: e.payload.commit, chunk_index: e.payload.chunk_index, why: e.payload.why || '' })),
 			refused: window.__ixRefused | 0,
 			mirrorHas: !!(window.DaimondCloud.index() || {})['@c/' + cid],
 			storeHas:  !!(stored && stored['@c/' + cid]) };
@@ -348,7 +348,7 @@ try {
 	check('Phase B: A\'s index went non-durable — the lost write is held, not forgotten (arm 3)',
 		aState.indexDurable === false, 'indexDurable=' + aState.indexDurable);
 	check('Phase B: A REFUSES to commit a live set from a non-durable index (arm 3)',
-		aState.mayCommit === false && aState.commitEvents.some(e => e.commit === 'refused' && e.why === 'index-not-durable'),
+		aState.mayCommit === false && aState.commitEvents.some(e => e.chunk_index === 'skipped' && e.why === 'index-not-durable'),
 		`mayCommit=${aState.mayCommit} reason=${aState.reason}`);
 
 	// The chat must still have reached B: by reference on the durable path, whose chunks

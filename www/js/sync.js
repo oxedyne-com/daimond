@@ -1386,8 +1386,7 @@
 		if (window.DaimondCore && DaimondCore.busy && DaimondCore.busy()) return 'busy';	// never over a live turn.
 		try {
 			if (window.DaimondPeer && DaimondPeer.deferPushFor && window.DaimondLease) {
-				return DaimondPeer.deferPushFor(DaimondLease.snapshot(), selfDeviceId(),
-					Date.now(), ownDispatch) || '';
+				return DaimondPeer.deferPushFor(DaimondLease.snapshot(), selfDeviceId(), Date.now()) || '';
 			}
 		} catch (e) { /* no stand-off can be read, so none is kept */ }
 		return '';
@@ -2872,7 +2871,15 @@
 						// user can do about it, and the line said only that something was.
 						var why = (DaimondCore.syncCommitBlockedReason && DaimondCore.syncCommitBlockedReason()) || 'unknown';
 						log('chunk index not merged on this device — not committing a live set (' + why + ')');
-						dsCommit('refused', why);
+						// SKIPPED, NOT REFUSED (UNBLOCK-86). The push above has landed; only the
+						// chunk-index commit is not this device's to make. Read as
+						// `commit: 'refused'` it was taken for a refused push on gilgamesh,
+						// which is folder-mounted and so skips it on every push by design.
+						try {
+							if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
+								DEBUG_SHARE.event('sync', { dir: 'push', chunk_index: 'skipped', why: why, at: serverVersion | 0 });
+							}
+						} catch (e) { /* the feed must never break a sync */ }
 					}
 					else {
 						try {
@@ -3089,16 +3096,6 @@
 			return (window.DaimondIdentity && DaimondIdentity.deviceId)
 				? String(DaimondIdentity.deviceId() || '') : '';
 		} catch (e) { return ''; }
-	}
-
-	/// Did THIS device dispatch `turnId`? daimond.js answers from the dispatched placeholder it
-	/// holds for that turn (`dispatchedHere`). A device with no placeholder for the turn did not
-	/// send it -- and answering false is the safe direction, because it only ever makes this
-	/// device MORE willing to stand off the door.
-	function ownDispatch(turnId) {
-		try {
-			return !!(window.DaimondCore && DaimondCore.dispatchedHere && DaimondCore.dispatchedHere(turnId));
-		} catch (e) { return false; }
 	}
 
 	/// Can a beat reach the gateway now? False while the door is not yet open -- locked,

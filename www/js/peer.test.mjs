@@ -4547,24 +4547,24 @@ async function runRunnerAcceptance(P, L, check) {
 	//    push; the third stands off while the lease reads `running`. ──
 	{
 		const now = 5000;
-		const running = { T1: { turnId: 'T1', holder: 'RUNNER', mode: 'running', expiry: now + 60000, renewedAt: now } };
+		const running = { T1: { turnId: 'T1', holder: 'RUNNER', dispatchedBy: 'PHONE', mode: 'running', expiry: now + 60000, renewedAt: now } };
 		check('R7a: the third device stands off -- its push would 409 the runner\'s answer',
-			P.deferPushFor(running, 'THIRD', now, () => false) === 'T1');
+			P.deferPushFor(running, 'THIRD', now) === 'T1');
 		check('R7b: the RUNNER never stands off from its own turn',
-			P.deferPushFor(running, 'RUNNER', now, () => false) === '');
-		check('R7c: nor does the ORIGINATOR -- it is the one waiting for the answer',
-			P.deferPushFor(running, 'PHONE', now, (id) => id === 'T1') === '');
+			P.deferPushFor(running, 'RUNNER', now) === '');
+		check('R7c: nor does the ORIGINATOR the lease names -- it is the one waiting for the answer',
+			P.deferPushFor(running, 'PHONE', now) === '');
 		check('R7d: a CLAIMED lease is not yet running, so nobody stands off',
 			P.deferPushFor({ T1: { turnId: 'T1', holder: 'RUNNER', mode: 'claimed',
-				expiry: now + 60000, renewedAt: now } }, 'THIRD', now, () => false) === '');
+				expiry: now + 60000, renewedAt: now } }, 'THIRD', now) === '');
 		check('R7e: an EXPIRED lease holds nobody off -- the bound is the lease\'s own liveness',
 			P.deferPushFor({ T1: { turnId: 'T1', holder: 'RUNNER', mode: 'running',
-				expiry: now - 1, renewedAt: now - 99999 } }, 'THIRD', now, () => false) === '');
+				expiry: now - 1, renewedAt: now - 99999 } }, 'THIRD', now) === '');
 		check('R7f: a released lease holds nobody off',
 			P.deferPushFor({ T1: { turnId: 'T1', holder: 'RUNNER', mode: 'released',
-				expiry: now + 60000, renewedAt: now } }, 'THIRD', now, () => false) === '');
-		check('R7g: no leases at all is no stand-off', P.deferPushFor({}, 'THIRD', now, () => false) === ''
-			&& P.deferPushFor(null, 'THIRD', now, null) === '');
+				expiry: now + 60000, renewedAt: now } }, 'THIRD', now) === '');
+		check('R7g: no leases at all is no stand-off', P.deferPushFor({}, 'THIRD', now) === ''
+			&& P.deferPushFor(null, 'THIRD', now) === '');
 	}
 
 	// ── The liveness read is PACED (the 2026-10-04 request storm). The engine calls onProgress on

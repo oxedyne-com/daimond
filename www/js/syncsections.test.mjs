@@ -171,7 +171,7 @@ function makeTab(seed) {
 		// test agreed with but the app did not would prove nothing.
 		deferPushFor: (function () {
 			const src = readFileSync(join(HERE, 'peer.js'), 'utf8');
-			const m = /\n\tfunction deferPushFor\(leases, selfId, now, isOriginatorOf\) \{[\s\S]*?\n\t\}\n/.exec(src);
+			const m = /\n\tfunction deferPushFor\(leases, selfId, now[^)]*\) \{[\s\S]*?\n\t\}\n/.exec(src);
 			if (!m) throw new Error('synckey.test: deferPushFor not found in peer.js -- has it been renamed?');
 			// `liveLease` is the one sibling it calls; lifted the same way.
 			const lv = /\n\tfunction liveLease\([\s\S]*?\n\t\}\n/.exec(src);

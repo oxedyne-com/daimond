@@ -2212,26 +2212,6 @@ export function dispatchedChat(turnId) {
 	return null;
 }
 
-/// Did THIS device dispatch `turnId`? Read from the turn's dispatched placeholder, which
-/// carries `dispatchedBy`; no placeholder resident here answers false.
-///
-/// Published for sync.js `ownDispatch`, which decides whether a push stands off a running
-/// hand-off. It read a `DaimondCore.chats` this object never published, so it answered false
-/// on the asker too, and the asker held its own dispatch parcel for the whole of the run: a
-/// second device never received the waiting row and never followed the turn (UNBLOCK-44).
-export function dispatchedHere(turnId) {
-	var self = selfDeviceId();
-	var chat = self ? dispatchedChat(turnId) : null;
-	var ms = (chat && chat.messages) || [];
-	for (var i = 0; i < ms.length; i++) {
-		var m = ms[i];
-		if (m && m.why === REASON_DISPATCHED_STR && String(m.iturn) === String(turnId)) {
-			return String(m.dispatchedBy || '') === String(self);
-		}
-	}
-	return false;
-}
-
 /// The loaded chat holding `turnId`'s own user message, or null.
 ///
 /// What a RUNNER needs, and why it is not `dispatchedChat`: a runner has no

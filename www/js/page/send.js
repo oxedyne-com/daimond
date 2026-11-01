@@ -13,7 +13,7 @@ import { SYNC_FOLDER_SHARE_MAX, _lastConflicts, adoptNomination, commitFileBasel
 	renameDevice, rosterLiveness, syncForkPoint, syncIndexAt, syncIndexOwed, syncLocNow, syncWalkPlan,
 	tombstoneIn, touchSelfDevice } from './parcel_collect.js';
 import { applySync, collectSync, peekDiamondLabel, takeDiamondLabel } from './parcel_apply.js';
-import { chatHoldingReport, chatHoldingTurn, dispatchedHere, ownsChat, peerSyncShim, peerUiStateFor,
+import { chatHoldingReport, chatHoldingTurn, ownsChat, peerSyncShim, peerUiStateFor,
 	recoveringHere, selfDeviceId } from './handoff.js';
 import { appSpend, billChatSpend, confirmLapse, drainAfterHeld, enqueueMessage, lapseConfirmed,
 	lapsedByClock, renderQueue, runTurn, sayIntoHere, sendToDiamondTurn, waitingOn } from './steer.js';
@@ -2496,8 +2496,6 @@ export function install() { // page-split: install
 		// the updater read a folding app as idle and could reload over it.
 		busy:            function () { return anyGen() || anyQueued() || anyCrystalBusy()
 			|| (typeof Workers !== 'undefined' && Workers && Workers.active > 0); },
-		// Did this device dispatch the turn? sync.js's stand-off asks (`ownDispatch`).
-		dispatchedHere:  dispatchedHere,
 		/// Has THIS Diamond a turn in flight -- a steer or a fold?
 		///
 		/// Published beside `busy` because the two answer different questions and the

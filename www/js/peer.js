@@ -4717,11 +4717,15 @@
 	/// two devices that are mid-hand-off have had the door. Bounded by the lease's own
 	/// liveness, so a runner that dies cannot hold anybody off past its deadline.
 	///
-	/// `originator` is the turn's `dispatchedBy` as this device knows it -- from the
-	/// dispatched placeholder it holds, where it holds one. A device that dispatched
-	/// the turn NEVER defers: it is the one waiting for the answer, and its own pushes
-	/// are how its half of the conversation travels.
-	function deferPushFor(leases, selfId, now, isOriginatorOf) {
+	/// A device that dispatched the turn NEVER defers: it is the one waiting for the
+	/// answer, and its own pushes are how its half of the conversation travels. Who
+	/// that is, is read off the lease's own `dispatchedBy`, which every taker writes
+	/// (Kimberlite's included). It was read off the dispatched placeholder this device
+	/// held, and the merge drops that placeholder as soon as the answer's rows arrive,
+	/// while the lease still reads `running`: from then on the asker stood off its own
+	/// turn and held every push to the lease's end. His row on gilgamesh reached
+	/// argonaut 23 minutes late (UNBLOCK-86, 1 Nov 2026).
+	function deferPushFor(leases, selfId, now) {
 		var me = String(selfId || '');
 		var n  = now == null ? authorityNow() : now;
 		var ls = leases || {};
@@ -4730,7 +4734,7 @@
 			var r = ls[id];
 			if (!liveLease(r, n) || r.mode !== 'running') continue;
 			if (String(r.holder || '') === me) continue;			// we ARE the runner
-			if (isOriginatorOf && isOriginatorOf(id)) continue;		// we sent it
+			if (String(r.dispatchedBy || '') === me) continue;	// we sent it
 			return String(id);										// the turn we are standing off for
 		}
 		return '';

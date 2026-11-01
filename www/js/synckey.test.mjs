@@ -198,7 +198,7 @@ function makeTab(seed) {
 		// test agreed with but the app did not would prove nothing.
 		deferPushFor: (function () {
 			const src = readPage(join(HERE, 'peer.js'), 'utf8');
-			const m = /\n\tfunction deferPushFor\(leases, selfId, now, isOriginatorOf\) \{[\s\S]*?\n\t\}\n/.exec(src);
+			const m = /\n\tfunction deferPushFor\(leases, selfId, now[^)]*\) \{[\s\S]*?\n\t\}\n/.exec(src);
 			if (!m) throw new Error('synckey.test: deferPushFor not found in peer.js -- has it been renamed?');
 			// `liveLease` is the one sibling it calls; lifted the same way.
 			const lv = /\n\tfunction liveLease\([\s\S]*?\n\t\}\n/.exec(src);
@@ -572,13 +572,10 @@ console.log('\nF. the asker — its own dispatch parcel is never held behind its
 	await asker.win.DaimondSync.push();
 	const base = asker.posts.length;
 	if (published.has('chats')) asker.win.DaimondCore.chats = () => [chat];
-	if (published.has('dispatchedHere')) {
-		asker.win.DaimondCore.dispatchedHere = (t) => chat.messages.some((m) => m.why === 'dispatched'
-			&& m.iturn === t && m.dispatchedBy === SELF);
-	}
-	// The runner (another device) holds the turn's lease, running: the errand was taken.
+	// The runner (another device) holds the turn's lease, running: the errand was taken, and
+	// the lease names this device as the one that sent it (`dispatchedBy`, as every taker writes).
 	const now = Date.now();
-	asker.leases = { [TURN]: { turnId: TURN, holder: 'NATIVE-RUNNER', mode: 'running', expiry: now + 120000, renewedAt: now } };
+	asker.leases = { [TURN]: { turnId: TURN, holder: 'NATIVE-RUNNER', dispatchedBy: SELF, mode: 'running', expiry: now + 120000, renewedAt: now } };
 	asker.parcel = parcel({ selfSeen: 2000, chats: [{ id: 'c1', messages: ['one', 'the waiting row'] }] });
 	const fl = await asker.win.DaimondSync.flush();
 	check('F2. the asker\'s dispatch flush lands while its own turn runs on the runner',
@@ -593,13 +590,55 @@ console.log('\nF. the asker — its own dispatch parcel is never held behind its
 	const tb = third.posts.length;
 	const other = { id: 'c1', _loaded: true, messages: [Object.assign({}, chat.messages[1], { dispatchedBy: PEER })] };
 	if (published.has('chats')) third.win.DaimondCore.chats = () => [other];
-	if (published.has('dispatchedHere')) {
-		third.win.DaimondCore.dispatchedHere = (t) => other.messages.some((m) => m.iturn === t && m.dispatchedBy === SELF);
-	}
-	third.leases = asker.leases;
+	third.leases = { [TURN]: Object.assign({}, asker.leases[TURN], { dispatchedBy: PEER }) };
 	third.parcel = parcel({ selfSeen: 2000, chats: [{ id: 'c1', messages: ['one', 'two'] }] });
 	await third.win.DaimondSync.push();
 	check('F3. [ctl] a device that did not send the turn still stands off it',
+		third.posts.length === tb, (third.posts.length - tb) + ' POST(s) during the hand-off');
+}
+
+console.log('\nG. his own turn on a Kimberlite runner — his row leaves the device while it runs (UNBLOCK-86)\n');
+
+{
+	// OWNER PROVENANCE (1 Nov 2026, gilgamesh a7b34e2d5181, chat cmvxu4l4z-1-s3b5m): he sent
+	// "format using latex" (row mvxu61jg-4-8nejf) at 20:58:36.7; the turn was handed to
+	// Kimberlite on argonaut. The answer's rows reached gilgamesh by the log while the lease
+	// still read `running`, the merge dropped the turn's dispatched placeholder as answered
+	// (`dropDispatchedPlaceholder`), and from then on `ownDispatch` -- read off that
+	// placeholder -- answered false: gilgamesh stood off its OWN turn and held every push
+	// until the lease ended. His row reached argonaut 23 minutes late. Who dispatched the
+	// turn is on the lease itself (`dispatchedBy`, written by every taker, Kimberlite's
+	// included), and that outlives the placeholder.
+	// From dev/fixtures/standoff/his_turn_cmvxu4l4z.txt: his chat as gilgamesh held it once the answer had arrived (no
+	// placeholder left) and the lease Kimberlite held, naming gilgamesh as the asker; this tab stands in for gilgamesh.
+	const HIS = JSON.parse(readFileSync(new URL('../../dev/fixtures/standoff/his_turn_cmvxu4l4z.txt', import.meta.url), 'utf8')
+		.split('\n').filter((l) => l && !l.startsWith('provenance:') && !l.startsWith('#')).join('\n'));
+	const TURN = HIS.lease.turnId;
+	const chat = HIS.chat;
+	const me = (id) => (id === HIS.asker ? SELF : id);
+	const asker = makeTab();
+	asker.unlocked = true;
+	asker.parcel = parcel({ selfSeen: 1000, chats: [{ id: chat.id, messages: ['one'] }] });
+	await asker.win.DaimondSync.push();
+	const base = asker.posts.length;
+	const now = Date.now();
+	asker.leases = { [TURN]: Object.assign({}, HIS.lease, { dispatchedBy: me(HIS.lease.dispatchedBy),
+		expiry: now + 120000, renewedAt: now }) };
+	asker.parcel = parcel({ selfSeen: 2000, chats: [{ id: chat.id, messages: ['one', 'format using latex'] }] });
+	await asker.win.DaimondSync.push();
+	check('G1. the asker pushes his row while Kimberlite still runs his turn, its placeholder already answered',
+		asker.posts.length === base + 1, (asker.posts.length - base) + ' POST(s) mid-turn');
+
+	// The rule it keeps: the lease names a different asker, so a third device stands off.
+	const third = makeTab();
+	third.unlocked = true;
+	third.parcel = parcel({ selfSeen: 1000, chats: [{ id: chat.id, messages: ['one'] }] });
+	await third.win.DaimondSync.push();
+	const tb = third.posts.length;
+	third.leases = { [TURN]: Object.assign({}, asker.leases[TURN], { dispatchedBy: PEER }) };
+	third.parcel = parcel({ selfSeen: 2000, chats: [{ id: chat.id, messages: ['one', 'two'] }] });
+	await third.win.DaimondSync.push();
+	check('G2. [ctl] a device the lease does not name as asker still stands off the turn',
 		third.posts.length === tb, (third.posts.length - tb) + ' POST(s) during the hand-off');
 }
 
