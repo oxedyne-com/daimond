@@ -25,12 +25,17 @@ function load() {
 	const frames = [];
 	const timers = [];
 	const win = { };
+	// The page root, for the class a held pointer puts on it.
+	const marks = new Set();
+	const doc = { documentElement: { classList: {
+		add: (c) => marks.add(c), remove: (c) => marks.delete(c), contains: (c) => marks.has(c),
+	} } };
 	const rafShim = (fn) => { frames.push(fn); return frames.length; };
 	const setShim = (fn, ms) => { timers.push({ fn, ms, dead: false }); return timers.length; };
 	const clearShim = (h) => { if (timers[h - 1]) timers[h - 1].dead = true; };
 	// eslint-disable-next-line no-new-func
-	new Function('window', 'requestAnimationFrame', 'setTimeout', 'clearTimeout',
-		fs.readFileSync(SRC, 'utf8'))(win, rafShim, setShim, clearShim);
+	new Function('window', 'document', 'requestAnimationFrame', 'setTimeout', 'clearTimeout',
+		fs.readFileSync(SRC, 'utf8'))(win, doc, rafShim, setShim, clearShim);
 	const listeners = {};
 	const captured = [];
 	const el = {
@@ -54,7 +59,7 @@ function load() {
 		t.forEach((x) => { if (!x.dead) x.fn(); });
 		return t;
 	};
-	return { G: win.DaimondGesture, el, send, ev, runFrames, runTimers, timers, captured, win };
+	return { G: win.DaimondGesture, el, send, ev, runFrames, runTimers, timers, captured, win, marks };
 }
 
 /// A recogniser wired to a log, so what happened is a list rather than a guess.
@@ -305,4 +310,43 @@ test('the default takes nothing until the press has become a drag', () => {
 	assert.deepEqual(captured, [], 'a press that may yet be a click retargets no click');
 	send('pointerup', ev(0, 0));
 	assert.deepEqual(captured, []);
+});
+
+// AN IFRAME TAKES A CAPTURED POINTER AWAY. A frame is another document, and
+// Chrome sends the moves over it to that document whatever the capture says:
+// a chip carried from the top bar towards an empty Dock crossed the Web panel's
+// frame and stopped hearing moves after three, leaving a ghost, no zone and a
+// release that did nothing (UNBLOCK-77). So for as long as a pointer is held,
+// the page root says so, and the stylesheet turns every frame transparent to
+// the pointer.
+test('a held pointer shields the page from its frames, and the shield goes with it', () => {
+	const { G, el, send, ev, marks } = load();
+	const { log } = recorder(G, el);
+	send('pointerdown', ev(0, 0));
+	assert.ok(!marks.has('gesture-held'), 'a press that may be a click leaves the frames alone');
+	send('pointermove', ev(10, 0));
+	assert.ok(marks.has('gesture-held'), 'held from the lift');
+	send('pointerup', ev(10, 0));
+	assert.ok(!marks.has('gesture-held'), 'gone at the release');
+	send('pointerdown', ev(0, 0));
+	send('pointermove', ev(10, 0));
+	send('pointercancel', ev(10, 0));
+	assert.ok(!marks.has('gesture-held'), 'gone at a cancel');
+	assert.deepEqual(log.map((x) => x[0]), ['start', 'lift', 'drop', 'start', 'lift', 'cancel']);
+});
+
+test('a capture taken at the press shields from the press', () => {
+	const { G, el, send, ev, marks } = load();
+	G.drag(el, { capture: 'press', match: () => ({}) });
+	send('pointerdown', ev(0, 0));
+	assert.ok(marks.has('gesture-held'));
+	send('pointerup', ev(0, 0));
+	assert.ok(!marks.has('gesture-held'));
+});
+
+test('the stylesheet makes every frame transparent to a held pointer', () => {
+	const css = fs.readFileSync(path.join(HERE, '..', 'css', 'app.css'), 'utf8');
+	const rule = css.match(/\.gesture-held\s+iframe\s*\{([^}]*)\}/);
+	assert.ok(rule, 'app.css has a .gesture-held iframe rule');
+	assert.match(rule[1], /pointer-events\s*:\s*none/);
 });

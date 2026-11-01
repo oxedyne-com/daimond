@@ -567,6 +567,30 @@ for (const n of NAMES) {
 		`${n}: a focused button's border against its resting border-2`);
 }
 
+// ── The drop indicator ──────────────────────────────────────────
+// Where a carried panel will land in the Dock (css/dockdrag.css): a line, and
+// for a swap an outline, in `--drop-line`. It is a non-text mark the user must
+// SEE to use the gesture, so SC 1.4.11's 3:1 is a HARD floor on every surface it
+// is drawn over -- the panels (secondary, tertiary, hover) and the gutter
+// between them (primary) -- with no baseline to fall back on (his stumble, 1 Nov
+// 2026: in Ember the column indicator was a 7% tint and could not be seen).
+// The token may be a `var()` of another token; it is resolved in the palette.
+{
+	const resolve = (p, v, depth = 0) => {
+		const m = (v || '').match(/^var\((--[a-z0-9-]+)\)$/i);
+		return m && depth < 4 ? resolve(p, p[m[1]], depth + 1) : v;
+	};
+	for (const n of NAMES) {
+		const p = palette(n);
+		const col = rgb(resolve(p, p['--drop-line']) || '');
+		check(!!col, `${n}: declares --drop-line as a colour`);
+		if (!col) continue;
+		const w = worstOn(col, p, ['--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-hover']);
+		check(w.r >= CTRL,
+			`${n}: the drop indicator against its worst surface (${nm(w.surf)}) = ${w.r.toFixed(2)} (floor ${CTRL})`);
+	}
+}
+
 // ── The selected chip, on every palette ─────────────────────────
 // One neutral pair shared by all eleven, which is the point of it -- so it has
 // to be checked ELEVEN times, once per palette, and the two questions are

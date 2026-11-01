@@ -4041,6 +4041,11 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .web-live { flex: none; padding: 7px 14px; font-size: var(--fs-2xs-xs); color: var(--text-muted); background: var(--bg-tertiary); border-bottom: 1px solid var(--border); }
 .web-live[hidden] { display: none; }
 .web-frame { flex: 1; min-height: 0; width: 100%; border: 0; background: #fff; }
+/* A HELD POINTER PASSES OVER EVERY FRAME. A frame is another document and takes
+   the moves over it whatever the capture says, so a drag that crossed this one
+   (a chip carried to an empty Dock) went deaf after three moves. gesture.js puts
+   the class on the root for exactly as long as it holds a pointer. */
+.gesture-held iframe { pointer-events: none; }
 .web-mirror { flex: 1; min-height: 0; width: 100%; object-fit: contain; object-position: top; background: #fff; }
 .web-url { font-family: var(--font-mono); font-size: var(--fs-xs); }
 .web-note { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px; text-align: center; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1.6; }

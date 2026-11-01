@@ -110,6 +110,23 @@
 	/// Answers a handle: `cancel()` ends whatever is running, `active()` says
 	/// whether anything is, `lifted()` whether it has become a drag, and `off()`
 	/// unbinds.
+	/// Make every frame on the page transparent to the pointer, or stop.
+	///
+	/// A CAPTURE DOES NOT HOLD OVER A FRAME. An iframe is another document, and
+	/// Chrome sends the moves over it to that document whatever the capture
+	/// says: a chip carried from the top bar towards an empty Dock crossed the
+	/// Web panel's frame and heard three moves, then none, leaving a ghost, no
+	/// zone and a release that did nothing (UNBLOCK-77). The class is the whole
+	/// mechanism; `app.css` holds the rule. Counted, so two held gestures (two
+	/// fingers on two surfaces) do not clear each other's.
+	var held = 0;
+	function shield(on) {
+		held = Math.max(0, held + (on ? 1 : -1));
+		if (typeof document === 'undefined' || !document.documentElement) return;
+		var cl = document.documentElement.classList;
+		if (held) cl.add('gesture-held'); else cl.remove('gesture-held');
+	}
+
 	function drag(el, opts) {
 		var o = opts || {};
 		var threshold = o.threshold === undefined ? THRESHOLD : o.threshold;
@@ -150,11 +167,13 @@
 		function grab() {
 			if (!live || live.held) return;
 			live.held = true;
+			shield(true);
 			try { if (el.setPointerCapture) el.setPointerCapture(live.id); }
 			catch (e) { /* no capture: the gesture still runs, it just ends early */ }
 		}
 
 		function release(id) {
+			shield(false);
 			try { if (el.releasePointerCapture) el.releasePointerCapture(id); }
 			catch (e) { /* the pointer has already gone */ }
 		}

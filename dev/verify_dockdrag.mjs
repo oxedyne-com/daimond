@@ -399,13 +399,16 @@ await p.waitForTimeout(1600);
 		y: 400 };
 	const at2200 = await carryTo(p, HEAD('agents'), right);
 	check('at 2200px the right edge offers a third column',
-		!!(at2200.zone && at2200.zone.kind === 'newcol' && at2200.col),
-		`${at2200.zone && at2200.zone.kind}, outline ${JSON.stringify(at2200.col)}`);
+		!!(at2200.zone && at2200.zone.kind === 'newcol' && at2200.line),
+		`${at2200.zone && at2200.zone.kind}, line ${JSON.stringify(at2200.line)}`);
 	await shot(s, 'dockdrag-newcol');
-	check('drawn as a full-height outline a column wide, not a line',
-		!!(at2200.col && Math.abs(at2200.col.w - wide.cols[0].w) <= 4
-			&& at2200.col.h > 400 && !at2200.line),
-		`${JSON.stringify(at2200.col)} against a ${wide.cols[0].w}px column`);
+	// HIS RULING (UNBLOCK-77): a new column is a vertical line at the edge it is
+	// made at, as a new row is a horizontal one -- never a column-wide shade.
+	const lastR = wide.cols[wide.cols.length - 1].x + wide.cols[wide.cols.length - 1].w;
+	check('drawn as a full-height vertical line at the right edge, not a column-wide shade',
+		!!(at2200.line && at2200.line.w <= 5 && at2200.line.h > 400
+			&& Math.abs(at2200.line.x - lastR) <= 8 && !at2200.col && !at2200.boxed),
+		`line ${JSON.stringify(at2200.line)}, col ${JSON.stringify(at2200.col)}, right edge ${Math.round(lastR)}`);
 	await release(p);
 	const g = await drawn(p);
 	check('and the release makes it, at the edge it was offered at',

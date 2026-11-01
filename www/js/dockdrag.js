@@ -12,9 +12,9 @@
  * The Dock's state is now COLUMNS: `[['work','mail'], ['agents']]`, left to
  * right and top to bottom, and this file is how a hand changes it. The design is
  * the tab strip's rather than the five-region overlay's, because the Dock is
- * columns of rows and not a canvas: an insertion line between two rows, a band
- * at either edge for a new column, a box over a panel to take its place, and the
- * tear-off for "out of the Dock altogether".
+ * columns of rows and not a canvas: a horizontal insertion line between two
+ * rows, a vertical one at either edge for a new column, an outlined box over a
+ * panel to take its place, and the tear-off for "out of the Dock altogether".
  *
  * TWO HALVES, and the first has no DOM in it.
  *
@@ -185,13 +185,22 @@
 			return out;
 		}
 
+		// A NEW COLUMN IS A VERTICAL LINE ON THE DOCK'S EDGE, as a new row is a
+		// horizontal one on its boundary. It was a column-wide shade over the
+		// existing column, which read as "into this column" (his stumble, 1 Nov
+		// 2026: one column, Email carried left to sit beside the Workspace, and the
+		// whole Workspace column lit up). `rect` is the line's centre-line, `w: 0`.
+		// The band STRADDLES the edge, half a band outside it, so a hand that
+		// overshoots the edge by a little is still asking for the column rather
+		// than for the stage -- which, for a placed panel, would close it.
 		if (dockR && cols.length + 1 - loses <= maxCols) {
-			out.push({ kind: 'newcol', col: 0, row: 0,
-				rect: { x: dockR.x, y: dockR.y, w: colW, h: dockR.h },
-				hit:  { x: dockR.x, y: dockR.y, w: EDGE, h: dockR.h } });
-			out.push({ kind: 'newcol', col: cols.length, row: 0,
-				rect: { x: dockR.x + dockR.w - colW, y: dockR.y, w: colW, h: dockR.h },
-				hit:  { x: dockR.x + dockR.w - EDGE, y: dockR.y, w: EDGE, h: dockR.h } });
+			var lx = dockR.x, rx = dockR.x + dockR.w;
+			out.push({ kind: 'newcol', col: 0, row: 0, side: 'left',
+				rect: { x: lx, y: dockR.y, w: 0, h: dockR.h },
+				hit:  { x: lx - EDGE / 2, y: dockR.y, w: EDGE * 1.5, h: dockR.h } });
+			out.push({ kind: 'newcol', col: cols.length, row: 0, side: 'right',
+				rect: { x: rx, y: dockR.y, w: 0, h: dockR.h },
+				hit:  { x: rx - EDGE, y: dockR.y, w: EDGE * 1.5, h: dockR.h } });
 		}
 
 		cols.forEach(function (ids, c) {
@@ -208,14 +217,22 @@
 				// and the middle third "instead of it". Thirds rather than halves,
 				// because a swap needs a target a hand can actually hit.
 				var third = pr.h / 3;
+				// ONE LINE PER BOUNDARY. `before` row r and `after` row r-1 are the
+				// same place, so both are drawn in the middle of the gap between the
+				// two panels; drawn on each panel's own edge they were two lines a
+				// gap apart that jumped as the pointer crossed the gap.
+				var prev = r > 0 ? panR[ids[r - 1]] : null;
+				var next = r < ids.length - 1 ? panR[ids[r + 1]] : null;
+				var topY = prev ? (prev.y + prev.h + pr.y) / 2 : pr.y;
+				var botY = next ? (pr.y + pr.h + next.y) / 2 : pr.y + pr.h;
 				if (room) out.push({ kind: 'before', col: c, row: r,
-					rect: { x: cr.x, y: pr.y, w: cr.w, h: 0 },
+					rect: { x: cr.x, y: topY, w: cr.w, h: 0 },
 					hit:  { x: pr.x, y: pr.y, w: pr.w, h: third } });
 				if (id !== dragId) out.push({ kind: 'replace', col: c, row: r,
 					rect: { x: pr.x, y: pr.y, w: pr.w, h: pr.h },
 					hit:  { x: pr.x, y: pr.y + third, w: pr.w, h: third } });
 				if (room) out.push({ kind: 'after', col: c, row: r,
-					rect: { x: cr.x, y: pr.y + pr.h, w: cr.w, h: 0 },
+					rect: { x: cr.x, y: botY, w: cr.w, h: 0 },
 					hit:  { x: pr.x, y: pr.y + pr.h - third, w: pr.w, h: third } });
 			});
 		});
@@ -405,14 +422,28 @@
 		el.hidden = false;
 	}
 
-	/// The insertion line sits ON a boundary, so it is given no height of its
-	/// own: the stylesheet's weight is the line, and writing a height here would
-	/// overrule it with the nought the boundary rectangle carries.
+	/// The insertion line sits ON a boundary, so it is given no thickness of
+	/// its own: the stylesheet's weight is the line, and writing one here would
+	/// overrule it with the nought the boundary rectangle carries. A row's
+	/// boundary is horizontal (`h: 0`), a column's vertical (`w: 0`); both are
+	/// the one element, the one token and the one weight.
 	function putLine(r) {
+		var v = !r.w && r.h > 0;
+		line.classList.toggle('v', v);
 		line.style.left   = r.x + 'px';
 		line.style.top    = r.y + 'px';
-		line.style.width  = Math.max(0, r.w) + 'px';
+		line.style.width  = v ? '' : Math.max(0, r.w) + 'px';
+		line.style.height = v ? Math.max(0, r.h) + 'px' : '';
 		line.hidden = false;
+		// The right-hand edge of the Dock is the window's: a line centred on it
+		// would be half off the screen, so it is pulled back inside.
+		// The weight is the stylesheet's, read from the token rather than from
+		// the element, whose width may still be easing from a row's line.
+		if (v) {
+			var wt = parseFloat(getComputedStyle(line).getPropertyValue('--drop-line-w')) || 0;
+			var over = r.x + wt / 2 - document.documentElement.clientWidth;
+			if (over > 0) line.style.left = (r.x - over) + 'px';
+		}
 	}
 
 	/// Draw the one indicator this zone means, and nothing else. No text on any
@@ -422,7 +453,10 @@
 		[line, box, colOut].forEach(function (e) { e.hidden = true; });
 		if (!zone) { overlay.hidden = true; return; }
 		overlay.hidden = false;
-		if (zone.kind === 'before' || zone.kind === 'after') putLine(zone.rect);
+		// A LINE for every insertion, between rows or beside a column; an outlined
+		// AREA only where the drop fills one: a panel's place taken, or the empty
+		// Dock's first column.
+		if (zone.kind === 'before' || zone.kind === 'after' || zone.kind === 'newcol') putLine(zone.rect);
 		else if (zone.kind === 'replace') put(box, zone.rect);
 		else put(colOut, zone.rect);
 	}

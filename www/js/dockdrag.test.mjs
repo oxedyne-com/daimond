@@ -271,3 +271,40 @@ test('left and right cross columns, and reach the edge when there is none', () =
 	// And from an edge band, back in.
 	assert.equal(D.keyStep(zs, past, 'left').col, 1);
 });
+
+// ── What is drawn: a line at every insertion edge (his stumble, 1 Nov 2026) ──
+test('a new column is offered as a vertical line on the Dock\'s edge, never a column-wide shade', () => {
+	// His case: the Workspace docked, Email added below it, then carried left.
+	const cols = [['work', 'mail']];
+	const rs = rects(cols);
+	const zs = D.zones(cols, rs, CAP, 'mail');
+	const left  = zs.find((z) => z.kind === 'newcol' && z.col === 0);
+	const right = zs.find((z) => z.kind === 'newcol' && z.col === 1);
+	assert.ok(left && right, 'both edges are offered');
+	assert.equal(left.rect.w, 0, 'the left edge is a line, not an area');
+	assert.equal(left.rect.x, rs.dock.x, 'on the Dock\'s left edge');
+	assert.equal(left.rect.h, rs.dock.h, 'the height of the Dock');
+	assert.equal(right.rect.w, 0, 'the right edge is a line too');
+	assert.equal(right.rect.x, rs.dock.x + rs.dock.w, 'on the Dock\'s right edge');
+	// The band straddles the edge, so a small overshoot into the stage still
+	// asks for the column rather than reading as "out of the Dock".
+	const z = D.pick(zs, rs.dock.x - D.EDGE / 2 + 2, 400);
+	assert.ok(z && z.kind === 'newcol' && z.col === 0, `got ${z && z.kind}`);
+	// And the release lands it where the line was: left of the Workspace.
+	assert.deepEqual(D.applyDrop(cols, 'mail', left, CAP), [['mail'], ['work']]);
+});
+
+test('the boundary between two rows is ONE line, in the middle of their gap', () => {
+	const cols = [['work', 'mail']];
+	const rs = rects(cols);
+	rs.panels.mail.y += 8;                      // the gap the layout draws
+	const zs = D.zones(cols, rs, CAP, null);
+	const below = zs.find((z) => z.kind === 'after' && z.row === 0);
+	const above = zs.find((z) => z.kind === 'before' && z.row === 1);
+	assert.equal(below.rect.y, above.rect.y, 'after row 0 and before row 1 draw the same line');
+	assert.equal(below.rect.y, 204, 'at the gap\'s midpoint');
+	assert.equal(below.rect.h, 0, 'a line, not an area');
+	// The outer boundaries stay on the column's own top and foot.
+	assert.equal(zs.find((z) => z.kind === 'before' && z.row === 0).rect.y, rs.panels.work.y);
+	assert.equal(zs.find((z) => z.kind === 'after' && z.row === 1).rect.y, rs.panels.mail.y + rs.panels.mail.h);
+});

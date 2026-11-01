@@ -45,6 +45,13 @@
 	--accent-hover:      #E07A67;
 	--accent-soft:       #3A211B;
 	--accent-text:       #E9A392;
+	/* The drop indicator: where a carried panel will land (css/dockdrag.css).
+	   A ROLE, not the accent by habit. It is the accent today because the accent
+	   clears 3:1 (WCAG 2.2 SC 1.4.11) against every surface of every palette, the
+	   worst being midnight's hover at 3.41; a palette whose accent does not must
+	   restate this token, and dev/verify_theme.mjs fails it until it does. */
+	--drop-line:         var(--accent);
+	--drop-line-w:       3px;
 	--ok:                #66B98C;
 	--ok-bg:             #1C3227;
 	--warn:              #D6A24A;

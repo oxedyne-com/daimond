@@ -1,8 +1,8 @@
 /* dockdrag.css — what a panel being carried into the Dock looks like.
  *
- * The indicators borrow the dividers' own language on purpose: `--accent` at the
- * weight `.phandle` draws its line at, so an insertion line reads as "a boundary
- * will be here" rather than as a new kind of mark. Nothing carries a label --
+ * The indicators sit where the dividers do, so an insertion line reads as "a
+ * boundary will be here", in the `--drop-line` role token, which
+ * dev/verify_theme.mjs holds at 3:1 on every surface of every palette. Nothing carries a label --
  * the shape is the whole message, and a caption would be one more thing to read
  * while a hand is already moving. */
 
@@ -21,30 +21,70 @@
 	pointer-events: none;
 	transition: left 80ms ease, top 80ms ease, width 80ms ease, height 80ms ease;
 }
+/* The line glides along a boundary but does not ease between its two shapes: a
+   row's line turning into a column's would sweep a 300px bar across the Dock. */
+#dock-drop > .ddz-line { transition: left 80ms ease, top 80ms ease; }
 
-/* A boundary between two rows. Two pixels, pulled up by one so the line sits ON
-   the boundary rather than under it. */
+/* AN INSERTION IS A LINE, AND EVERY INSERTION IS THE SAME LINE: horizontal on
+   the boundary between two rows, vertical on the Dock's edge for a new column
+   (his stumble, 1 Nov 2026: a new column was a shade over the existing one,
+   which read as "into it"). One token, one weight, centred ON the boundary.
+   Told apart from a divider by SHAPE as well as colour: a cap across each end,
+   an I-beam, which no divider in the app draws; and a ring of the page's own
+   ground round it, so it stands off whatever it crosses. */
 .ddz-line {
-	height: 2px;
-	margin-top: -1px;
-	background: var(--accent);
-	border-radius: 2px;
-	box-shadow: 0 0 0 1px var(--accent-soft);
+	height: var(--drop-line-w);
+	margin-top: calc(var(--drop-line-w) / -2);
+	background: var(--drop-line);
+	border-radius: var(--drop-line-w);
+	box-shadow: 0 0 0 1px var(--bg-primary);
 }
+.ddz-line.v {
+	width: var(--drop-line-w);
+	margin-top: 0;
+	margin-left: calc(var(--drop-line-w) / -2);
+}
+.ddz-line::before,
+.ddz-line::after {
+	content: '';
+	position: absolute;
+	background: var(--drop-line);
+	border-radius: var(--drop-line-w);
+	box-shadow: 0 0 0 1px var(--bg-primary);
+	/* Across a horizontal line: a short upright at each end. */
+	width: var(--drop-line-w);
+	height: calc(var(--drop-line-w) * 4);
+	top: calc(var(--drop-line-w) * -1.5);
+}
+.ddz-line::before { left: 0; }
+.ddz-line::after  { right: 0; }
+/* Across a vertical line: a short bar at the top and at the foot. */
+.ddz-line.v::before,
+.ddz-line.v::after {
+	width: calc(var(--drop-line-w) * 4);
+	height: var(--drop-line-w);
+	top: auto;
+	left: calc(var(--drop-line-w) * -1.5);
+	right: auto;
+}
+.ddz-line.v::before { top: 0; }
+.ddz-line.v::after  { bottom: 0; }
 
-/* A panel's place, about to be taken by the one being carried. */
+/* A panel's place, about to be taken by the one being carried. A real AREA, so
+   it is the one indicator that shades -- and it is OUTLINED in the same token,
+   because a 12% tint alone vanished on the darker palettes. */
 .ddz-box {
-	border: 2px solid transparent;
+	border: var(--drop-line-w) solid var(--drop-line);
 	border-radius: 6px;
-	background: color-mix(in srgb, var(--accent) 12%, transparent);
+	background: color-mix(in srgb, var(--drop-line) 14%, transparent);
 }
 
-/* A column that does not exist yet: the edge band's promise, and the
-   placeholder an empty Dock offers. Dashed, because nothing is there. */
+/* The empty Dock's first column: an area too, and one that does not exist yet,
+   so its outline is dashed. */
 .ddz-col {
-	border: 2px solid transparent;
+	border: var(--drop-line-w) dashed var(--drop-line);
 	border-radius: 6px;
-	background: color-mix(in srgb, var(--accent) 7%, transparent);
+	background: color-mix(in srgb, var(--drop-line) 8%, transparent);
 }
 
 /* ── The ghost ───────────────────────────────────────────────────────────
@@ -56,7 +96,11 @@
 	top: 0;
 	z-index: 2500;
 	pointer-events: none;
-	opacity: 0.92;
+	/* Opaque, on the raised surface and inside a control's boundary, so its
+	   name reads over whatever it is carried across. */
+	opacity: 1;
+	background: var(--bg-tertiary);
+	border-color: var(--border-strong);
 	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 .ptag-ghost .gx {
@@ -105,13 +149,14 @@ body.dock-dragging { cursor: grabbing; user-select: none; -webkit-user-select: n
 	opacity: 0.9;
 }
 
-/* Where the lifted chip would land. */
+/* Where the lifted chip would land: the Dock's insertion line, the same token
+   and weight. */
 .ptag-ins {
-	width: 2px;
+	width: var(--drop-line-w);
 	align-self: stretch;
 	min-height: 20px;
-	background: var(--accent);
-	border-radius: 2px;
+	background: var(--drop-line);
+	border-radius: var(--drop-line-w);
 	flex: none;
 }
 
