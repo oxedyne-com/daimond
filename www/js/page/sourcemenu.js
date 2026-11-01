@@ -19,7 +19,7 @@ import { commitRatings, errandModelOf, pushUserRecord, recoverUserRecord, turnEf
 import { diag, toast } from './passkey_phrase.js';
 import { appendUserMessage, askOpenIn, chatRunningOn, endContinuable, fleetCurrentBuild,
 	handoffTargetLabel, isLostRow, isNotRunRow, logThinking, outcomeOfStoredText, preferredWorkerLabel,
-	presenceWithLeaseBusy, renderHistory, retireContinue, turnPresence } from './turns.js';
+	presenceWithLeaseBusy, renderHistory, retireContinue, turnPresence, turnSuperseded } from './turns.js';
 import { busyForChat, busyHere, chatIsActiveErrand, handoffWhenAway, isAttended, noticeDialog } from './consent.js';
 import { abortTurn, renderPendingCentre, syncSendMode, turnHold } from './chats.js';
 import { effortClearedNote, renderSessionList } from './tilestyle.js';
@@ -1686,6 +1686,13 @@ export function continueTurn(chat, iturn, text, holdRead, fresh, pressed) {
 	// so no record can carry the badge without the id and this cannot fire
 	// today. One field away from that is not a margin worth keeping.
 	if (!iturn) return;
+	// NEVER AN OLD MESSAGE ASKED AGAIN (UNBLOCK-83, rulings l.21): once a later turn has
+	// opened, this turn is settled history. The press, and handoff.js's own fallbacks, which
+	// come through here a turn later, are refused rather than re-asking it silently.
+	if (turnSuperseded(chat.messages, iturn)) {
+		diag('continue refused', 'turn=' + iturn + ' superseded by a later turn');
+		return;
+	}
 	if (chat.diamondId) fresh = true;		// a daimon turn is asked again; Resume is FLOW
 	// ASKED BEFORE ANYTHING MOVES. A turn a pause caught part way comes back with this
 	// button (`brakeHeld`), and Continue is a new dispatch: while the pause holds it is
@@ -1962,6 +1969,13 @@ export function retryTurn(chat, iturn, text, ropts) {
 	// iturn` with an undefined `iturn` matches every ordinary message in the
 	// chat, and the lines below would tombstone the whole transcript.
 	if (!iturn) return false;
+	// A LOST TURN IS RE-RUN ONLY WHILE IT IS THE NEWEST (UNBLOCK-83, rulings l.15, l.17):
+	// Retry and Run here on an interrupted or not-run row ask that row's message, and once
+	// a later turn has opened that would be an old message asked again.
+	if (ropts && ropts.lost && turnSuperseded(chat.messages, iturn)) {
+		diag('retry refused', 'turn=' + iturn + ' superseded by a later turn');
+		return false;
+	}
 	// A turn a PEER still holds must not be re-run here: that is the cross-device
 	// double bill the lease exists to stop. Only a vacant or expired lease lets a
 	// local retry through.

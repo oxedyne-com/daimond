@@ -20,6 +20,7 @@ export * from './links.js';
 export * from './passkey_phrase.js';
 export * from './termpanel.js';
 export * from './turns.js';
+export * from './turnfiles.js';
 export * from './consent.js';
 export * from './chats.js';
 export * from './tilestyle.js';

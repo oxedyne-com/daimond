@@ -2318,6 +2318,8 @@ function buildS61Sandbox(P, spy) {
 		daimondFuncSource('turnMessagesOf'),
 		daimondFuncSource('isNotRunRow'),		// a lost turn's row, read by continueTurn (SUHT-R F1)
 		daimondFuncSource('isLostRow'),
+		daimondFuncSource('opensTurn'),
+		daimondFuncSource('turnSuperseded'),		// a settled turn is never asked again (UNBLOCK-83)
 		daimondFuncSource('continueTurn'),
 		daimondFuncSource('retryTurn'),
 		daimondFuncSource('answerAgain'),

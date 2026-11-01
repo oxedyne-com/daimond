@@ -1865,6 +1865,8 @@
 	'turn.rows_cut.other':    '{n}개 단계가 표시되지 않았어요',
 	'turn.not_run':           '실행되지 않았어요. 넘겨주기를 시작할 수 없었어요.',
 	'turn.not_run_because': '실행되지 않음 · {why}',
+	'turn.not_run_on': '실행되지 않음 · {when}',
+	'turn.not_run_old': '실행되지 않음',
 	'turn.interrupted_early': '답하기도 전에 끊겼어요.',
 	'turn.offline': '연결이 끊겨 끝까지 완료되지 못했습니다.',
 	'turn.offline_early': '연결이 끊겨 답변이 도착하지 못했습니다.',

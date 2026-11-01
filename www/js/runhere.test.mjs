@@ -14,12 +14,21 @@
      RH5  a busy Diamond: Run here waits for it, never hands the turn off
      RH6  Retry still follows the switch: it is asked of the election
           first, and runs nothing here when the election hands it off
+     RH7  an old hand-off placeholder a later turn follows draws a record
+          and no button, and a lost Retry or a Continue on it runs nothing
+     RH8  a runner's refusal is ONE "not run" row under its message, and
+          its Run here steers that message exactly once, never an older one
+     RH9  a load heals a leftover placeholder whose `-final` row is present
+
+   RH7-RH9 are his chat's shape (UNBLOCK-83), dev/fixtures/runhere/his_chat_cmth5oiix.txt: Fred Hoogland
+   diamond 1a05794cb284 chat cmth5oiix-9-0cdza rows muxkksvy-k-x5cz1 / mvxm98ag-2-hg7fg
 
    Lifts the REAL functions out of daimond.js and runs them in a scope
    of fakes; a free name the fakes lack throws.
 
    Run:  node www/js/runhere.test.mjs
    ============================================================ */
+import { readFileSync } from 'node:fs';
 import { source, lift } from './testlift.mjs';
 
 const SRC = source('daimond.js');
@@ -35,6 +44,10 @@ function check(name, ok, detail) {
 const FNS = ['markInterrupted', 'isNotRunRow', 'isLostRow', 'notRunAsk', 'drawNotRunReason', 'notRunWhyKey',
 	'seatReason', 'drawLostRowRunning', 'lostRetryMid', 'turnMessagesOf', 'retryTurn', 'retryRouted',
 	'runRetryHere', 'retryDiamond', 'retryWhenIdle', 'askAgain'];
+// UNBLOCK-83's, lifted for every world (the drawing reads them); RH1 asks only the FNS lift
+// whole, so on the live record, where these are absent, only RH7-RH9 go red.
+const FNS83 = ['turnSuperseded', 'opensTurn', 'turnLive', 'drawOldNotRun', 'renderDispatchedFooter',
+	'runnerRefusalRow', 'dispatchedAnswerPresent', 'healLeftoverPlaceholders', 'continueTurn'];
 
 // A small element, enough for `markInterrupted` to draw a footer and its buttons.
 function el(tag) {
@@ -64,6 +77,7 @@ function notRunChat(diamondId) {
 
 // The world: `elect` is what the switch's election answers (true = handed off).
 function world(chat, over) {
+	const fns = FNS.concat(FNS83);
 	const W = { elect: [], ran: [], steered: [], taken: [], claims: [], waits: [], settled: [], busy: false, idle: null };
 	const leases = {};
 	const held = new Set();
@@ -71,7 +85,7 @@ function world(chat, over) {
 		window: null, Date, String, Object, Array, JSON, Math, Promise, setTimeout, Error,
 		document: { createElement: el },
 		t: (k) => k, diag: () => {}, toast: () => {},
-		current: chat,
+		current: chat, pg: { current: chat },
 		selfDeviceId: () => 'phone1', leaseClockNow: () => Date.now(),
 		peerLeaseClaimed: () => '', runnerLabel: () => '', deviceNameFor: () => 'argonaut',
 		renderDispatchedFooter: () => { throw new Error('not a dispatched row'); },
@@ -117,9 +131,9 @@ function world(chat, over) {
 	Object.assign(env, over || {});
 	env.window = env;
 	W.env = env;
-	const L = lift(SRC, FNS, ['NOTRUN_KEYS']);
+	const L = lift(SRC, fns, ['NOTRUN_KEYS']);
 	W.missing = L.missing;
-	const body = L.body + '\nreturn {' + FNS.map((n) => n + ': typeof ' + n + " === 'function' ? " + n + ' : null').join(', ') + '};';
+	const body = L.body + '\nreturn {' + fns.map((n) => n + ': ' + (L.missing.includes(n) ? 'null' : n)).join(', ') + '};';
 	const scope = new Proxy(env, {
 		has: (t, k) => typeof k === 'string' && (k in t || !(k in globalThis)),
 		get: (t, k) => { if (!(k in t) && typeof k === 'string' && !(k in globalThis)) throw new ReferenceError(k + ' is not in the fakes'); return t[k]; },
@@ -137,12 +151,37 @@ function draw(W, row) {
 }
 const rowOf = (c) => c.messages.find((m) => m.mid === 'nr1');
 
+// His chat (UNBLOCK-83), from dev/fixtures/runhere/his_chat_cmth5oiix.txt: the 7 Oct FBR turn handed to argonaut, its run
+// cut after its tool calls (placeholder, unstamped rows, no answer), a later turn answered, Daimond's own note, then the
+// B-roll ask the runner refused before running anything.
+const HIS = readFileSync(new URL('../../dev/fixtures/runhere/his_chat_cmth5oiix.txt', import.meta.url), 'utf8')
+	.split('\n').filter((l, i) => i > 0 && !l.startsWith('#')).join('\n');
+const OLD = 'muxkksma-j-f1400', OLDPH = 'muxkksvy-k-x5cz1', FBR = 'Write the FBR life story preview';
+const NEW = 'mvxm98ag-2-hg7fg', BROLL = 'Cut the B-roll list for the preview', RUN = 'e-0492a1';
+function hisChat() { return JSON.parse(HIS); }
+// The fakes the hand-off footer reads: the 7 Oct lease aged to `failed`, whose control is Run here.
+function hisWorld(chat, over) {
+	const W = world(chat, Object.assign({
+		pg: { current: chat },
+		peerUiStateFor: () => 'failed', turnRunnerId: () => '', interruptedRunner: () => null,
+		pausedBack: () => '', handoffTargetLabel: () => 'argonaut', reRunParked: () => { throw new Error('re-run parked'); },
+		DaimondTime: { fmtLocal: () => '7 Oct' },
+		_dispatchedIx: {},
+	}, over || {}));
+	const P = W.env.DaimondPeer;
+	P.uiState = () => 'failed';
+	P.dispatchControl = (st) => (st === 'failed' ? 'runhere' : '');
+	P.steerEchoes = () => ({});
+	return W;
+}
+const allButtons = (d) => buttons(d.div);
+
 async function main() {
 	{
 		console.log('RH1: the tile draws Retry and Run here, and drawing runs nothing');
 		const chat = notRunChat();
 		const W = world(chat);
-		check('RH1 every function lifts', W.missing.length === 0, W.missing.join(', '));
+		check('RH1 every function lifts', W.missing.filter((n) => FNS.includes(n)).length === 0, W.missing.join(', '));
 		const d = draw(W, rowOf(chat));
 		await settle();
 		check('RH1 Retry is drawn', !!d.retry);
@@ -227,6 +266,80 @@ async function main() {
 		await settle();
 		check('RH6 kept here by the election, it runs here fenced', W2.elect.length === 1 && W2.ran.length === 1
 			&& W2.ran[0].mid === TID + '-rt' && W2.taken.length === 1, JSON.stringify({ elect: W2.elect, ran: W2.ran }));
+	}
+	{
+		console.log('RH7: an old placeholder a later turn follows is a record, with no button');
+		const chat = hisChat();
+		const W = hisWorld(chat);
+		check('RH7 every function lifts', W.missing.length === 0, W.missing.join(', '));
+		const ph = chat.messages.find((m) => m.mid === OLDPH);
+		let d = null, err = '';
+		try { d = draw(W, ph); } catch (e) { err = String(e); }
+		check('RH7 it draws', !!d, err);
+		check('RH7 it offers no button', !!d && allButtons(d).length === 0,
+			d ? allButtons(d).map((b) => b.textContent).join(',') : err);
+		const before = chat.messages.length;
+		let rv = null;
+		err = '';
+		try { rv = W.f.retryTurn(chat, OLD, FBR, { lost: true }); } catch (e) { err = String(e); }
+		try { W.f.continueTurn && W.f.continueTurn(chat, OLD, FBR, false, undefined, false); } catch (e) { err = String(e); }
+		await settle();
+		check('RH7 a lost Retry and a Continue on it run nothing', err === '' && rv === false && W.ran.length + W.steered.length
+			+ W.elect.length + W.claims.length + W.taken.length === 0 && chat.messages.length === before,
+			JSON.stringify({ rv, ran: W.ran, steered: W.steered, err }));
+		check('RH7 its prompt and rows stand', !!chat.messages.find((m) => m.mid === OLD) && !!chat.messages.find((m) => m.mid === OLDPH));
+	}
+	{
+		console.log('RH8: a runner\'s refusal is ONE "not run" row, and Run here asks that message once');
+		const chat = hisChat();
+		const W = hisWorld(chat);
+		const fin = chat.messages.find((m) => m.mid === RUN + '-final');
+		let row = null, err = '';
+		try { row = W.f.runnerRefusalRow(fin, chat.messages); } catch (e) { err = String(e); }
+		check('RH8 the refusal gives a "not run" row for the B-roll turn', !!row && row.why === 'notrun'
+			&& row.iturn === NEW && row.itext === BROLL && row.notRun && row.notRun.cause === 'refused'
+			&& row.notRun.said === 'Refused at line 1, column 0.', JSON.stringify(row) + err);
+		const withRow = { role: 'assistant', interrupted: true, why: 'notrun', iturn: NEW, mid: 'nr9', notRun: { cause: 'qa' } };
+		let again = null;
+		try { again = W.f.runnerRefusalRow(fin, chat.messages.concat([withRow])); } catch (e) { err = String(e); }
+		check('RH8 a turn with its own "not run" row draws no second one', again === false, String(again) + err);
+		const ran = Object.assign({}, fin, { mid: 'x' }), tool = { role: 'tool_log', run: RUN, mid: RUN + '-1', content: 'ls' };
+		let kept = 'unset';
+		try { kept = W.f.runnerRefusalRow(fin, chat.messages.concat([tool])); } catch (e) { err = String(e); }
+		check('RH8 a run that ran, then failed, keeps its error row (ruling 2)', kept === null, String(kept) + err);
+		if (row) {
+			chat.messages.push(row);	// as drawHistoryMessage draws it
+			let d = null;
+			try { d = draw(W, row); } catch (e) { err = String(e); }
+			check('RH8 its tile offers Run here', !!d && !!d.here, err);
+			if (d && d.here) { d.here.handlers.click(); d.here.handlers.click(); }
+			await settle();
+			check('RH8 Run here steered exactly once, the B-roll message, never the FBR one',
+				W.steered.length === 1 && W.steered[0].text === BROLL && W.steered[0].mid === NEW + '-rt'
+				&& W.ran.length === 0 && W.elect.length === 0, JSON.stringify({ steered: W.steered, ran: W.ran }));
+		}
+		const ph = chat.messages.find((m) => m.mid === OLDPH);
+		let d7 = null;
+		try { d7 = draw(W, ph); } catch (e) { err = String(e); }
+		check('RH8 the old FBR placeholder still offers nothing', !!d7 && allButtons(d7).length === 0, err);
+	}
+	{
+		console.log('RH9: a load heals a leftover placeholder whose -final row is present');
+		const chat = hisChat();
+		chat.messages.push({ role: 'user', content: 'the index', mid: 'u3', iturn: 'u3', ts: 1793100000000 },
+			{ role: 'assistant', content: '', interrupted: true, why: 'dispatched', iturn: 'u3', mid: 'ph3', ts: 1793100000100 },
+			{ role: 'assistant', content: 'Here is the index.', mid: 'e-77-final', run: 'e-77', iturn: 'u3', ts: 1793100009000 });
+		const tombs = [];
+		const ix = { u3: 'cmth5oiix-9-0cdza', [OLD]: 'cmth5oiix-9-0cdza' };
+		const W = hisWorld(chat, { msgTombstone: (mids) => { tombs.push(...mids); }, _dispatchedIx: ix });
+		let n = null, err = '';
+		try { n = W.f.healLeftoverPlaceholders(chat); } catch (e) { err = String(e); }
+		check('RH9 the answered placeholder is dropped and tombstoned, once', n === 1 && !chat.messages.find((m) => m.mid === 'ph3')
+			&& tombs.length === 1 && tombs[0] === 'ph3' && !('u3' in ix), JSON.stringify({ n, tombs, ix }) + err);
+		check('RH9 the unanswered 7 Oct placeholder is kept, as a record', !!chat.messages.find((m) => m.mid === OLDPH) && (OLD in ix));
+		let n2 = null;
+		try { n2 = W.f.healLeftoverPlaceholders(chat); } catch (e) { err = String(e); }
+		check('RH9 a second load finds nothing to heal', n2 === 0, String(n2) + err);
 	}
 	console.log(checks + ' checks, ' + failures + ' failed');
 	process.exit(failures ? 1 : 0);

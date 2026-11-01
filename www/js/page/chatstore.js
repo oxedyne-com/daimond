@@ -2125,7 +2125,32 @@ export async function loadChatMessages(c) {
 	c._loaded = true;
 	if (got.failed) c._short = true;
 	else delete c._short;
+	try { healLeftoverPlaceholders(c); } catch (e) { /* a heal must never break the load */ }
 	return c;
+}
+
+/// Drop every empty hand-off placeholder in `c` whose turn has its answer (UNBLOCK-83). A
+/// placeholder the dispatch index no longer names was never re-judged when its answer
+/// merged, so it sat in the stored transcript offering Run here for weeks. Healed once, on
+/// load, and tombstoned so a later merge does not bring it back. Returns how many went.
+export function healLeftoverPlaceholders(c) {
+	if (!c || !Array.isArray(c.messages)) return 0;
+	var gone = [];
+	c.messages.forEach(function (m) {
+		if (m && m.interrupted && m.why === 'dispatched' && m.iturn && m.mid
+			&& !(m.content && String(m.content).trim()) && dispatchedAnswerPresent(c, m)) gone.push(m);
+	});
+	if (!gone.length) return 0;
+	var mids = gone.map(function (m) { return String(m.mid); });
+	c.messages = c.messages.filter(function (m) { return gone.indexOf(m) === -1; });
+	c.msgCount = c.messages.length;
+	gone.forEach(function (m) { delete _dispatchedIx[String(m.iturn)]; });
+	msgTombstone(mids);
+	touchChat(c);
+	persistChats();
+	try { ChatStore.compact(c.id); } catch (e) { /* compaction catches up on the next write */ }
+	diag('placeholder heal', 'chat=' + c.id + ' dropped ' + gone.length + ': ' + mids.join(','));
+	return gone.length;
 }
 
 /// Load the transcripts of every chat that holds a dispatched placeholder, so the

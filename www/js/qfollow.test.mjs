@@ -192,7 +192,7 @@ test('Q8: every Retry is routed, an edit\'s resend too', () => {
 });
 
 // Continue: the partial's turn and the stop line, with the fakes the two doors reach for.
-const CONT = ['continueTurn', 'continueStopped', 'continueRouted?'];
+const CONT = ['continueTurn', 'continueStopped', 'continueRouted?', 'turnSuperseded', 'opensTurn'];
 function contWorld(over) {
 	const w = world(over);
 	w.CONTINUE_NUDGE = 'NUDGE';

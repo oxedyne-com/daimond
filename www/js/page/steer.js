@@ -21,10 +21,11 @@ import { commitRatings, mountRateControls, pushUserRecord, rateArm, ratingPre, t
 import { maybeAutoDispatch, mountTurnActions, offline, seatNamesRunner } from './sourcemenu.js';
 import { diag, toast } from './passkey_phrase.js';
 import { appendAssistantText, appendCompacted, appendEnding, appendError, appendFailure,
-	appendFilesLog, appendInterjected, appendLeak, appendThinking, appendUserMessage, askHolds,
+	appendInterjected, appendLeak, appendThinking, appendUserMessage, askHolds,
 	cutAccount, cutReason, dropAssistant, endLogOf, failRole, finalizeAssistant, hearsSaid, honoursModelSet,
 	logThinking, nearBottom, renderHistory, renderToolCall, renderToolResult, respModel, setScrollTop,
 	stampAfter, worthSaying } from './turns.js';
+import { appendFilesLog } from './turnfiles.js';
 import { _peerStopping, chatWebWord, noteRecent, runnerDeaf, runnerRoundTagged, runnerTurnOf } from './consent.js';
 import { abortTurn, busySay, chatSpendNode, sayAnswered, syncSendMode, turnHold, updateMeters } from './chats.js';
 import { _appProv, chatDisplayName, ensureWantMinor, foldProd, mailProd, renderSessionList,

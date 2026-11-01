@@ -77,7 +77,7 @@ if (!L.missing.length) {
 // asks `runnerRoad` first, and every error row a turn writes is stamped `ranOn`, the device it failed on.
 const ae = /function appendError\(msg, m\) \{[\s\S]*?\n\t\}/.exec(src);
 check('appendError reads the row\'s origin', !!ae && /runnerRoad\(m\)/.test(ae[0]), ae ? '' : 'no appendError(msg, m)');
-check('the history passes the row', /m\.role === 'error_log'\) \{ appendError\(logRowText\(m\), m\); \}/.test(src));
+check('the history passes the row', /else if \(nr !== false\) appendError\(logRowText\(m\), m\);/.test(src));	// a refusal draws its "not run" row instead (UNBLOCK-83)
 const stamped = src.match(/role: (?:'error_log'|failRole\(e\)), content: friendlyError\([^)]*\)\)?,[^\n]*ranOn: selfDeviceId\(\)/g) || [];
 check('a runner\'s own error rows carry ranOn', stamped.length === 2, stamped.length + ' stamped');
 

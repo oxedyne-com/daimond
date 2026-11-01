@@ -106,7 +106,7 @@ import { install as boot_install } from './page/boot.js';
 bindWasm({ Wasm, init, DaimondApp, builtin_tools, qr_matrix, set_account_ns, heap_bytes,
 	grow_on_purpose, install_panic_hook, set_workspace_dir, use_opfs_workspace, compose_prompt,
 	compose_prompt_for, default_prompt, safety_clause, Sbj });
-// page-split: order state util chatstore parcel_collect parcel_apply handoff send steer workers files_tree files_view admin layout rating sourcemenu links passkey_phrase termpanel turns consent chats tilestyle pending diamonds agentspanel crystal marks settingsui phone_stack phone_swipe phone_home boot turnwrite
+// page-split: order state util chatstore parcel_collect parcel_apply handoff send steer workers files_tree files_view admin layout rating sourcemenu links passkey_phrase termpanel turns turnfiles consent chats tilestyle pending diamonds agentspanel crystal marks settingsui phone_stack phone_swipe phone_home boot turnwrite
 util_install();
 state_install();
 util_install_2();

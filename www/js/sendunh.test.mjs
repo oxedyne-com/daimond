@@ -233,7 +233,8 @@ const NAMES = ['runDispatchFallback', 'leaseDoorRead', 'electProvider', 'electSo
 	'reRunParked', 'markInterrupted', 'isNotRunRow', 'notRunAsk', 'retryTurn', 'lostRetryMid', 'turnMessagesOf',
 	'sendPresenceRead', 'endHandOffNotRun', 'endTurnNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn',
 	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'turnLogState', 'handBackNote', 'seatReason', 'seatWhyKey', 'dropRefusedTiles',
-	'notRunCause', 'notRunRecord', 'placeholderNotRun', 'notRunWhyKey', 'drawNotRunReason'];
+	'notRunCause', 'notRunRecord', 'placeholderNotRun', 'notRunWhyKey', 'drawNotRunReason',
+	'turnLive', 'turnSuperseded', 'opensTurn', 'drawOldNotRun'];	// a settled turn is a record (UNBLOCK-83)
 
 // ── peer.js, loaded as the page loads it (the real recoverDecision / settledLease) ──
 const PW = { addEventListener() {}, dispatchEvent() { return true; } };
@@ -1222,7 +1223,7 @@ async function main() {
 	// The REAL continueTurn → maybeAutoDispatch under the REAL switch: the runner drawn at the press,
 	// gone in the hold's read, so the turn ends "not run" and never runs here. KRi-here: a switch
 	// drawing Here at the press runs it here. Red on 774c1a4c7. Breaks: contentry | contdrawn.
-	const CONT = ['continueTurn', 'continueAsked', 'continueRouted', 'isLostRow'];
+	const CONT = ['continueTurn', 'continueAsked', 'continueRouted', 'isLostRow', 'turnSuperseded', 'opensTurn'];
 	for (const [id, beating, runHere] of [['KRi', true, false], ['KRi-here', false, false], ['KRi-runhere', true, true]]) {
 		console.log(id + ': Continue on a turn where nothing arrived, ' + (beating ? 'the runner drawn at the press, gone in the hold\'s read' : 'the switch drawing Here'));
 		const W = pressWorld(CONT);

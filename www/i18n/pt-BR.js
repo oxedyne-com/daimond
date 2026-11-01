@@ -1826,6 +1826,8 @@
 	'turn.rows_cut.other': '{n} etapas não mostradas',
 	'turn.not_run': 'Não executado. Não foi possível iniciar a transferência.',
 	'turn.not_run_because': 'Não executado · {why}',
+	'turn.not_run_on': 'Não executado · {when}',
+	'turn.not_run_old': 'Não executado',
 	'turn.interrupted_early': 'Interrompido antes de conseguir responder.',
 	'turn.offline': 'A conexão caiu antes de terminar.',
 	'turn.offline_early': 'A conexão caiu antes de a resposta chegar.',

@@ -15,10 +15,9 @@ import { isMobile, mshow, turnKill } from './layout.js';
 import { commitRatings, mountRateControls, pushUserRecord, rateArm, storedEffort, storedPre, tsPast } from './rating.js';
 import { renderLinks, signalLinksChanged } from './links.js';
 import { diag, toast } from './passkey_phrase.js';
-import { _parseTailNote, appendAssistantText, appendCompacted, appendEnding, appendError,
-	appendFailure, appendInterjected, appendThinking, appendUserMessage, endLogOf, failRole,
-	finalizeAssistant, logThinking, renderHistory, renderToolCall, renderToolResult, stampAfter,
-	worthSaying } from './turns.js';
+import { appendAssistantText, appendCompacted, appendEnding, appendError, appendFailure, appendInterjected, appendThinking, appendUserMessage,
+	endLogOf, failRole, finalizeAssistant, logThinking, renderHistory, renderToolCall, renderToolResult, stampAfter, worthSaying } from './turns.js';
+import { _parseTailNote } from './turnfiles.js';
 import { confirmDialog, noteRecent, noticeDialog, pageEgressAllowed, promptDialog, runnerDeaf,
 	runnerRoundTagged } from './consent.js';
 import { busySay, foldChatInto, turnHold } from './chats.js';

@@ -1866,6 +1866,8 @@
 	'turn.rows_cut.other':    '{n} 件のステップは表示されていません',
 	'turn.not_run':           '実行されていません。引き渡しを開始できませんでした。',
 	'turn.not_run_because': '実行されていません · {why}',
+	'turn.not_run_on': '実行されていません · {when}',
+	'turn.not_run_old': '実行されていません',
 	'turn.interrupted_early': '答える前に中断されました。',
 	'turn.offline': '接続が切れたため、最後まで終わりませんでした。',
 	'turn.offline_early': '接続が切れたため、回答が届きませんでした。',

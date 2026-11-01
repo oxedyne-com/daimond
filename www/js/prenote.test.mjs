@@ -560,7 +560,8 @@ console.log('\nretryTurn, answerAgain and continueTurn retract the turn\'s quest
 	// first-copy merge to the stored one), but the question's mid IS the turn's id. A retraction that filters on the
 	// mark alone leaves the question beside the re-ask, and the model is told both (and, with a note, told twice).
 	// One helper finds a turn's messages; no message is marked after it has joined the chat.
-	const helper = lift(SRC, 'turnMessagesOf') + '\n' + lift(SRC, 'isNotRunRow') + '\n' + lift(SRC, 'isLostRow');	// a lost turn's row (SUHT-R F1)
+	const helper = lift(SRC, 'turnMessagesOf') + '\n' + lift(SRC, 'isNotRunRow') + '\n' + lift(SRC, 'isLostRow')
+		+ '\n' + lift(SRC, 'opensTurn') + '\n' + lift(SRC, 'turnSuperseded');	// a settled turn is never asked again (UNBLOCK-83)	// a lost turn's row (SUHT-R F1)
 	const fns = ['continueTurn', 'retryTurn', 'answerAgain'].map((n) => lift(SRC, n));
 	const cut = lift(SRC, 'tailAfter') + '\n' + lift(SRC, 'sessionCut');	// a retraction cuts the stored session (1e)
 	const ask = lift(SRC, 'askAgain') + '\n' + lift(SRC, 'retryRouted') + '\n' + lift(SRC, 'continueAsked');	// Continue's way, through the election (STEER-2)	// retryTurn's way to the model, through the election
