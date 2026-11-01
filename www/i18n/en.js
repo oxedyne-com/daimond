@@ -1646,7 +1646,16 @@
 	'mail.retry': 'Retry',
 	'mail.note.sent_to': 'Sent to {to}.',
 	'mail.err.copy_failed': 'Sent. Its copy in Sent was not kept: {reason}',
-	'mail.unknown_sender': '(unknown)',
+	'mail.no_sender': '(no sender)',
+	'mail.row.away': 'In cloud storage, not yet on this device.',
+	'mail.row.loading': 'Fetching it from cloud storage…',
+	'mail.row.failed': 'Could not fetch it: {reason}',
+	// i18n-indirect: mail.js act.label = mail.row.fetch mail.retry
+	'mail.row.fetch': 'Fetch',
+	'mail.err.no_cloud': 'Cloud storage is not available on this device.',
+	'mail.err.msg_fetch_failed': 'That message is in cloud storage and could not be fetched: {reason}',
+	'mail.err.discard_failed': 'The draft could not be discarded: {reason}',
+	'mail.draft.discard_named': 'Discard the draft "{subject}"',
 	'mail.nothing_yet':    'Nothing here yet. Press <b>⟳</b> to sync.',
 
 	// Syncing. {address} is a mailbox, {folder} the folder inside it.

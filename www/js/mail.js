@@ -138,7 +138,9 @@
 		sel:      null,              // the selected address
 		msgs:     [],                // the digest of the selected mailbox
 		drafts:   [],                // unsent messages held for the selected mailbox
+		draftsView: false,           // the local Drafts folder is open (a mailbox whose server has none)
 		retrying: {},                // draft path -> 1 while its Retry runs
+		fetching: {},                // message file -> {} while fetched from cloud storage, {failed}
 		// address -> { list: [{name, dir, label, role, selectable, delimiter}], err, busy }
 		// The folder list is the SERVER's answer, cached per account for as long
 		// as the page lives. Nothing is stored: a folder that was renamed on the
@@ -1251,8 +1253,27 @@
 	async function discardDraft(d) {
 		if (!d.path && !d.id) return;
 		var path = d.path || (draftsDir(d.from) + '/' + d.id + '.eml');
-		try { await deps.runTool('file_delete', { path: path }); } catch (e) { /* never existed */ }
+		// A delete that did not happen is said, never taken for one that did: the row stayed
+		// while the panel believed it gone.
+		var r;
+		try { r = await deps.runTool('file_delete', { path: path }); }
+		catch (e) { r = { outcome: 'failed', text: (e && e.message) || String(e) }; }
 		if (deps.refreshFiles) deps.refreshFiles();
+		if (!r || r.outcome !== 'done') {
+			throw new Error(t('mail.err.discard_failed', { reason: (r && r.text) || '' }));
+		}
+	}
+
+	/// Discard a draft from its row in the list, after one confirm, as from the editor.
+	async function discardFromList(d) {
+		var ok = !deps.confirm || await deps.confirm(t('compose.discard_title'),
+			t('compose.discard_body'),
+			{ ok: t('compose.discard'), danger: true });
+		if (!ok) return;
+		try { await discardDraft(d); }
+		catch (e) { state.err = friendly(e); }
+		await refreshDrafts();
+		render();
 	}
 
 	// ── Sending ─────────────────────────────────────────────────────
@@ -1826,6 +1847,28 @@
 		render();
 	}
 
+	var CLOUD_MARK = ' · cloud';	// fixed: the digest's own marker, read back by `digestRows`
+
+	/// The rows of a folder's digest, by file: `{ date, from, subject }`. Empty when there is
+	/// no digest, or it is not on this device.
+	async function digestRows(dir) {
+		var r = await readText(dir + '/index.md');
+		var out = {};
+		if (r.outcome !== 'done') return out;
+		String(r.text).split('\n').forEach(function (l) {
+			if (!/^\|/.test(l)) return;
+			// A cell's own pipe is escaped as `\|` by `rebuildIndex`.
+			var c = l.split(/(?<!\\)\|/).slice(1, -1).map(function (x) {
+				return x.trim().replace(/\\\|/g, '|');
+			});
+			var file = c.length === 5 ? c[4].replace(/^`|`$/g, '') : '';
+			if (!file || file === 'File' || /^-+$/.test(file)) return;
+			var date = c[1] === 'cloud' ? '' : c[1].replace(CLOUD_MARK, '');
+			out[file] = { date: date, from: c[2], subject: c[3] };
+		});
+		return out;
+	}
+
 	/// A digest of the mailbox, written where the agents look. Without it, an
 	/// agent asked "what is in my inbox" has to open every message to find out.
 	async function rebuildIndex(a, folder) {
@@ -1848,16 +1891,18 @@
 			// The oldest mail is offloaded to the cloud, so it has no local date, sender or
 			// subject to print. It is still listed — the digest is the whole mailbox — with
 			// its row marked and its UID, which is arrival order, so the lowest is the oldest.
-			lines.push(cloud + ' of these are in cloud storage (marked "cloud" in the Date column, '
-				+ 'blank date/from/subject). Bring one to this device with file_fetch on its file '
-				+ 'path before reading it.');
+			lines.push(cloud + ' of these are in cloud storage (marked "cloud" in the Date column; '
+				+ 'date, from and subject are blank where no device has read them yet). Bring one '
+				+ 'to this device with file_fetch on its file path before reading it.');
 		}
 		lines.push('');
 		lines.push('| UID | Date | From | Subject | File |');
 		lines.push('|----:|------|------|---------|------|');
 		msgs.slice().reverse().forEach(function (m) {
 			var cell = function (s) { return String(s || '').replace(/\|/g, '\\|').replace(/\n/g, ' '); };
-			var date = m.cloud ? 'cloud' : cell(m.date);
+			// A cloud row keeps what is known of it, so the next device to read this digest
+			// can still show it; `cloud` alone when nothing is.
+			var date = m.cloud ? (m.date ? cell(m.date) + CLOUD_MARK : 'cloud') : cell(m.date);
 			lines.push('| ' + (m.local ? 'local' : m.uid) + ' | ' + date + ' | ' + cell(m.from)
 				+ ' | ' + cell(m.subject) + ' | `' + cell(m.file) + '` |');
 		});
@@ -1980,41 +2025,45 @@
 			entries.push({ name: nm, cloud: /in cloud storage/.test(l) });
 		});
 
+		// What an earlier digest of this folder said of each message, by file. It is the
+		// one record of a cloud-only message's sender, subject and date on a device that
+		// does not hold its bytes, and it travels with the workspace like any other file.
+		var known = entries.some(function (e) { return e.cloud; })
+			? await digestRows(mailboxDir(address, folder)) : {};
 		for (var i = 0; i < entries.length; i++) {
 			var name = entries[i].name;
 			var uid  = parseInt(name.split('.')[0], 10) || 0;
 			var local = LOCAL_RE.test(name);  // a sent copy the server has not yet handed back
 			// A cloud-only message is folded in from the listing alone, with no body read:
 			// the point is that the digest and an oldest-by-date answer stand WITHOUT the
-			// expense of fetching. Its date is unknown until it is fetched, so it sorts by
-			// UID — which a server assigns in arrival order, so the lowest UID is the oldest.
+			// expense of fetching. What the last digest knew of it is carried; with no date
+			// it sorts by UID, which a server assigns in arrival order.
 			if (entries[i].cloud) {
+				var k = known[dir + '/' + name] || {};
 				out.push({
 					uid:     uid,
 					file:    dir + '/' + name,
-					from:    '',
-					subject: '',
-					date:    '',
+					from:    k.from || '',
+					subject: k.subject || '',
+					date:    k.date || '',
 					seen:    /:2,[^,]*S/.test(name),
 					cloud:   true,
+					// Without it, `local` was undefined here and false on a fetched message,
+					// and the sort below answered -1 both ways round: the order was whatever
+					// the engine made of an inconsistent comparator.
+					local:   local,
 				});
 				continue;
 			}
 			var raw = await readText(dir + '/' + name);
 			if (raw.outcome !== 'done') continue;
-			var hs = parseHeaders(raw.text);
-			out.push({
+			out.push(Object.assign({
 				uid:     uid,
 				file:    dir + '/' + name,
-				from:    decodeWords(header(hs, 'from')),
-				to:      decodeWords(header(hs, 'to')),
-				subject: decodeWords(header(hs, 'subject')) || t('mail.no_subject'),
-				date:    header(hs, 'date'),
 				seen:    /:2,[^,]*S/.test(name),
 				cloud:   false,
 				local:   local,
-				id:      header(hs, 'message-id').trim(),
-			});
+			}, summary(raw.text)));
 		}
 		// A local copy has no UID and is newer than anything the server has handed
 		// back, so it sorts last, which is newest.
@@ -2023,6 +2072,98 @@
 			return x.uid - y.uid || (Date.parse(x.date) || 0) - (Date.parse(y.date) || 0);
 		});
 		return out;
+	}
+
+	/// What a list row and the digest show of a message, from its text.
+	function summary(text) {
+		var hs = parseHeaders(text);
+		return {
+			from:    decodeWords(header(hs, 'from')),
+			to:      decodeWords(header(hs, 'to')),
+			subject: decodeWords(header(hs, 'subject')) || t('mail.no_subject'),
+			date:    header(hs, 'date'),
+			id:      header(hs, 'message-id').trim(),
+		};
+	}
+
+	/// Bring a cloud-only message to this device. Answers '' once it is here, or why not.
+	///
+	/// The panel reads a message through the raw byte reader, which knows nothing of cloud
+	/// storage, so a message this device did not hold failed as "could not be read" while
+	/// it sat exactly where it should be.
+	async function bring(m) {
+		if (!m.cloud) return '';
+		var C = window.DaimondCloud;
+		if (!C || typeof C.fetch !== 'function') return t('mail.err.no_cloud');
+		var said;
+		try { said = String(await C.fetch(m.file)); }
+		catch (e) { said = 'Error: ' + ((e && e.message) || e); }
+		if (/^Error/.test(said)) return said.replace(/^Error:\s*/, '');
+		m.cloud = false;
+		return '';
+	}
+
+	/// Fetch a cloud-only row's message and read its headers into the row, saying on the
+	/// row that it is being fetched, and why, with a retry, if it could not be.
+	async function fill(m) {
+		var p = state.fetching[m.file];
+		if (p && !p.failed) return;
+		state.fetching[m.file] = {};
+		render();
+		var why = await bring(m);
+		var raw = why ? null : await readText(m.file);
+		if (!why && raw.outcome !== 'done') why = t('mail.err.msg_unreadable');
+		if (why) {
+			state.fetching[m.file] = { failed: why };
+		} else {
+			Object.assign(m, summary(raw.text));
+			delete state.fetching[m.file];
+		}
+		render();
+	}
+
+	/// What a message row says. A cloud-only message no device has read yet has no sender,
+	/// subject or date on this device: its row says it is in cloud storage, being fetched,
+	/// or why it could not be, never "(unknown)".
+	///
+	/// `acts` names the handles the row carries, each drawn from `ROW_ACTS`. The message
+	/// handles (select, delete, read/unread, move, more) join it when the message-action
+	/// journal and gateway v2 land from `mail/c1b`: an entry there and a name here.
+	function rowView(m) {
+		var p    = state.fetching[m.file];
+		var bare = !!m.cloud && !m.from && !m.subject && !m.date;
+		var st   = p ? (p.failed ? 'failed' : 'loading') : (bare ? 'away' : '');
+		return {
+			from:    m.from || (bare ? '' : t('mail.no_sender')),
+			subject: m.subject || '',
+			date:    (m.date || '').replace(/\s*\(.*\)$/, ''),
+			state:   st,
+			why:     (p && p.failed) || '',
+			acts:    st === 'away' ? ['fetch'] : st === 'failed' ? ['retry'] : [],
+		};
+	}
+
+	/// A message row's handles, by the name `rowView` gives them: its class, its words,
+	/// and what pressing it does.
+	var ROW_ACTS = {
+		fetch:  { cls: 'mail-row-fetch', label: 'mail.row.fetch', run: function (m) { fill(m); } },
+		retry:  { cls: 'mail-row-fetch', label: 'mail.retry',     run: function (m) { fill(m); } },
+	};
+
+	// Rows in cloud storage are fetched as they come into view, and only then: a folder
+	// of thousands is not brought down for the sake of a list.
+	var seer = null;
+	function watchAway(row, m) {
+		if (typeof window.IntersectionObserver !== 'function') return;
+		if (!seer) seer = new window.IntersectionObserver(function (es) {
+			es.forEach(function (e) {
+				if (!e.isIntersecting) return;
+				seer.unobserve(e.target);
+				if (e.target.mailMsg) fill(e.target.mailMsg);
+			});
+		});
+		row.mailMsg = m;
+		seer.observe(row);
 	}
 
 	/// Order a mailbox listing and cut it to a window, for the mail tools.
@@ -2849,15 +2990,35 @@
 		});
 	}
 
-	/// The folder holding a mailbox's sent mail: the one whose role is `sent`, or
-	/// '' while the server has not said, or has none.
-	function sentFolder(a) {
+	/// The folder of a mailbox holding a role's mail (`sent`, `drafts`, ...): the one
+	/// the server declares it of, or '' while the server has not said, or has none.
+	function roleFolder(a, role) {
 		var c = a && state.folders[a.address];
 		var list = (c && c.list) || [];
 		for (var i = 0; i < list.length; i++) {
-			if (list[i].role === 'sent' && list[i].selectable) return list[i].name;
+			if (list[i].role === role && list[i].selectable) return list[i].name;
 		}
 		return '';
+	}
+
+	function sentFolder(a) { return roleFolder(a, 'sent'); }
+
+	/// Is the Drafts folder the one open? Unsent drafts are drawn there, as every mail
+	/// client draws them: in the server's `\Drafts` folder, found by its role and never by
+	/// its spelling, or in a Drafts folder of this device's own where the server has none.
+	function inDrafts(a) {
+		if (!a) return false;
+		var df = roleFolder(a, 'drafts');
+		return df ? (a.folder || 'INBOX') === df : state.draftsView;
+	}
+
+	/// Open the Drafts folder of a mailbox whose server has none.
+	async function openLocalDrafts() {
+		state.draftsView = true;
+		state.note = '';
+		state.err  = '';
+		await refreshDrafts();
+		render();
 	}
 
 	function folderEntry(a, name) {
@@ -2937,6 +3098,13 @@
 			await fileSent(a);
 			// A folder that is no longer there cannot go on being the selected
 			// one, or every sync would ask for a mailbox the server has not got.
+			// The local Drafts was open for want of the server's; now it has said.
+			if (state.draftsView && address === state.sel && roleFolder(a, 'drafts')) {
+				state.draftsView = false;
+				a.folder = roleFolder(a, 'drafts');
+				save();
+				await loadDigest(address, a.folder);
+			}
 			var list = state.folders[address].list;
 			if (a.folder && !list.some(function (f) { return f.name === a.folder && f.selectable; })) {
 				a.folder = 'INBOX';
@@ -2957,13 +3125,16 @@
 	/// are read straight back; nothing is fetched until a sync is asked for.
 	async function selectFolder(name) {
 		var a = acct(state.sel);
-		if (!a || a.folder === name) return;
+		var was = state.draftsView;
+		state.draftsView = false;
+		if (!a || a.folder === name) { if (was) render(); return; }
 		a.folder = name;
 		fld(a, name);
 		save();
 		state.note = '';
 		state.err  = '';
 		await loadDigest(a.address, name);
+		if (inDrafts(a)) await refreshDrafts();
 		render();
 		// A folder opened for the first time holds nothing, and an empty list
 		// looks like an empty folder rather than one never fetched. Go and get
@@ -3219,19 +3390,32 @@
 
 		renderFolders();
 
-		// The drafts. Unsent mail sits above the inbox because it is the only thing in the
-		// panel that is waiting on the user — and because a draft an agent wrote for them
-		// to check would otherwise be written into a folder nobody looks in.
+		// The drafts, in the Drafts folder and nowhere else (Thunderbird's place for them;
+		// ruling of 1 Nov). They used to sit above the inbox under "Drafts · n", which read
+		// as part of the inbox and was not where he looked for them. The folder row carries
+		// their number, so a draft an agent wrote for him is still seen.
 		els.list.innerHTML = '';
-		if (state.sel && state.drafts.length) {
-			var box = html('<div class="mail-drafts"><div class="mail-drafts-head">'
-				+ esc(t('mail.drafts_head', { n: state.drafts.length })) + '</div></div>');
+		var drafting = state.sel && inDrafts(acct(state.sel));
+		if (drafting && state.drafts.length) {
+			var box = html('<div class="mail-drafts"></div>');
 			state.drafts.forEach(function (d) {
 				var row = document.createElement('div');
 				row.className = 'mail-draft' + (d.failed ? ' unsent' : '');
 				row.innerHTML = '<div class="mail-subj">' + esc(d.subject) + '</div>'
 					+ '<div class="mail-from">' + esc(d.to || t('mail.no_recipient')) + '</div>';
-				rowAsButton(row, function () { openDraft(d.path); });
+				rowAsButton(row, function () { openDraft(d.path); }, d.subject);
+				// Its own handle, on the row: a draft is discarded where it is seen, not
+				// only from inside the editor.
+				var x = document.createElement('button');
+				x.className = 'mail-draft-discard';
+				x.textContent = t('compose.discard');
+				x.title = t('mail.draft.discard_named', { subject: d.subject });
+				x.setAttribute('aria-label', x.title);
+				x.addEventListener('click', function (ev) {
+					if (ev && ev.stopPropagation) ev.stopPropagation();
+					discardFromList(d);
+				});
+				row.appendChild(x);
 				box.appendChild(row);
 				// A send that failed: its reason in its own words, and the one thing to do.
 				if (d.failed) {
@@ -3251,15 +3435,36 @@
 		}
 
 		// The messages.
-		if (state.sel && state.msgs.length) {
+		if (seer) seer.disconnect();
+		if (state.sel && !state.draftsView && state.msgs.length) {
 			state.msgs.slice().reverse().forEach(function (m) {
+				var v   = rowView(m);
 				var row = document.createElement('div');
-				row.className = 'mail-msg' + (m.seen ? '' : ' unread');
-				row.innerHTML = '<div class="mail-from">' + esc(m.from || t('mail.unknown_sender')) + '</div>'
-					+ '<div class="mail-subj">' + esc(m.subject) + '</div>'
-					+ '<div class="mail-date">' + esc((m.date || '').replace(/\s*\(.*\)$/, '')) + '</div>';
-				rowAsButton(row, function () { openMessage(m); });
+				row.className = 'mail-msg' + (m.seen ? '' : ' unread') + (v.state ? ' ' + v.state : '');
+				row.innerHTML = (v.from ? '<div class="mail-from">' + esc(v.from) + '</div>' : '')
+					+ (v.subject ? '<div class="mail-subj">' + esc(v.subject) + '</div>' : '')
+					+ (v.date ? '<div class="mail-date">' + esc(v.date) + '</div>' : '');
+				if (v.state) {
+					var say = v.state === 'failed' ? t('mail.row.failed', { reason: v.why })
+						: t(v.state === 'loading' ? 'mail.row.loading' : 'mail.row.away');
+					row.appendChild(html('<div class="mail-fine mail-row-state">' + esc(say) + '</div>'));
+				}
+				// The row's handles: a row with nothing to show yet can still be asked for.
+				v.acts.forEach(function (name) {
+					var act = ROW_ACTS[name];
+					var b = document.createElement('button');
+					b.className = act.cls;
+					b.textContent = t(act.label);
+					b.addEventListener('click', function (ev) {
+						if (ev && ev.stopPropagation) ev.stopPropagation();
+						act.run(m);
+					});
+					row.appendChild(b);
+				});
+				rowAsButton(row, function () { openMessage(m); },
+					v.subject || v.from || t('mail.row.away'));
 				els.list.appendChild(row);
+				if (v.state === 'away') watchAway(row, m);
 			});
 
 			// A sync stops at the cap, and a list that just stops looks like a mailbox that ends.
@@ -3291,7 +3496,7 @@
 				if (sb) sb.addEventListener('click', function () { state.draining = false; });
 				els.list.appendChild(more);
 			}
-		} else if (state.sel && state.unlocked !== false) {
+		} else if (state.sel && state.unlocked !== false && !(drafting && state.drafts.length)) {
 			els.list.appendChild(html('<div class="mail-fine">' + t('mail.nothing_yet') + '</div>'));
 		}
 
@@ -3342,6 +3547,28 @@
 	/// The folder picker: which of the account's mailboxes the list below is
 	/// showing. It is drawn only when there is an account to have folders, and
 	/// stays a single row — the inbox — until the server has answered.
+	/// How many unsent drafts a Drafts folder row holds, beside its count.
+	function draftsMark(row) {
+		if (!state.drafts.length) return;
+		var n = document.createElement('span');
+		n.className = 'mail-count mail-drafts-n';
+		n.textContent = String(state.drafts.length);
+		n.title = t('mail.drafts_head', { n: state.drafts.length });
+		row.appendChild(n);
+	}
+
+	/// The Drafts folder of a mailbox whose server declares none: this device's drafts.
+	function localDraftsRow() {
+		var row = document.createElement('div');
+		row.className = 'mail-acct mail-folder mail-folder-local' + (state.draftsView ? ' on' : '');
+		row.setAttribute('data-role', 'drafts');
+		row.innerHTML = '<span class="mail-addr">' + esc(t('mail.folder.drafts')) + '</span>';
+		draftsMark(row);
+		rowAsButton(row, openLocalDrafts, t('mail.drafts_head', { n: state.drafts.length }));
+		if (state.draftsView) row.setAttribute('aria-current', 'true');
+		return row;
+	}
+
 	function renderFolders() {
 		if (!els.folders) return;
 		els.folders.innerHTML = '';
@@ -3359,11 +3586,13 @@
 
 		var box = document.createElement('div');
 		box.className = 'mail-folder-list';
+		// The folder open: none of the server's while the local Drafts is.
+		var cur = state.draftsView ? '' : (a.folder || 'INBOX');
 		list.forEach(function (f) {
 			var row = document.createElement('div');
 			// `mail-acct` carries the row's shape and its selected state already:
 			// a folder is the same kind of choice as a mailbox, one level down.
-			row.className = 'mail-acct mail-folder' + (f.name === (a.folder || 'INBOX') ? ' on' : '');
+			row.className = 'mail-acct mail-folder' + (f.name === cur ? ' on' : '');
 			row.setAttribute('data-folder', f.name);
 			if (f.role) row.setAttribute('data-role', f.role);
 			var depth = f.delimiter ? f.name.split(f.delimiter).length - 1 : 0;
@@ -3388,6 +3617,15 @@
 				cnt.className = 'mail-count' + (c.stale ? ' stale' : '');
 				cnt.textContent = c.text;
 				cnt.title = c.title;
+				// The Drafts folder counts the drafts held here with those on the server:
+				// one number, not two side by side.
+				if (f.role === 'drafts' && state.drafts.length) {
+					var fd = a.folders && a.folders[f.name];
+					var on = (fd && ms(fd.lastSync)) ? (fd.count | 0) : 0;
+					cnt.textContent = fmtCount(on + state.drafts.length);
+					cnt.className += ' mail-drafts-n';
+					cnt.title = t('mail.drafts_head', { n: state.drafts.length }) + ' — ' + c.title;
+				}
 				row.appendChild(cnt);
 			}
 			if (!f.selectable) {
@@ -3400,9 +3638,12 @@
 				// the title, and "as at" is the half of the number that matters.
 				rowAsButton(row, function () { selectFolder(f.name); },
 					labelFor(a, f.name) + ' — ' + c.title);
-				if (f.name === (a.folder || 'INBOX')) row.setAttribute('aria-current', 'true');
+				if (f.name === cur) row.setAttribute('aria-current', 'true');
 			}
 			box.appendChild(row);
+			// A server with no Drafts folder: the drafts this device holds get one of
+			// its own, where every other client has it, just below the inbox.
+			if (f.name === 'INBOX' && !roleFolder(a, 'drafts')) box.appendChild(localDraftsRow());
 		});
 		els.folders.appendChild(box);
 
@@ -3690,6 +3931,12 @@
 	/// agent's tools use too, so the person and the agent see one message. Its HTML is a
 	/// stranger's markup and goes only into the panel's sandboxed frame.
 	async function openMessage(m) {
+		var why = await bring(m);
+		if (why) {
+			state.err = t('mail.err.msg_fetch_failed', { reason: why });
+			render();
+			return;
+		}
 		var raw = await readRaw(m.file);
 		if (raw.outcome !== 'done') {
 			state.err = t('mail.err.msg_unreadable');
@@ -3769,9 +4016,11 @@
 				await refreshDrafts();
 				return path;
 			},
+			// Drawn again at once: refreshing the list without drawing it left the discarded
+			// draft on screen until something else happened to redraw the panel.
 			discard: async function () {
-				await discardDraft(d);
-				await refreshDrafts();
+				try { await discardDraft(d); }
+				finally { await refreshDrafts(); render(); }
 			},
 			sent:    function (note) {
 				state.note = note;
@@ -4273,8 +4522,8 @@
 			if (deps.refreshFiles) deps.refreshFiles();
 			try { await refreshDrafts(); } catch (e) { /* the file is written regardless */ }
 			render();
-			var said = 'Draft saved to ' + path + ' for ' + addr + '. It is in the Mail panel drafts '
-				+ 'now, where the user reviews it and presses Send. Nothing has been sent.';
+			var said = 'Draft saved to ' + path + ' for ' + addr + '. It is in the Drafts folder of the '
+				+ 'Mail panel now, where the user reviews it and presses Send. Nothing has been sent.';
 			_drafted.push({ said: said, draft: { id: id, path: path, address: addr } });
 			if (_drafted.length > DRAFTED_MAX) _drafted.shift();
 			return said;
@@ -4346,6 +4595,10 @@
 		/// The unsent messages listed, each with why its last send failed, if it did;
 		/// Retry on one; and what the panel's two lines say.
 		drafts:       function () { return state.drafts.slice(); },
+		rowView:      function (file) {
+			var m = state.msgs.find(function (x) { return x.file === file; });
+			return m ? rowView(m) : null;
+		},
 		refreshDrafts: refreshDrafts,
 		retry:        retrySend,
 		said:         function () { return { note: state.note, err: state.err }; },

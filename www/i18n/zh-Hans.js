@@ -701,7 +701,15 @@
 	'mail.retry': '重试',
 	'mail.note.sent_to': '已发送给 {to}。',
 	'mail.err.copy_failed': '已发送。未能在“已发送”中保留副本：{reason}',
-	'mail.unknown_sender': '（未知）',
+	'mail.no_sender': '（无发件人）',
+	'mail.row.away': '在云存储中，还不在这台设备上。',
+	'mail.row.loading': '正在从云存储取回…',
+	'mail.row.failed': '没能取回：{reason}',
+	'mail.row.fetch': '取回',
+	'mail.err.no_cloud': '这台设备上用不了云存储。',
+	'mail.err.msg_fetch_failed': '这封邮件在云存储中，没能取回：{reason}',
+	'mail.err.discard_failed': '没能丢弃草稿：{reason}',
+	'mail.draft.discard_named': '丢弃草稿“{subject}”',
 	'mail.nothing_yet':    '这里还什么都没有。按 <b>⟳</b> 同步。',
 
 	// 同步中。{address} 是一个邮箱，{folder} 是它里面的文件夹。

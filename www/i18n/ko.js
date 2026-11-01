@@ -705,7 +705,15 @@
 	'mail.retry': '다시 시도',
 	'mail.note.sent_to': '{to}에게 보냈습니다.',
 	'mail.err.copy_failed': '보냈습니다. 보낸편지함 사본은 저장되지 않았습니다: {reason}',
-	'mail.unknown_sender': '(알 수 없음)',
+	'mail.no_sender': '(보낸 사람 없음)',
+	'mail.row.away': '클라우드 저장소에 있고, 아직 이 기기에는 없어요.',
+	'mail.row.loading': '클라우드 저장소에서 가져오는 중…',
+	'mail.row.failed': '가져오지 못했어요: {reason}',
+	'mail.row.fetch': '가져오기',
+	'mail.err.no_cloud': '이 기기에서는 클라우드 저장소를 쓸 수 없어요.',
+	'mail.err.msg_fetch_failed': '이 메일은 클라우드 저장소에 있는데 가져오지 못했어요: {reason}',
+	'mail.err.discard_failed': '임시 보관 메일을 버리지 못했어요: {reason}',
+	'mail.draft.discard_named': '임시 보관 메일 "{subject}" 버리기',
 	'mail.nothing_yet':    '아직 아무것도 없어요. <b>⟳</b>를 눌러 동기화하세요.',
 
 	// 동기화 중. {address}는 메일함, {folder}는 그 안의 폴더예요.

@@ -566,7 +566,15 @@
 	'mail.retry': 'Réessayer',
 	'mail.note.sent_to': 'Envoyé à {to}.',
 	'mail.err.copy_failed': 'Envoyé. Sa copie dans Envoyés n’a pas été conservée : {reason}',
-	'mail.unknown_sender': '(inconnu)',
+	'mail.no_sender': '(sans expéditeur)',
+	'mail.row.away': 'Dans le stockage en ligne, pas encore sur cet appareil.',
+	'mail.row.loading': 'Récupération depuis le stockage en ligne…',
+	'mail.row.failed': 'Impossible de le récupérer : {reason}',
+	'mail.row.fetch': 'Récupérer',
+	'mail.err.no_cloud': 'Le stockage en ligne n’est pas disponible sur cet appareil.',
+	'mail.err.msg_fetch_failed': 'Ce message est dans le stockage en ligne et n’a pas pu être récupéré : {reason}',
+	'mail.err.discard_failed': 'Le brouillon n’a pas pu être abandonné : {reason}',
+	'mail.draft.discard_named': 'Abandonner le brouillon « {subject} »',
 	'mail.nothing_yet': 'Rien ici pour l’instant. Appuyez sur <b>⟳</b> pour synchroniser.',
 
 	// Syncing.

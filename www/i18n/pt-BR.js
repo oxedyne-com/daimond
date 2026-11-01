@@ -561,7 +561,15 @@
 	'mail.retry': 'Tentar de novo',
 	'mail.note.sent_to': 'Enviado para {to}.',
 	'mail.err.copy_failed': 'Enviado. A cópia em Enviados não foi guardada: {reason}',
-	'mail.unknown_sender': '(desconhecido)',
+	'mail.no_sender': '(sem remetente)',
+	'mail.row.away': 'No armazenamento em nuvem, ainda não neste dispositivo.',
+	'mail.row.loading': 'Buscando no armazenamento em nuvem…',
+	'mail.row.failed': 'Não foi possível buscar: {reason}',
+	'mail.row.fetch': 'Buscar',
+	'mail.err.no_cloud': 'O armazenamento em nuvem não está disponível neste dispositivo.',
+	'mail.err.msg_fetch_failed': 'Essa mensagem está no armazenamento em nuvem e não pôde ser buscada: {reason}',
+	'mail.err.discard_failed': 'Não foi possível descartar o rascunho: {reason}',
+	'mail.draft.discard_named': 'Descartar o rascunho "{subject}"',
 	'mail.nothing_yet': 'Ainda não há nada aqui. Pressione <b>⟳</b> para sincronizar.',
 
 	// Syncing.

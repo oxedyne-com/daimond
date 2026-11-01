@@ -284,15 +284,10 @@
 .msg-act:hover { color: var(--accent-text); background: var(--bg-hover); }
 
 /* ── Drafts ──────────────────────────────────────────────────────
- * Above the inbox, because a draft is the only thing in the panel waiting on the
- * user — and because a draft the daimon wrote for them to check would otherwise
- * sit in a folder nobody opens. */
+ * In the Drafts folder, above any drafts the server holds there. The folder row
+ * carries their number, so a draft the daimon wrote for him to check is seen. */
 .mail-drafts { border-bottom: 1px solid var(--border-2); background: var(--bg-tertiary); }
-.mail-drafts-head {
-	padding: 6px 10px;
-	font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.04em;
-	color: var(--text-muted);
-}
+.mail-drafts-n { color: var(--accent); font-weight: 600; }
 .mail-draft {
 	padding: 7px 10px;
 	cursor: pointer;
@@ -315,6 +310,20 @@
 }
 .mail-retry:hover { color: var(--accent-text); background: var(--bg-hover); }
 .mail-retry:disabled { opacity: 0.5; cursor: default; }
+/* A draft's own handle, at the row's end, always shown: no hover-only control. */
+.mail-draft { position: relative; padding-right: 92px; }
+.mail-draft-discard,
+.mail-row-fetch {
+	background: var(--bg-secondary); color: var(--text-primary);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
+	padding: 4px 10px; font-size: var(--fs-xs);
+}
+.mail-draft-discard { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); }
+.mail-draft-discard:hover,
+.mail-row-fetch:hover { color: var(--accent-text); background: var(--bg-hover); }
+/* A message not yet on this device: what is known, and where it stands. */
+.mail-row-state { margin: 2px 0 4px; }
+.mail-msg.failed .mail-row-state { color: var(--accent-text); overflow-wrap: anywhere; }
 
 /* ── Writing one ─────────────────────────────────────────────────
  * A stage panel, so the daimon stays beside the draft while it is written. The

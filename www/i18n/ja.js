@@ -704,7 +704,15 @@
 	'mail.retry': '再試行',
 	'mail.note.sent_to': '{to} に送信しました。',
 	'mail.err.copy_failed': '送信しました。送信済みへのコピーは保存されませんでした: {reason}',
-	'mail.unknown_sender': '（不明）',
+	'mail.no_sender': '（差出人なし）',
+	'mail.row.away': 'クラウドストレージにあり、まだこの端末にはありません。',
+	'mail.row.loading': 'クラウドストレージから取得しています…',
+	'mail.row.failed': '取得できませんでした：{reason}',
+	'mail.row.fetch': '取得',
+	'mail.err.no_cloud': 'この端末ではクラウドストレージを使えません。',
+	'mail.err.msg_fetch_failed': 'このメッセージはクラウドストレージにあり、取得できませんでした：{reason}',
+	'mail.err.discard_failed': '下書きを破棄できませんでした：{reason}',
+	'mail.draft.discard_named': '下書き「{subject}」を破棄',
 	'mail.nothing_yet':    'ここにはまだ何もありません。<b>⟳</b> を押して同期してください。',
 
 	// 同期中。{address} はメールボックス、{folder} はその中のフォルダーです。

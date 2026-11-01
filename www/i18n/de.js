@@ -565,7 +565,15 @@
 	'mail.retry': 'Erneut versuchen',
 	'mail.note.sent_to': 'An {to} gesendet.',
 	'mail.err.copy_failed': 'Gesendet. Die Kopie unter Gesendet wurde nicht gespeichert: {reason}',
-	'mail.unknown_sender': '(unbekannt)',
+	'mail.no_sender': '(kein Absender)',
+	'mail.row.away': 'Im Cloud-Speicher, noch nicht auf diesem Gerät.',
+	'mail.row.loading': 'Wird aus dem Cloud-Speicher geholt …',
+	'mail.row.failed': 'Konnte nicht geholt werden: {reason}',
+	'mail.row.fetch': 'Holen',
+	'mail.err.no_cloud': 'Der Cloud-Speicher ist auf diesem Gerät nicht verfügbar.',
+	'mail.err.msg_fetch_failed': 'Diese Nachricht liegt im Cloud-Speicher und konnte nicht geholt werden: {reason}',
+	'mail.err.discard_failed': 'Der Entwurf konnte nicht verworfen werden: {reason}',
+	'mail.draft.discard_named': 'Den Entwurf „{subject}“ verwerfen',
 	'mail.nothing_yet': 'Hier ist noch nichts. Drücke <b>⟳</b> zum Synchronisieren.',
 
 	// Syncing.
