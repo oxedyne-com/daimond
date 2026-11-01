@@ -73,6 +73,7 @@
 	var SALT_BYTES        = 16;		// Per-install random salt length.
 	var KEY_DRAWS         = 4;		// Ed25519 draws before an engine's refusal stands.
 	var IV_BYTES          = 12;		// AES-GCM nonce length.
+	var REACH_AAD         = 'daimond/reach/v1|';	// fixed: the purpose Kimberlite seals `reach` under.
 	var AES_BITS          = 256;		// AES-GCM key length.
 	var CHUNK_KEY_INFO    = 'daimond chunk-iv key v1';	// HKDF label, see chunkKeyFromBits.
 	var CHUNK_IV_LABEL    = 'daimond chunk-iv v1\u0000';	// HMAC input prefix, see wrapChunk.
@@ -2138,6 +2139,21 @@
 		return new Uint8Array(pt);
 	}
 
+	/// The roots a Kimberlite says it may reach, opened from the sealed `reach` of its
+	/// presence beat (UNBLOCK-78). Kimberlite seals the JSON list of roots with the account
+	/// key under `daimond/reach/v1|<device id>`, so the relay carries the bytes but cannot
+	/// read a file name, and a seal lifted onto another device's row does not open. Rejects
+	/// on a clear list, a wrong key, a tampered seal or another device's purpose.
+	async function openReach(b64, devId) {
+		if (typeof b64 !== 'string' || b64 === '' || !devId) {
+			throw new Error('reach: not a sealed reach for a named device');
+		}
+		var pt = await unwrapBytesAad(b64dec(b64), REACH_AAD + String(devId));
+		var roots = JSON.parse(fromUtf8(pt));
+		if (!Array.isArray(roots)) throw new Error('reach: the opened reach is not a list');
+		return roots.filter(function (r) { return typeof r === 'string' && r.charAt(0) === '/'; });
+	}
+
 	// ── The identity card ──────────────────────────────────────
 	//
 	// What a QR code carries and what a paste carries. A bare public key is not
@@ -2659,6 +2675,8 @@
 		wrapChunk:    wrapChunk,
 		wrapBytesAad:   wrapBytesAad,
 		unwrapBytesAad: unwrapBytesAad,
+		/// Open a Kimberlite's sealed `reach` to its roots (UNBLOCK-78).
+		openReach:      openReach,
 		reset:        reset,
 		/// Take this device out of its account because the ACCOUNT removed it.
 		/// reset() plus the marker the boot gate needs to show "removed, link

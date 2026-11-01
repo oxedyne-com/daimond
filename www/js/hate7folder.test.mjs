@@ -12,7 +12,7 @@
      H4  a path outside every runner's reach is refused with its
          sentence; one inside, or any while no runner states a
          reach, is kept; a relative path is refused;
-     H5  peer.js relays a runner row's `reach`.
+     H5  peer.js keeps a runner row's `reach` only as opened from its seal.
 
    Lifts the REAL functions out of daimond.js. Red proof:
    HATE7_SRC=<daimond.js at the base> node this file.
@@ -98,8 +98,11 @@ if (need('folderRefusal')) {
 	check('H4 empty clears', F.folderRefusal('') === '');
 }
 {
-	const ok = /recOut\.reach = /.test(PEER) && /Array\.isArray\(rec\.reach\)/.test(PEER);
-	check('H5 peer.js relays a runner row\'s reach', ok);
+	// UNBLOCK-78: the row's reach is only ever the opened seal; a clear list is never kept
+	// (peer.test.mjs proves the open, the refused purpose and the ignored clear list).
+	const ok = /recOut\.reach = rr/.test(PEER) && /reachRoots\(String\(id\), rec\.reach\)/.test(PEER)
+		&& !/Array\.isArray\(rec\.reach\)/.test(PEER);
+	check('H5 peer.js keeps a runner row\'s reach only as opened from its seal', ok);
 }
 console.log((failures ? 'FAIL' : 'PASS') + ' ' + (checks - failures) + '/' + checks);
 process.exit(failures ? 1 : 0);

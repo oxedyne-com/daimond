@@ -572,6 +572,54 @@ async function main() {
 	check('a DIFFERENT purpose CANNOT open it (crypto-layer domain separation)', crossAad === true);
 	check('a no-AAD open of an AAD body also fails (parcel/voice vs peer separation)', noAad === true);
 
+	// ── UNBLOCK-78: a Kimberlite's reach is sealed, and only the account opens it ────
+	console.log('\nReach — sealed under daimond/reach/v1|<device id>, opened by the page, never read in clear');
+	{
+		const ROOTS = ['/home/u/usr', '/srv/p'];
+		const b64 = (u8) => Buffer.from(u8).toString('base64');
+		const sealReach = async (tab, roots, dev) => b64(await tab.DaimondIdentity.wrapBytesAad(
+			encU8(JSON.stringify(roots)), 'daimond/reach/v1|' + dev));
+		const settle = () => new Promise((r) => setTimeout(r, 30));
+		const row = (reach) => ({ name: 'argonaut', last_seen: Date.now(), kind: 'runner', reach });
+		const sealed = await sealReach(phone, ROOTS, 'KIMB-1');
+		// The helper itself: sealed opens, another device's purpose and a clear list do not.
+		const opened = await laptop.DaimondIdentity.openReach(sealed, 'KIMB-1');
+		check('openReach opens a sealed reach to its roots', JSON.stringify(opened) === JSON.stringify(ROOTS));
+		let wrongDev = false, clear = false, other = false;
+		try { await laptop.DaimondIdentity.openReach(sealed, 'KIMB-2'); } catch (e) { wrongDev = true; }
+		try { await laptop.DaimondIdentity.openReach(ROOTS, 'KIMB-1'); } catch (e) { clear = true; }
+		try { await stranger.DaimondIdentity.openReach(sealed, 'KIMB-1'); } catch (e) { other = true; }
+		check('openReach refuses a seal lifted onto another device (AAD)', wrongDev);
+		check('openReach refuses a clear list', clear);
+		check('openReach refuses another account', other);
+		check('the sealed bytes hold no root path', !/home|srv/.test(Buffer.from(sealed, 'base64').toString('latin1')));
+		// The presence reader: the row carries the roots once opened, and announces them.
+		const P = laptop.DaimondPresence;
+		P.ingest({ 'KIMB-1': row(sealed) }, Date.now());
+		check('the row carries no reach while its seal opens', P.snapshot()['KIMB-1'].reach === undefined);
+		await settle();
+		check('presence: a sealed reach opens onto the runner row',
+			JSON.stringify(P.snapshot()['KIMB-1'].reach) === JSON.stringify(ROOTS), JSON.stringify(P.snapshot()['KIMB-1']));
+		P.ingest({ 'KIMB-1': row(sealed) }, Date.now());
+		check('presence: the opened roots stay on the next beat of the same seal',
+			JSON.stringify(P.snapshot()['KIMB-1'].reach) === JSON.stringify(ROOTS));
+		// Tampered purpose: a seal made for KIMB-2 on KIMB-1's row is refused.
+		P.ingest({ 'KIMB-1': row(await sealReach(phone, ['/etc'], 'KIMB-2')) }, Date.now());
+		await settle();
+		check('presence: a seal under another device\'s purpose is refused (no reach)',
+			P.snapshot()['KIMB-1'].reach === undefined);
+		// Flipped byte: the GCM tag refuses it.
+		const raw = Buffer.from(sealed, 'base64'); raw[raw.length - 1] ^= 1;
+		P.ingest({ 'KIMB-1': row(raw.toString('base64')) }, Date.now());
+		await settle();
+		check('presence: a tampered seal is refused (no reach)', P.snapshot()['KIMB-1'].reach === undefined);
+		// Clear list from an older Kimberlite: ignored, its paths stay hidden.
+		P.ingest({ 'KIMB-1': row(['/home/u/usr']) }, Date.now());
+		await settle();
+		check('presence: a clear reach is never kept', P.snapshot()['KIMB-1'].reach === undefined);
+		P.ingest({}, Date.now());
+	}
+
 	// A DPY2 envelope sealed under the WRONG purpose is refused by the peer open path.
 	const legacyErr    = await phone.DaimondPeer.signEnvelope(phone.DaimondPeer.makeErrand({ turnId: 'legacy-1', chatId: 'c', prompt: 'hi' }));
 	const legacyPlain  = encU8(JSON.stringify(legacyErr));

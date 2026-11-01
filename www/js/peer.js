@@ -2708,6 +2708,43 @@
 		return moved;
 	}
 
+	// ── A Kimberlite's sealed reach (UNBLOCK-78) ─────────────
+	//
+	// The beat carries `reach` sealed, and the open is async while an ingest is not, so
+	// each device's last seal is opened once, in the background, and its roots kept
+	// against that seal. The open lands on the live row and announces the move.
+	var _reachOpen = {};				// deviceId -> { ct, roots } (roots null: pending or refused)
+	var _reachLast = {};				// deviceId -> the seal its last ingested row carried
+
+	/// The roots a runner row's sealed `reach` opened to, or null while it opens, when it
+	/// would not open, or when the row carries no seal (a clear list is not trusted).
+	function reachRoots(id, ct) {
+		if (typeof ct !== 'string' || ct === '') { delete _reachLast[id]; return null; }
+		_reachLast[id] = ct;
+		var held = _reachOpen[id];
+		if (held && held.ct === ct) return held.roots;
+		var I = window.DaimondIdentity;
+		if (!I || !I.openReach || (I.isUnlocked && !I.isUnlocked())) return null;
+		_reachOpen[id] = { ct: ct, roots: null };
+		I.openReach(ct, id).then(function (roots) {
+			return (roots && roots.length) ? roots : null;
+		}, function () {
+			// A lock mid-open is not a refusal: forget it, so the next beat opens again.
+			if (I.isUnlocked && !I.isUnlocked() && _reachOpen[id] && _reachOpen[id].ct === ct) delete _reachOpen[id];
+			return null;
+		}).then(function (roots) {
+			var held2 = _reachOpen[id];
+			if (!roots || !held2 || held2.ct !== ct) return;
+			held2.roots = roots;
+			var row = _presence[id];
+			if (row && row.kind === 'runner' && _reachLast[id] === ct) {
+				row.reach = roots;
+				announcePresence();
+			}
+		});
+		return null;
+	}
+
 	/// Ingest an AUTHORITATIVE presence map from the gateway and REPLACE the local
 	/// view with it. The gateway is now the source of truth -- presence travels on
 	/// its own lightweight, non-waking path, not on the content parcel -- so this is
@@ -2821,13 +2858,13 @@
 				// turn to the model, so a say over the lease reaches it (`hearsSaid`). Kept only
 				// when it said so: a runner that says nothing gets them as the next turn.
 				if (rec.hears === true || rec.hears === 1) recOut.hears = true;
-				// REACH (HATE-2): the absolute roots its config lets it reach, from its signed
-				// beat. ABSENT when it sent none, so a Diamond's folder is checked only against a
-				// runner that said where it may go (`folderInReach`).
-				if (Array.isArray(rec.reach)) {
-					var rr = rec.reach.filter(function (r) { return typeof r === 'string' && r.charAt(0) === '/'; });
-					if (rr.length) recOut.reach = rr;
-				}
+				// REACH (HATE-2, sealed by UNBLOCK-78): the absolute roots its config lets it
+				// reach, sealed to the account (`DaimondIdentity.openReach`), so the relay never
+				// reads a path. Kept only once opened; ABSENT until then, and for a clear list
+				// from an older Kimberlite, which is never trusted (its paths stay hidden): a
+				// Diamond's folder is then left to the runner's own clamp (`folderInReach`).
+				var rr = reachRoots(String(id), rec.reach);
+				if (rr) recOut.reach = rr;
 				// Its engine ABI and the oldest it reads (OWNKEY ABI-b), kept only when it names
 				// one, so a legacy runner is judged by the old rule (`recEngineOk`).
 				if ((+rec.abi | 0) > 0) {

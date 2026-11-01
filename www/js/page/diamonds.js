@@ -52,8 +52,8 @@ export function setDiamondFolder(id, path) {
 }
 
 /// Does a runner that said where it may go reach `path`? Read from every runner row
-/// carrying `reach` (gateway HATE-2); true while none does, the runner's own clamp then
-/// being the only judge.
+/// carrying `reach`, the roots peer.js opened from its sealed beat (HATE-2, UNBLOCK-78);
+/// true while none does, the runner's own clamp then being the only judge.
 export function folderInReach(path, presence) {
 	var p = String(path || '').replace(/\/+$/, '') || '/';
 	var roots = [];
