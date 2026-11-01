@@ -210,14 +210,17 @@ function seedEngine(chat, exceptMid, prose) {
 		// sent it again through `run_turn`: the model read it twice, and
 		// `captureSession` kept the copy for every later request in the chat.
 		if (chat.app.append_message) {
+			// A runner's record of words said into its turn is the said row's copy (UNBLOCK-59).
+			var echoes = (window.DaimondPeer && window.DaimondPeer.steerEchoes ? window.DaimondPeer.steerEchoes(chat.messages) : null);
 			tail.forEach(function (m) {
 				if (exceptMid && String(m.mid) === String(exceptMid)) return;
+				if (echoes && m.mid && echoes[String(m.mid)]) return;
 				try {
 					// An interjection was said into a turn, never run as one (B3).
 					chat.app.append_message(m.role, m.content || '',
 						(m.role === 'user' && typeof m.pre === 'string' && m.pre) ? m.pre : undefined,
 						(m.role === 'user' && m.mid) ? String(m.mid) : undefined,
-						m.role === 'user' && !m.interject);
+						m.role === 'user' && !m.interject);		// no echo reaches here
 				} catch (e) { /* skip one */ }
 			});
 		}
@@ -280,6 +283,7 @@ function armEngine(chat, exceptMid) {
 function sessionPlan(held, ran, msgs, exceptMid) {
 	var ex = exceptMid ? String(exceptMid) : '', tail = -1, first = -1, add = [];
 	var unsettled = {};		// the turns whose hand-off still stands (an empty dispatched placeholder)
+	var echoes = (window.DaimondPeer && window.DaimondPeer.steerEchoes ? window.DaimondPeer.steerEchoes(msgs) : null);		// a runner's copy of his said words, laid once (UNBLOCK-59)
 	(msgs || []).forEach(function (m) {
 		if (m && m.why === 'dispatched' && m.iturn && !(m.content && m.content.trim())) unsettled[String(m.iturn)] = 1;
 	});
@@ -288,6 +292,7 @@ function sessionPlan(held, ran, msgs, exceptMid) {
 		if (!m || !m.content || (m.role !== 'user' && m.role !== 'assistant')) continue;
 		var id = String(m.mid);
 		if (ex && id === ex) continue;
+		if (echoes && echoes[id]) continue;
 		if (held[id] === 1) { tail = i; continue; }
 		if (m.role === 'assistant' && (m.interrupted || m.provisional)) continue;
 		// A FRAMED ROW IS THE ANSWER once its turn has settled (QA ccp1 H1): no runner parcel replaces a
@@ -328,7 +333,7 @@ function reconcileEngine(chat, exceptMid) {
 				app.append_message(m.role, m.content || '',
 					(m.role === 'user' && typeof m.pre === 'string' && m.pre) ? m.pre : undefined,
 					(m.role === 'user' && m.mid) ? String(m.mid) : undefined,
-					m.role === 'user' && !m.interject);		// an interjection opens no turn (B3)
+					m.role === 'user' && !m.interject);		// an interjection opens no turn (B3); no echo is in `add`
 				h.mids[String(m.mid)] = 1;
 			});
 			return app;

@@ -286,6 +286,24 @@ export function honoursModelSet(id) {
 	} catch (e) { return false; }
 }
 
+/// Does device `id` hear words said into a turn it runs (UNBLOCK-59)? A tab that runs the set
+/// (`honoursModelSet`, off its roster line) does: its engine has taken them at a seam since the
+/// build that put `modelset` on the line (UNBLOCK-27 R7). A paired native runner does only when
+/// its own signed presence row says so (`hears`, from its beat): a Kimberlite before that took
+/// the words over the lease and never handed them to its model. ONE check, read at the say.
+export function hearsSaid(id) {
+	if (!id) return false;
+	try {
+		var ln = loadDevices()[String(id)];
+		if (ln && ln.modelset === true) return true;
+	} catch (e) { /* no roster: ask the presence row */ }
+	try {
+		var pr = (window.DaimondPresence && DaimondPresence.snapshot && DaimondPresence.snapshot()) || {};
+		var rec = pr[String(id)];
+		return !!(rec && rec.kind === 'runner' && rec.modelset === true && rec.hears === true);
+	} catch (e) { return false; }
+}
+
 /// The presence a TURN is seated from: the annotated map without the peers that have not
 /// shown they honour the model set (`honoursModelSet`). Every turn's election reads it --
 /// the send and the queue, Retry and Continue (`maybeAutoDispatch`), the switch
@@ -3025,10 +3043,11 @@ function blockedAsk(o) {
 /// the running turn, which does not close the card either (`appendInterjected`).
 export function askOpenIn(rec) {
 	var ms = (rec && rec.messages) || [];
+	var echoes = (window.DaimondPeer && window.DaimondPeer.steerEchoes ? window.DaimondPeer.steerEchoes(ms) : null);		// a runner's record of words said into the turn (UNBLOCK-59)
 	for (var i = ms.length - 1; i >= 0; i--) {
 		var m = ms[i];
 		if (!m) continue;
-		if (m.role === 'user' && m.app !== true && !m.interject
+		if (m.app !== true && (m.role === 'user' && !m.interject && !(echoes && echoes[String(m.mid)]))
 			&& !/^\[Daimond: this turn changed /.test(String(m.content || ''))) return false;
 		if (m.role === 'tool_log' && m.name === 'ask' && m.outcome === 'done') return askCurrent(m.ts);
 	}
@@ -3668,7 +3687,8 @@ function msgSig(m) {
 		// line survives a redraw). Both change the drawing without changing the id.
 		+ '#' + (m.refused ? 1 : 0) + '#' + (m.handoffRefused ? 1 : 0) + '#' + (m.handoffBusy || '') + '#' + (m.handoffThread || '')
 		+ '#' + (m.toDevice || '') + '#' + (m.claimedBy || '') + '#' + (m.seatNote || '')
-		+ '#' + (m.name || '') + '#' + (m.callId || '') + '#' + (m.say ? JSON.stringify(m.say) : '');
+		+ '#' + (m.name || '') + '#' + (m.callId || '') + '#' + (m.say ? JSON.stringify(m.say) : '')
+		+ '#' + (m.heardStep || 0);
 }
 
 export function sigsOf(messages) {
@@ -3879,6 +3899,9 @@ function renderHistoryFurniture() {
 }
 
 export function renderHistory(messages) {
+	// HIS WORDS WHERE THE MODEL GOT THEM (UNBLOCK-59): words a runner heard mid-turn are drawn at
+	// its own record of them, on every device. The same array when none carries a step.
+	if (window.DaimondPeer && DaimondPeer.heardOrder) messages = DaimondPeer.heardOrder(messages);
 	// KEEP THE READER'S PLACE across a re-render they did not ask for.
 	//
 	// renderHistory runs when a chat is opened, and also whenever the chats store
@@ -4555,9 +4578,10 @@ export function dispatchedAnswerPresent(chat, m) {
 	// it then sent was never read.
 	var i = msgs.indexOf(m);
 	if (i < 0) return false;
+	var echoes = (window.DaimondPeer && window.DaimondPeer.steerEchoes ? window.DaimondPeer.steerEchoes(msgs) : null);		// words said into the turn open none (UNBLOCK-59)
 	for (var j = i + 1; j < msgs.length; j++) {
 		var mm = msgs[j];
-		if (mm.role === 'user' && !mm.interject) break;		// the next turn began
+		if ((mm.role === 'user' && !mm.interject && !(echoes && echoes[String(mm.mid)]))) break;		// the next turn began
 		if (mm.iturn && String(mm.iturn) !== String(m.iturn)) continue;	// another turn's row
 		if (mm.role === 'assistant' && !mm.interrupted && !mm.provisional && mm.content && mm.content.trim()) return true;
 	}

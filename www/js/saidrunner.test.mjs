@@ -230,7 +230,7 @@ if (typeof L.say === 'function') {
 			},
 			commitRatings: () => {}, ratingPre: () => '', journalQueue: journalQueueOver(src, tabJournal(fakeIDB(), new Set())), giveUpSent: () => {},
 			syncSendMode: () => {}, renderQueue: () => {}, heldNote: () => {}, diag: () => {},
-			appendInterjected: () => {}, touchChat: () => {}, persistChats: () => {}, ownsChat: () => false,
+			appendInterjected: () => {}, dsEvent: () => {}, hearsSaid: () => true, markHeard: () => {}, touchChat: () => {}, persistChats: () => {}, ownsChat: () => false,
 			renderHistory: () => {}, updateQueueBadges: () => {}, recoveringHere: () => false, diamondBusy: () => false,
 			peerHeldTurnOf: () => null, dispatchInFlight: () => null, peerSyncShim: () => ({}),
 			// Nothing out lapsed by the clock alone: no lease door is read (QA ccp3 A R3).
@@ -454,7 +454,7 @@ await (async () => {
 		WATCH_RECHECK_MS: 1000, ARRIVE_FRESH_MS: 60000, REASON_DISPATCHED_STR: 'dispatched',
 		turnView: TLV.turnView,	// P2.3a4: the end-of-turn checks read the folded log
 		honoursModelSet: () => true, commitRatings: () => {}, ratingPre: () => '', giveUpSent: () => {},
-		appendInterjected: () => {}, syncSendMode: () => {}, diag: () => {}, persistChats: () => {}, touchChat: () => {},
+		appendInterjected: () => {}, dsEvent: () => {}, hearsSaid: () => true, syncSendMode: () => {}, diag: () => {}, persistChats: () => {}, touchChat: () => {},
 		ownsChat: () => false, renderHistory: () => {}, renderQueue: () => {}, updateQueueBadges: () => {},
 		journalQueue: () => {}, drainAfterHeld: () => {}, renderDispatchedBadges: () => {},
 		sigsOf: () => null, selfDeviceId: () => 'PAGE', deviceLabelFor: () => 'runner', handoffTargetLabel: () => 'runner',

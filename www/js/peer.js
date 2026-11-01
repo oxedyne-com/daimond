@@ -600,7 +600,85 @@
 		// (`settleRunnerAsk`, which checks it). After `words`, so it is the last key, and only
 		// when there is one, so an older asker sees the report it knew.
 		if (o.ask && typeof o.ask === 'object' && !Array.isArray(o.ask)) rep.ask = o.ask;
+		// WHERE THE MODEL GOT HIS WORDS (UNBLOCK-59): for each heard id, the 1-based model request
+		// they rode, 2 or more. Only ids in `heard`, and only when there are any, so a report from
+		// a runner that does not say it reads as the report it was.
+		var hs = heardSteps(o.heardStep, rep.heard);
+		if (hs) rep.heardStep = hs;
 		return rep;
+	}
+
+	/// A report's `heardStep` as `{id: N}` over the ids in `heard`, each N a whole number of at
+	/// least 2 (words join at a seam, never the first request); null where none is left.
+	function heardSteps(v, heard) {
+		if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+		var out = {}, n = 0;
+		heard.forEach(function (id) {
+			var k = v[id];
+			if (typeof k === 'number' && k >= 2 && Math.floor(k) === k) { out[id] = k; n++; }
+		});
+		return n ? out : null;
+	}
+
+	/// Kimberlite's own record of words said into its turn, written as a plain `user` row of its
+	/// run (`<run>-t<i>`) by a build before it wrote them under the said id with `interject:1`
+	/// (UNBLOCK-59): such a row whose words are those of a said row earlier in the same turn.
+	/// `{record mid: said mid}`, each said row answering one record; null when there is none.
+	/// The record is not a turn of its own (`opensTurn`): it is where the model got the words.
+	function steerEchoes(messages) {
+		var msgs = Array.isArray(messages) ? messages : [];
+		var out = {}, open = [], n = 0, i, j, m, c, tail;
+		for (i = 0; i < msgs.length; i++) {
+			m = msgs[i];
+			if (!m || m.role !== 'user') continue;
+			if (m.interject) { open.push(m); continue; }
+			tail = (m.run && m.mid && String(m.mid).indexOf(String(m.run) + '-t') === 0)
+				? String(m.mid).slice(String(m.run).length + 2) : '';
+			if (!/^[0-9]+$/.test(tail)) { open = []; continue; }		// his next question: a new turn
+			c = String(m.content == null ? '' : m.content);
+			for (j = 0; j < open.length; j++) {
+				if (String(open[j].content == null ? '' : open[j].content) !== c) continue;
+				out[String(m.mid)] = String(open[j].mid || '');
+				open.splice(j, 1);
+				n++;
+				break;
+			}
+		}
+		return n ? out : null;
+	}
+
+	/// Does row `m` open a turn? A user row does, unless it was said into a running one: his
+	/// interjection, or a runner's record of it (`echoes`, from `steerEchoes` over the thread).
+	function opensTurn(m, echoes) {
+		return !!m && m.role === 'user' && !m.interject && !(echoes && m.mid && echoes[String(m.mid)]);
+	}
+
+	/// The transcript in the order it is drawn: each of his words a runner took mid-turn stands
+	/// where the model got them, at the runner's own record of them (`steerEchoes`) -- after
+	/// request N-1's output and before request N's -- and that record is not drawn twice. A
+	/// said row whose record has not arrived stands where it was said. `messages` itself,
+	/// untouched, when there is no such record, so such a thread draws as it always did.
+	function heardOrder(messages) {
+		var echoes = steerEchoes(messages);
+		if (!echoes) return messages;
+		var msgs = messages, i, m, k, said = {}, at = {}, moved = {};
+		for (i = 0; i < msgs.length; i++) {
+			m = msgs[i];
+			if (m && m.role === 'user' && m.interject && m.mid) said[String(m.mid)] = i;
+		}
+		for (i = 0; i < msgs.length; i++) {
+			m = msgs[i];
+			k = (m && m.mid) ? echoes[String(m.mid)] : undefined;
+			if (k === undefined || said[k] === undefined) continue;
+			at[i] = msgs[said[k]];
+			moved[said[k]] = 1;
+		}
+		var out = [];
+		for (i = 0; i < msgs.length; i++) {
+			if (moved[i]) continue;
+			out.push(at[i] || msgs[i]);
+		}
+		return out;
 	}
 
 	/// A report's alerts, each `{op:'raise', key, headline, detail, needs}` or `{op:'clear', key}`;
@@ -2739,6 +2817,10 @@
 				// on a runner's row and only when it said so, so `honoursModelSet` never reads
 				// a guess. A tab states the same fact on its roster line, not here.
 				if (rec.modelset === true) recOut.modelset = true;
+				// HEARS (UNBLOCK-59): its signed word that it hands words said into its running
+				// turn to the model, so a say over the lease reaches it (`hearsSaid`). Kept only
+				// when it said so: a runner that says nothing gets them as the next turn.
+				if (rec.hears === true || rec.hears === 1) recOut.hears = true;
 				// REACH (HATE-2): the absolute roots its config lets it reach, from its signed
 				// beat. ABSENT when it sent none, so a Diamond's folder is checked only against a
 				// runner that said where it may go (`folderInReach`).
@@ -7480,10 +7562,13 @@
 			if (m.mid) held[String(m.mid)] = 1;
 			if (m.iturn) held[String(m.iturn)] = 1;
 		}
+		// Words said into a turn are inside it, never the start of another (UNBLOCK-59).
+		var echoes = steerEchoes(msgs);
 		for (i = 0; i < msgs.length; i++) {
 			m = msgs[i];
 			if (!m) continue;
 			if (m.role === 'user') {
+				if (!opensTurn(m, echoes)) continue;
 				inSpan = String(m.mid || '') === id || String(m.iturn || '') === id;
 				continue;
 			}
@@ -7887,6 +7972,10 @@
 		addressOf:   addressOf,
 		/// Can a watched turn still hear words said into it (UNBLOCK-27 R7c)?
 		frameHears:      frameHears,
+		/// The transcript in drawn order, heard words where the model got them (UNBLOCK-59).
+		heardOrder:      heardOrder,
+		/// A runner's record of words said into its turn: `{record mid: said mid}` (UNBLOCK-59).
+		steerEchoes:     steerEchoes,
 		/// The footer control a dispatched turn offers for a §5 state -- 'runhere',
 		/// 'rerun', 'answeragain' or '' (none). Pure table, so the owner's no-take-back
 		/// ruling (D-20261009-23) is one thing a test enumerates.

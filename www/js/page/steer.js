@@ -22,7 +22,7 @@ import { maybeAutoDispatch, mountTurnActions, offline, seatNamesRunner } from '.
 import { diag, toast } from './passkey_phrase.js';
 import { appendAssistantText, appendCompacted, appendEnding, appendError, appendFailure,
 	appendFilesLog, appendInterjected, appendLeak, appendThinking, appendUserMessage, askHolds,
-	cutAccount, cutReason, dropAssistant, endLogOf, failRole, finalizeAssistant, honoursModelSet,
+	cutAccount, cutReason, dropAssistant, endLogOf, failRole, finalizeAssistant, hearsSaid, honoursModelSet,
 	logThinking, nearBottom, renderHistory, renderToolCall, renderToolResult, respModel, setScrollTop,
 	stampAfter, worthSaying } from './turns.js';
 import { _peerStopping, chatWebWord, noteRecent, runnerDeaf, runnerRoundTagged, runnerTurnOf } from './consent.js';
@@ -212,7 +212,7 @@ export function sayIntoHere(chat, text, words) {
 export async function sendToDiamondTurn(target, text, words, drawn) {
 	if (diamondBusy(target.diamondId) && !recoveringHere(target) && sayIntoHere(target, text, words)) return true;
 	var heldThere = diamondBusy(target.diamondId) ? null : peerHeldTurnOf(target);
-	if (heldThere && await sayToRunner(target, heldThere, text, words)) return true;
+	if (heldThere && await sayToRunner(target, heldThere, text, words, drawn)) return true;
 	if (diamondBusy(target.diamondId) || recoveringHere(target)) { enqueueMessage(target, text, words, drawn); return true; }
 	// Behind a queue already waiting, as a chat's send (QA ccp2 M1).
 	if ((target._queue || []).length && !askHolds()) {
@@ -227,7 +227,7 @@ export async function sendToDiamondTurn(target, text, words, drawn) {
 /// turn's lease, where its runner hears them at its next seam (UNBLOCK-27 R7). They join the
 /// thread here, where they were sent, under the id the runner records them by, so the two
 /// copies are one message. False where nothing is running there to hear them: the caller queues.
-async function sayToRunner(chat, ph, text, words) {
+async function sayToRunner(chat, ph, text, words, drawn) {
 	var tid = String((ph && ph.iturn) || '');
 	if (!tid || _peerStopping[tid] || !window.DaimondLease || !DaimondLease.say || !window.DaimondPeer) return false;
 	// ITS RUNNER RUNS THE SET, OR IT IS NOT SPOKEN TO (D-20261018-09 OR). A turn an older asker
@@ -239,6 +239,17 @@ async function sayToRunner(chat, ph, text, words) {
 		diag('said not', 'turn=' + tid + ' runner ' + (holder ? holder.slice(0, 8) : 'unknown')
 			+ ' has not shown it runs the model set');
 		return false;
+	}
+	// A RUNNER THAT HAS NOT SAID IT HEARS IS NOT SPOKEN TO (UNBLOCK-59). Its presence row carries
+	// no `hears`, so words said over the lease would never reach its model: they wait in the queue,
+	// shown there, and go as the next turn when this one ends (`drainAfterHeld`).
+	if (!hearsSaid(holder)) {
+		diag('said not', 'turn=' + tid + ' runner ' + (holder ? holder.slice(0, 8) : 'unknown')
+			+ ' has not said it hears: queued as the next turn');
+		dsEvent('said', { turn: tid, ok: 0, why: 'deaf', hears: 0 });
+		enqueueMessage(chat, text, words, drawn);
+		drainAfterHeld(chat);
+		return true;
 	}
 	// A SAY IS ONLY FOR A TURN THAT CAN STILL HEAR IT (UNBLOCK-27 R7c). Its runner's frames
 	// show its answer being written (or the turn over): no seam follows, so the words go out
@@ -256,6 +267,8 @@ async function sayToRunner(chat, ph, text, words) {
 		res = await DaimondLease.say(tid, { id: mid, text: text, pre: pre || '' }, DaimondPeer.syncCas(peerSyncShim()));
 	} catch (e) { res = { ok: false, why: 'threw' }; }
 	diag('said to runner', 'turn=' + tid + ' ok=' + (res && res.ok ? 1 : 0) + ' why=' + String((res && res.why) || ''));
+	// The press-to-runner hop on the lens (diagnosis item 3), so it carries a stamp of its own.
+	dsEvent('said', { turn: tid, ok: res && res.ok ? 1 : 0, why: String((res && res.why) || ''), hears: 1 });
 	if (!res || !res.ok) return false;
 	(_saidThere[tid] = _saidThere[tid] || []).push({ chatId: String(chat.id || ''), mid: mid, text: text });
 	giveUpSent(chat, words === undefined ? text : words);
@@ -275,14 +288,41 @@ export function requeueUnheard(report) {
 	if (!said) return 0;
 	delete _saidThere[tid];		// once: a second report of the turn finds nothing
 	var heard = Array.isArray(report.heard) ? report.heard.map(String) : [];
-	var n = 0;
+	var n = 0, got = [];
 	said.forEach(function (s) {
-		if (heard.indexOf(s.mid) !== -1) return;
+		if (heard.indexOf(s.mid) !== -1) { got.push(s); return; }
 		n++;
 		resendUnheard(s);
 	});
-	if (n) diag('said unheard', 'turn=' + tid + ' resent=' + n);
+	if (got.length) markHeard(got, report);
+	if (n) {
+		diag('said unheard', 'turn=' + tid + ' resent=' + n);
+		dsEvent('said.unheard', { turn: tid, n: n, how: 'report' });
+	}
 	return n;
+}
+
+/// Words a runner's report names heard, where it says which model request they rode
+/// (`heardStep`): each said row carries that step on every device, which places it
+/// (`DaimondPeer.heardOrder`).
+function markHeard(got, report) {
+	var steps = report.heardStep || {}, touched = {};
+	got.forEach(function (s) {
+		var chat = pg.chats.find(function (x) { return x && String(x.id) === s.chatId; });
+		var row = chat ? (chat.messages || []).filter(function (m) { return m && m.mid === s.mid; })[0] : null;
+		if (!row) return;
+		var step = steps[s.mid] | 0;
+		if (step < 2 || (row.heardStep | 0) === step) return;
+		row.heardStep = step;
+		touchMsg(row);
+		touched[s.chatId] = chat;
+	});
+	var ids = Object.keys(touched);
+	if (!ids.length) return;
+	ids.forEach(function (id) { touchChat(touched[id]); });
+	try { persistChats(); } catch (e) { /* the next save takes it */ }
+	if (pg.current && touched[String(pg.current.id)]) renderHistory(pg.current.messages);
+	diag('said heard', 'turn=' + String(report.turnId || '') + ' n=' + got.length);
 }
 
 /// The runner's receipts on the lease view (`DaimondLease.unheard`): words said into a turn that
@@ -300,6 +340,7 @@ export function heedUnheard() {
 		if (!out.length) return;
 		if (left.length) _saidThere[tid] = left; else delete _saidThere[tid];
 		diag('said unheard', 'turn=' + tid + ' receipt=' + out.length);
+		dsEvent('said.unheard', { turn: tid, n: out.length, how: 'receipt' });
 		out.forEach(function (s) { n++; resendUnheard(s); });
 	});
 	return n;

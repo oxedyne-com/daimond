@@ -89,7 +89,7 @@ function world(rosterLine, presRec, provider) {
 		continueTurn: (c, tid) => { W.ran.push(tid); },
 		_peerStopping: {}, _progressView: {}, _saidThere: {},
 		commitRatings: () => {}, ratingPre: () => '', newMid: () => 'm1', peerSyncShim: () => ({}),
-		giveUpSent: () => {}, pushUserRecord: () => {}, appendInterjected: () => {}, syncSendMode: () => {},
+		giveUpSent: () => {}, pushUserRecord: () => {}, appendInterjected: () => {}, syncSendMode: () => {}, dsEvent: () => {}, hearsSaid: () => true,
 		current: null, storedPre: () => '', storedEffort: () => null, turnEffortOf: () => null, errandModelOf: () => ({}), errandFence: async () => null, errandClean: () => false, errandLocked: () => undefined, errandLimits: () => undefined, errandSession: () => undefined, errandReach: async () => undefined, errandToday: () => '', errandWords: async () => undefined, errandWordsFor: async () => undefined, errandProdBase: () => null, errandScope: (c, h) => h,
 		autonomousPosture: () => false, msgTombsOwed: () => [], selfDeviceIdOf: () => 'phone1',
 		touchMsg: (m) => m, touchChat: () => {}, persistChats: () => {}, ownsChat: () => false, renderHistory: () => {},

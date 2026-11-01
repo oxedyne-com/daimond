@@ -883,12 +883,13 @@ export function openChatsMenu(anchor) {
 /// are the same messages -- which is the only reason the tick can be trusted.
 function chatDelta(chat, turns) {
 	var t = 0, want = turns ? turns.slice() : null;
+	var echoes = (window.DaimondPeer && window.DaimondPeer.steerEchoes ? window.DaimondPeer.steerEchoes(chat.messages) : null);		// a runner's record of words said into it (UNBLOCK-59)
 	return (chat.messages || []).filter(function (m) {
 		// A message said into a running turn is not a turn of its own -- it
 		// belongs to the one it cut into. Counting it would shift every turn
 		// number after it, and a ticked turn is mapped back to its messages
 		// through exactly this count.
-		if (m.role === 'user' && !m.interject) t += 1;
+		if ((m.role === 'user' && !m.interject && !(echoes && echoes[String(m.mid)]))) t += 1;
 		return !want || want.indexOf(t) !== -1;
 	}).map(function (m) {
 		return (m.role === 'user' ? 'User: ' : 'Assistant: ') + m.content;

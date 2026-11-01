@@ -66,6 +66,7 @@ function world() {
 	W.api = new Function('W', `
 		var ASK_CHOSE = 'Chose: ', ASK_OTHER = 'Other: ', ASK_SILENT_MAX_MS = 3600000, FOLLOW_MAX_MS = 20 * 60 * 1000;
 		var _askCard = null, current = null, _unloading = false, chats = [], _lastSteer = {};
+		var window = {};
 		var chatOutput = W.out;
 		var document = { createElement: function (t) { return new W.El(''); }, body: W.out };
 		function t(k, v) { return k + (v && v.what !== undefined ? '=' + v.what : ''); }

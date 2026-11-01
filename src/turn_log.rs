@@ -34,7 +34,9 @@ pub enum LogRow {
     Vision  { images: u64, model: String, source: String, ts: u64 },
     Leak    { fragment: String, ts: u64 },
     Error   { content: String, ts: u64 },
-    Steer   { content: String, ts: u64 },
+    /// Words that joined the turn mid-way; `said` is the id of his mid-turn words on the lease
+    /// where a runner handed them in (UNBLOCK-59), empty for any other.
+    Steer   { content: String, ts: u64, said: String },
 }
 
 impl LogRow {
@@ -58,9 +60,16 @@ impl LogRow {
         let b = |k: &str, v: bool| fmt!(",\"{}\":{}", k, v);
         let mut o = fmt!("{{\"role\":\"{}\"", self.role());
         match self {
-            Self::Think { content, ts } | Self::Error { content, ts } | Self::Steer { content, ts } => {
+            Self::Think { content, ts } | Self::Error { content, ts } => {
                 o.push_str(&s("content", content));
                 o.push_str(&n("ts", *ts));
+            },
+            Self::Steer { content, ts, said } => {
+                o.push_str(&s("content", content));
+                o.push_str(&n("ts", *ts));
+                if !said.is_empty() {
+                    o.push_str(&s("said", said));
+                }
             },
             Self::Tool { name, args, call_id, content, outcome, paused, ts } => {
                 o.push_str(&s("name", name));
@@ -113,7 +122,7 @@ impl LogRow {
         Ok(match text("role").as_str() {
             "think_log"     => Self::Think { content: text("content"), ts },
             "error_log"     => Self::Error { content: text("content"), ts },
-            "user"          => Self::Steer { content: text("content"), ts },
+            "user"          => Self::Steer { content: text("content"), ts, said: text("said") },
             "leak_log"      => Self::Leak { fragment: text("content"), ts },
             "tool_log"      => Self::Tool { name: text("name"), args: text("args"), call_id: text("callId"),
                 content: text("content"), outcome: text("outcome"), paused: text("paused"), ts },
@@ -172,6 +181,14 @@ impl TurnLog {
     }
 
     /// Folds event `ev`, which happened at `ts` (ms since the epoch), into the log.
+    /// The turn's last steer row is his mid-turn words `id` (UNBLOCK-59), so its transcript row
+    /// takes his words' own id.
+    pub fn mark_said(&mut self, id: &str) {
+        if let Some(LogRow::Steer { said, .. }) = self.rows.iter_mut().rev().find(|r| matches!(r, LogRow::Steer { .. })) {
+            *said = id.to_string();
+        }
+    }
+
     pub fn fold(&mut self, ev: &AgentEvent, ts: u64) {
         match ev {
             AgentEvent::Text(t)         => self.prose.push_str(t),
@@ -210,7 +227,8 @@ impl TurnLog {
                 self.rows.push(LogRow::Leak { fragment: fragment.clone(), ts });
             },
             AgentEvent::Error(e)        => self.rows.push(LogRow::Error { content: e.clone(), ts }),
-            AgentEvent::Interjected(s)  => self.rows.push(LogRow::Steer { content: s.clone(), ts }),
+            AgentEvent::Interjected(s)  => self.rows.push(LogRow::Steer { content: s.clone(), ts,
+                said: String::new() }),
             AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed, reasoned,
                 why, said, fault, touched } =>
             {
