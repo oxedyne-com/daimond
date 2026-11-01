@@ -104,6 +104,14 @@ export function panelIntent(m) {
 	return { show: path, page: page > 0 ? page : 0 };
 }
 
+/// The transcript's one order, (ts, mid) with the mid by code point, as the store's merge
+/// keeps it (chatstore.js `mergeMessages`): a row drawn here goes to its turn's place.
+function byPlace(x, y) {
+	if ((x.ts || 0) !== (y.ts || 0)) return (x.ts || 0) - (y.ts || 0);
+	var p = String(x.mid), q = String(y.mid);
+	return p < q ? -1 : (p > q ? 1 : 0);
+}
+
 /// Draw one turn's view into `chat.messages`: its rows by mid (joined with a copy already
 /// held, through `join`), a log row the view no longer holds (a `tomb`) taken out, and,
 /// while the turn is open, its state tile moved after its last row.
@@ -144,11 +152,7 @@ export function drawTurn(chat, view, deps) {
 			return t;
 		});
 	}
-	ms.sort(function (x, y) {
-		if ((x.ts || 0) !== (y.ts || 0)) return (x.ts || 0) - (y.ts || 0);
-		var p = String(x.mid), q = String(y.mid);
-		return p < q ? -1 : (p > q ? 1 : 0);
-	});
+	ms.sort(byPlace);
 	chat.messages = ms;
 	if (deps.onRows) deps.onRows(chat, turn, fresh, changed);
 }
@@ -216,7 +220,12 @@ export function drawEnd(chat, view, deps) {
 	for (var i = 0; i < ms.length; i++) {
 		if (ms[i] && String(ms[i].mid) === row.mid) { ms[i] = deps.join(ms[i], row); chat.messages = ms; return; }
 	}
+	// AT ITS TURN'S PLACE, NOT THE FOOT (U83-TIDY): an end the log folds for an old turn (a 7
+	// Oct hand-off whose `not_run` end arrived tonight) is a record of that turn, so it goes
+	// under that turn's last row. Pushed, it stood below every newer turn until a reload
+	// re-read the store in order.
 	ms.push(row);
+	ms.sort(byPlace);
 	chat.messages = ms;
 }
 

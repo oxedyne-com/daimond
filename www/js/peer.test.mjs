@@ -1102,7 +1102,6 @@ async function main() {
 	async function openRef(errand) {
 		const r = errand && errand.sessionRef;
 		if (!r || r.v !== 2 || !Array.isArray(r.chunks) || !r.chunks.length) return { why: 'no manifest' };
-		if (r.size > 8 * 1048576) return { why: 'over 8 MB' };
 		const parts = []; let ph = '';
 		for (const c of r.chunks) {
 			if (!chunkStore.has(c.addr)) return { why: 'missing' };
@@ -1296,12 +1295,17 @@ async function main() {
 		check('ER-5: and omits the key when the seed has none', !!nRef.body && !('words' in nRef.body), JSON.stringify(nRef.body && Object.keys(nRef.body)));
 		check('ER-5: and the over-door errand still fits', !!wOver.body && phone.DaimondPost.fitsRelay(wOver.body.envelope.length) === true
 			&& !(wOpen.seed && (wOpen.seed.session || 'words' in wOpen.seed)), String(wOver.body && wOver.body.envelope.length));
-		// ER-2: over 8 MB the turn ends "not run", cause `size`, and nothing is put or posted.
+		// ER-2 (UNBLOCK-83 TURN-STREAM, 1 Nov 2026, was "over 8 MB ends not run: size"): no size
+		// bound is the page's. A 9 MB session goes by reference like any other, in its chunks, and
+		// the runner's checks reassemble it whole; only Kimberlite's `run.memory_max` may refuse.
 		const putsBefore = chunkPuts;
 		const nine = await P.sealFittingErrand(nchat, Object.assign({}, rOpts, { session: nancy(9 * 1048576) }));
-		check('ER-2: a 9 MB session ends not run with cause size', !!nine && nine.notRun === 'size' && !nine.body,
+		check('ER-2: a 9 MB session is handed off by reference, not ended "not run"', !!nine && !nine.notRun && !!nine.body,
 			JSON.stringify(nine && { notRun: nine.notRun, body: !!nine.body }));
-		check('ER-2: and puts no chunk', chunkPuts === putsBefore, String(chunkPuts - putsBefore));
+		check('ER-2: and its chunks are put', chunkPuts > putsBefore, String(chunkPuts - putsBefore));
+		const nineRef = nine && nine.body ? await openRef(await laptop.DaimondPeer.openEnvelope(nine.body.envelope)) : {};
+		check('ER-2: and the runner reassembles the whole session', !!nineRef.body && !!nineRef.body.session
+			&& nineRef.body.chat === nchat.id, nineRef.why);
 		const dsrc = DAIMOND_SRC;
 		const atSeal = dsrc.indexOf('DaimondPeer.sealFittingErrand(chat, dispatchOpts, plan)');
 		const atPost = dsrc.indexOf('DaimondPost.post(body)', atSeal);

@@ -183,7 +183,7 @@ async function main() {
 	console.log('\nIt is drawn from its records, rated as the Diamond\'s rows are');
 	{
 		const arm = lift(SRC, 'drawHistoryMessage') || '';
-		check('drawHistoryMessage draws a files_log through appendFilesLog', /m\.role === 'files_log'\)\s*\{\s*appendFilesLog\(m\)/.test(arm));
+		check('drawHistoryMessage draws a files_log through appendFilesLog', /m\.role === 'files_log'\)\s*\{\s*var ft = appendFilesLog\(m\);/.test(arm));
 		const af = lift(SRC, 'appendFilesLog') || '', fb = lift(SRC, '_filesLogBox') || '', fr = lift(SRC, '_turnFileRow') || '';
 		check('the box is built from the message\'s own records (no store lookup, no await)', !!af && !!fb && !/await|DaimondVersions/.test(af + fb), '');
 		check('it wears the Diamond tail note\'s Files tile and then mounts the rating group on its rows', /buildTile\('tool', \{ who: tOr\('chat\.who_files', 'Files'\), expanded: true/.test(af) && /mountFileRates\(box\)/.test(af));

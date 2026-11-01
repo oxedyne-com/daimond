@@ -73,7 +73,6 @@
 	// name from somewhere else, so no list here could be right.
 	// i18n-indirect: i18n.js key + (n === 1 ? '.one' : '.other') = open -- `tn` appends the plural form to the key its own caller named
 	// i18n-indirect: daimond.js _yoursKey(y) = change.made change.file change.yours
-	// i18n-indirect: daimond.js _yoursKey(first) = change.made change.file change.yours
 	// i18n-indirect: settingsgroups.js k = devices.runner_code home.sec_account home.sec_devices home.sec_accounts home.sec_lens home.sec_prompts home.sec_running home.sec_push home.sec_sync home.sec_diag home.sec_debugshare home.export_backup home.import_backup devices.runner_mint home.limits safe.turn_off safe.turn_on home.lock home.log_out identity.forget
 	// i18n-indirect: settingsgroups.js g.name = settings.group_models settings.group_tools settings.group_you settings.group_prompts settings.group_data settings.group_help
 	// i18n-indirect: settingsgroups.js g.what = settings.group_models_what settings.group_tools_what settings.group_you_what settings.group_prompts_what settings.group_data_what settings.group_help_what
@@ -2661,7 +2660,6 @@
 	'seat.switch':               'Where the next turn runs',
 	'errand.prompt_too_large':   'the prompt alone is larger than the relay accepts',
 	// ERRAND-REF: a session that can go no way, so the turn ends "not run" before any post.
-	'errand.session_too_large':  'the conversation is larger than a hand-off carries',
 	'errand.session_unsent':     'the conversation could not be stored for the hand-off',
 	// ── WHERE A TASK OTHER THAN A TURN RUNS (owner design, 2026-09-14) ──
 	// A compile and a publish are placed by the same election a turn is, and the
@@ -3787,6 +3785,10 @@
 	'change.yours': 'Changed your file {name}',
 	'change.file': 'Changed {name}',
 	'change.made': 'Created {name}',
+	'change.made_n.one': 'Created {name} ({n} line)',
+	'change.made_n.other': 'Created {name} ({n} lines)',
+	'change.kept_on': '{name} kept on {device}',
+	'change.kept_away': '{name} kept on the device that ran the turn',
 	'change.head_delete': 'Delete {name}?',
 	'change.head_move': 'Move {name}?',
 	'change.in': 'In {folder}',

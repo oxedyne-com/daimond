@@ -284,11 +284,11 @@ export async function dispatchToPeer(chat, turnId, promptText, scopePaths, opts,
 		}
 		return { ok: false, why: whyS };
 	}
-	// THE SESSION CAN GO NO WAY (ERRAND-REF): over the 8 MB a hand-off carries (`size`), or
-	// its chunks could not be put (`post`). Nothing was posted; the turn ends "not run" with
-	// that cause, which NOTRUN-WHY draws ("Too large to hand off", with Run here).
+	// THE SESSION CAN GO NO WAY (ERRAND-REF): its chunks could not be put (`post`); never its
+	// size, which the page does not bound (UNBLOCK-83 TURN-STREAM). Nothing was posted; the turn
+	// ends "not run" with that cause, which NOTRUN-WHY draws, with Run here.
 	if (sealed.notRun) {
-		var whyN = sealed.notRun === 'size' ? t('errand.session_too_large') : t('errand.session_unsent');
+		var whyN = t('errand.session_unsent');
 		diag('dispatch FAILED', 'turn=' + turnId + ' ' + sealed.notRun + ': ' + sealed.why);
 		// NOTRUN-WHY's call site: fire/notrunwhy gives refuseAndEndNotRun its `cause`; until it
 		// merges, the third argument is unread and the row keeps the plain "not run" words.

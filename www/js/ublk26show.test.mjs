@@ -149,8 +149,14 @@ test('D: a turn that only made a file says "Created <name>", shows it, and offer
 	assert.deepEqual(row.away, { keeper: 'D9', on: 'RUN', onName: 'argonaut', run: 'e-R9', since: 1800, until: 9e15 });
 	const { undos, nodes } = draw(row);
 	const head = nodes.filter((n) => /turn-yours-head/.test(n.className)).map((n) => n.textContent);
-	assert.deepEqual(head, ['Created hello.txt'], 'never "your file": the turn made it');
-	assert.deepEqual(nodes.filter((n) => /hist-diff-line/.test(n.className)).map((n) => n.className + '|' + n.textContent),
+	assert.deepEqual(head, ['Created hello.txt (1 line)'], 'never "your file": the turn made it');
+	// U83-TIDY (D-20261101-48): a file the turn made shows its text only on a press.
+	assert.equal(nodes.filter((n) => /hist-diff-line/.test(n.className)).length, 0, 'folded until pressed');
+	const btn = nodes.find((n) => /turn-yours-toggle/.test(n.className));
+	let shown = null;
+	nodes.forEach((n) => { n.after = (x) => { shown = x; }; });
+	btn.listeners.click({});
+	assert.deepEqual(all(shown).filter((n) => /hist-diff-line/.test(n.className)).map((n) => n.className + '|' + n.textContent),
 		['hist-diff-line add|hi']);
 	assert.equal(undos.length, 1, 'the turn\'s own Undo');
 	assert.deepEqual(undos[0].r, { away: row.away, cause: 'turn' });
@@ -161,7 +167,8 @@ test('B3: a row with no file of his draws nothing', () => {
 });
 
 test('C: wiring: a history row with `yours` draws the tile; the ask and the turn share one diff drawing', () => {
-	assert.match(lift('drawHistoryMessage'), /if \(m\.yours\) appendYoursTile\(m\);/);
+	assert.match(lift('drawHistoryMessage'), /var ft = appendFilesLog\(m\); if \(m\.yours\) appendYoursTile\(m, ft\);/);
+	assert.match(lift('drawHistoryMessage'), /if \(m\.yours\) appendYoursTile\(m, ut && ut\.dataset && ut\.dataset\.t === 'tool' \? ut : null\);/);
 	assert.match(lift('changeTile'), /changeDiff\(box, c\);/);
 	assert.match(lift('undoneFromRunner'), /_turnUndoRows/);
 	for (const loc of ['de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'zh-Hans']) {

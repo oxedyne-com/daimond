@@ -3236,7 +3236,7 @@ export function drawHistoryMessage(m, i, arr) {
 		var ut = appendUserMessage(m.content, m.ts, m.prod, m.files, m.app === true);
 		if (m.seatNote) drawSeatNote(ut, String(m.seatNote));
 		// A runner turn's Files row names the files of his it changed (UNBLOCK-26).
-		if (m.yours) appendYoursTile(m);
+		if (m.yours) appendYoursTile(m, ut && ut.dataset && ut.dataset.t === 'tool' ? ut : null);
 	}
 	else if (m.role === 'assistant') {
 		// A turn HANDED TO A PEER, still in flight: an empty `dispatched`
@@ -3273,7 +3273,7 @@ export function drawHistoryMessage(m, i, arr) {
 	// (`isRatingMsg`) draws nothing, as a role it had never heard of would.
 	else if (m.role === 'rating_log') { appendRatingLine(m); }
 	// A chat turn's changed files, drawn from its records (display only, never sent to the model).
-	else if (m.role === 'files_log') { appendFilesLog(m); if (m.yours) appendYoursTile(m); }
+	else if (m.role === 'files_log') { var ft = appendFilesLog(m); if (m.yours) appendYoursTile(m, ft); }
 	// The app's own NEUTRAL voice -- a fan-out handover, drawn as a status line
 	// rather than the red of an error. Its own role so a reload draws it that way.
 	else if (m.role === 'note_log') { appendNote(m.content); }

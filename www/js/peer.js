@@ -1883,8 +1883,6 @@
 		};
 	}
 
-	var SESSION_REF_MAX = 8 * 1048576;	// body bytes; the runner's `REPLY_MAX`, a long answer's bound too
-
 	/// An over-door session put in the account's chunks (ERRAND-REF, errandref_contract.md):
 	/// `{ref}`, KT-4b's `{chat, sig, upto}` with REPLY-REF's manifest `{v:2, size, key, chunks}`
 	/// beside it, or `{notRun, why}`. The body is `{v:1, chat, sig, upto, session}`, with his
@@ -1894,11 +1892,10 @@
 		var b = { v: 1, chat: chat, sig: sig, upto: upto, session: session };
 		if (typeof words === 'string') b.words = words;
 		var bytes = new TextEncoder().encode(JSON.stringify(b));
-		if (bytes.length > SESSION_REF_MAX) {
-			diag('errand ref', 'chat=' + chat + ' session ' + bytes.length + ' B over ' + SESSION_REF_MAX);
-			return { notRun: 'size', why: 'the conversation is ' + bytes.length + ' bytes, over the '
-				+ (SESSION_REF_MAX / 1048576) + ' MB a hand-off carries' };
-		}
+		// NO SIZE BOUND HERE (UNBLOCK-83 TURN-STREAM, 1 Nov 2026): the session goes in door-sized
+		// chunks, however many, and Kimberlite reassembles it. Whether a runner can hold it is its
+		// own `run.memory_max` to judge, handed back as cause `size`; the page never refuses a turn
+		// for its length (his 1.6 MB turn, and an 8 MiB cap that ended a long chat "not run: size").
 		// A page always loads chunks.js; its absence is a broken page, said rather than guessed round.
 		if (!(window.DaimondChunks && DaimondChunks.offloadBytes)) {
 			return { notRun: 'post', why: 'the conversation could not be stored for the hand-off: no chunk store' };
@@ -1987,9 +1984,9 @@
 		// ERRAND-REF (25 Oct 2026): the reference also carries the session itself, sealed in the
 		// account's chunks as a long answer comes back (REPLY-REF), so a runner without the chat
 		// runs the turn on the whole session. It goes to every runner, whatever its ABI: one
-		// that cannot read chunks hands back `thread`, as it did the bare reference. Over
-		// `SESSION_REF_MAX`, or with no chunk store to put it in, the turn ends "not run" here
-		// and nothing is posted (`notRun`, the cause the dispatcher ends it with).
+		// that cannot read chunks hands back `thread`, as it did the bare reference. With no chunk
+		// store to put it in, or a put that fails, the turn ends "not run" here and nothing is
+		// posted (`notRun`, the cause the dispatcher ends it with); never for its size.
 		if (p.fields.seed && p.fields.seed.session) {
 			var o1 = {}; if (opts) Object.keys(opts).forEach(function (k) { o1[k] = opts[k]; });
 			var s0 = p.fields.seed.session;

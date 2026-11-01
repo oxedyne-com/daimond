@@ -134,7 +134,8 @@ export function _fillFilesTile(tile, text, chat, prod, files) {
 	if (Array.isArray(files) && files.length) return;
 	_tailNoteTable(text, chat, prod).then(function (tbl) {
 		if (!tbl || !tbl._counted) return;
-		body.replaceChildren(tbl);
+		// Only its own list is swapped: a runner turn's lines (`appendYoursTile`) share the body.
+		body.replaceChildren.apply(body, [tbl].concat([].filter.call(body.children, function (c) { return c !== first; })));
 		mountFileRates(tbl);
 	}).catch(function () { /* the names stay */ });
 }
@@ -467,35 +468,69 @@ function _yoursKey(y) {
 /// runner turn changes a file of his without asking, having kept it first, so the turn shows
 /// each such change as his ask would have, and the runner turn's own Undo under them. Which
 /// files were his is the runner's word (`yours`, from its `his` rows), never guessed here.
-export function appendYoursTile(m) {
+/// U83-TIDY (D-20261101-48, "the chat ends with the answer and one collapsed files line"): the
+/// lines join the turn's own Files tile `into` when there is one, never a second Files tile, and
+/// the tile stays folded unless a file of his changed. A file the turn made says its count and
+/// shows its text only on a press; one this device cannot compare says where it is kept.
+export function appendYoursTile(m, into) {
 	var ys = (m && Array.isArray(m.yours)) ? m.yours : [];
 	if (!ys.length) return null;
 	var box = document.createElement('div');
 	box.className = 'turn-yours';
-	var names = [];
-	var first = null;	// the file the peek names
+	var names = [], lines = [];
+	var open = false;	// a change to a file of his is shown, so the tile is not folded
+	var dev = String((m.away && m.away.onName) || '');
 	ys.forEach(function (y) {
 		if (!y || !y.path) return;
 		var at = changeName(y.path);
-		if (!first) first = y;
+		var c = (y.change && typeof y.change === 'object') ? y.change : null;
 		names.push(at.name);
-		var head = document.createElement('div');
-		head.className = 'turn-yours-head';
-		head.textContent = t(_yoursKey(y), { name: at.name });
+		var line, quiet = false, press = false;
+		if (y.created && c && c.text === false) {
+			line = dev ? t('change.kept_on', { name: at.name, device: dev }) : t('change.kept_away', { name: at.name });
+			quiet = true;
+		} else if (y.created && typeof y.add === 'number') {
+			line = tn('change.made_n', y.add, { name: at.name, n: y.add });
+			press = true;
+		} else {
+			line = t(_yoursKey(y), { name: at.name });
+			if (!y.created) open = true;
+		}
+		lines.push(line);
+		var head = document.createElement(press ? 'button' : 'div');
+		head.className = 'turn-yours-head' + (press ? ' turn-yours-toggle' : '');
+		head.textContent = line;
 		box.appendChild(head);
 		var where = document.createElement('div');
 		where.className = 'rail-note pend-change-in';
 		where.textContent = t('change.in', { folder: at.folder });
 		box.appendChild(where);
+		if (quiet) return;
 		// A change the runner's record had no room for is still counted.
 		var n = ((y.add | 0) + (y.del | 0));
-		changeDiff(box, (y.change && typeof y.change === 'object') ? y.change : { text: true, rows: [], more: n });
+		var ch = c || { text: true, rows: [], more: n };
+		if (!press) { changeDiff(box, ch); return; }
+		head.type = 'button';
+		var shown = null;
+		head.addEventListener('click', function (e) {
+			if (e && e.stopPropagation) e.stopPropagation();
+			if (!shown) { shown = document.createElement('div'); shown.className = 'turn-yours-diff'; changeDiff(shown, ch); where.after(shown); return; }
+			shown.hidden = !shown.hidden;
+		});
 	});
 	if (!names.length) return null;
 	if (m.away && m.away.run) box.appendChild(histAwayUndo(String(m.away.keeper || ''), { away: m.away, cause: 'turn' }, _turnUndoRows));
-	var tile = buildTile('tool', { who: tOr('chat.who_files', 'Files'), expanded: true, result: true, copy: names.join('\n'), ts: m.ts });
+	var peek = lines.join(' · ');
+	if (into && into._body) {
+		into._body.appendChild(box);
+		if (!open) into.classList.add('collapsed');
+		tilePeek(into, peek);
+		pinBottom();
+		return into;
+	}
+	var tile = buildTile('tool', { who: tOr('chat.who_files', 'Files'), expanded: open, result: true, copy: names.join('\n'), ts: m.ts });
 	tile._body.appendChild(box);
-	tilePeek(tile, t(_yoursKey(first), { name: names[0] }));
+	tilePeek(tile, peek);
 	postToChat(tile);
 	pinBottom();
 	return tile;
