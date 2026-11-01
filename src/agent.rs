@@ -2890,8 +2890,11 @@ impl Agent {
                 // A refusal of a side action, its kind of work done in an earlier round, that nothing
                 // mended: the turn is done, and says what was refused (`Setbacks`).
                 let mut side = String::new();
+                // A turn the second-refusal rule already told to stop counts as told: the guard
+                // never then orders it to mend what it was told to stop on (UNBLOCK-67).
+                let told_stop = registry.ctx.told_to_stop();
                 let all_side = setbacks.unmended().is_some() && setbacks.blocking().is_none()
-                    && refusal_nudged;
+                    && (refusal_nudged || told_stop);
                 // A refusal another route went round is said too, never dropped (SETBACKS2).
                 let mut said_side: Vec<&Unmended> = setbacks.routed().iter().collect();
                 if all_side {
@@ -2904,7 +2907,7 @@ impl Agent {
                     }
                 }
                 if let Some(u) = setbacks.unmended().filter(|_| !all_side) {
-                    if !refusal_nudged {
+                    if !refusal_nudged && !told_stop {
                         refusal_nudged = true;
                         let nudge = refusal_nudge(&u.tool, &u.head);
                         let reply = ChatMessage::Assistant {

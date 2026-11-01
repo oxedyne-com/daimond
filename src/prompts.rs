@@ -1313,8 +1313,15 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 		.filter(|d| fence.rw.iter().chain(fence.ro.iter()).any(|g| covers(g, d)))
 		.cloned()
 		.collect();
+	// EACH WITH ITS REASON, the one a refusal of it gives (`deny_why`, UNBLOCK-66): a denied
+	// folder listed bare, or under "Read only", is read as reachable, and the refusal that follows
+	// is then disbelieved.
 	if !holes.is_empty() {
-		s.push_str(&fmt!("\nNever: {}", holes.join(", ")));
+		let told: Vec<String> = holes.iter()
+			.map(|d| fmt!("{} (because {})", d, crate::tools::deny_why_abs(d, m)))
+			.collect();
+		s.push_str(&fmt!("\nDenied to every tool and command, never read or written: {}",
+			told.join("; ")));
 	}
 	match Kit::resolve(bounds, m) {
 		Some(kit) => {

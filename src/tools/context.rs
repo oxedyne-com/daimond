@@ -482,7 +482,7 @@ impl<H: Host> ToolContext<H> {
         let key = self.hold_key();
         let again = {
             let mut c = lock_cache(&self.read_seen);
-            let kinds = c.refused.entry(key).or_default();
+            let kinds = c.refused.entry(key.clone()).or_default();
             let again = kinds.contains(&kind);
             if !again {
                 kinds.push(kind);
@@ -494,8 +494,18 @@ impl<H: Host> ToolContext<H> {
         if again {
             said.push_str(" This is the second refusal of this kind in this turn: tell the person \
                 plainly what you need from them, and stop.");
+            lock_cache(&self.read_seen).stopped.insert(key);
         }
         said
+    }
+
+    /// Has a second refusal of one kind told this turn to tell the person and stop?
+    ///
+    /// The end-of-turn guard reads this, so a turn told to stop ends blocked with the refusal's
+    /// reason and is never then ordered to mend it (UNBLOCK-67): one rule, one outcome.
+    pub fn told_to_stop(&self) -> bool {
+        let key = self.hold_key();
+        lock_cache(&self.read_seen).stopped.contains(&key)
     }
 
     /// Why a path was refused, in the model's own terms, so it can recover rather than retry.
@@ -584,6 +594,18 @@ impl<H: Host> ToolContext<H> {
                 "Refused: '{}' is inside Daimond's own directory, which holds the skills and the \
                 rules about what agents may do, so no tool call writes, moves or deletes it. \
                 Nothing was changed.", path));
+        }
+        // Denied outright, both verbs, and not Daimond's own: told with the fence's own reason
+        // ([`deny_why`]), the one the briefing's "Denied" line gives, and never as Daimond's
+        // directory or a folder added for reading (UNBLOCK-66).
+        if !in_daimond_dir(path) && self.denied_outright(&p) {
+            let why = deny_why(&p).unwrap_or_else(|| fmt!(
+                "this computer's fence keeps it from every tool and command"));
+            return ("denied", fmt!(
+                "Refused: '{}' is denied on this computer because {}. No tool or command may read \
+                or write it, and nothing in this chat changes that; it is not Daimond's own \
+                directory. Nothing was changed. If the task needs it, tell the person what you \
+                need from it.", path, why));
         }
         if writing {
             return ("read_only", fmt!(
@@ -933,6 +955,15 @@ impl<H: Host> ToolContext<H> {
             Bound::NoRead(prefix) => denied_under(&p, prefix),
             _                     => false,
         })
+    }
+
+    /// Is `p`, normalised, denied both verbs by a row of this turn's bounds or by its name?
+    pub(super) fn denied_outright(&self, p: &str) -> bool {
+        (self.no_secret_names() && secret_path(p))
+            || self.no_write.iter().any(|b| match b {
+                Bound::NoRead(prefix) => denied_under(p, prefix),
+                _                     => false,
+            })
     }
 
     /// Do this turn's bounds refuse secret names (see [`Bound::NoSecretNames`])?
@@ -1301,6 +1332,7 @@ impl<H: Host> ToolContext<H> {
         c.places.remove(&key);
         c.place_ask.remove(&key);
         c.refused.remove(&key);
+        c.stopped.remove(&key);
         // THE WORKERS GO WITH THE TURN, unlike the taint and the network answer above.  A model
         // may only gather what it started here, so a ledger that outlived its turn would let the
         // next one wait on a worker it never asked for -- and bill it for the report.  The
@@ -1578,6 +1610,7 @@ impl<H: Host> ToolContext<H> {
         c.places.remove(&key);
         c.place_ask.remove(&key);
         c.refused.remove(&key);
+        c.stopped.remove(&key);
         c.forks.remove(&key);
     }
 

@@ -1823,7 +1823,12 @@ pub fn fence_spec_surfaced(
         } else {
             !w.is_empty() && !is_store_path(w)
         };
-        if !in_daimond_dir(w) && nested {
+        // A row denied both verbs is a deny, not a read-only root: `home_bounds` writes every deny
+        // as a `NoRead` and a `NoWrite`, and listing it under `ro` as well told the model a
+        // denied folder was "Read only" (UNBLOCK-66).  The hand takes the stricter level of a
+        // path named twice, so the fence itself is unchanged.
+        let denied = bounds.iter().any(|b| matches!(b, Bound::NoRead(r) if under(w, &normalise(r))));
+        if !in_daimond_dir(w) && nested && !denied {
             let a = abs(w);
             if !ro.contains(&a) { ro.push(a); }
         }
@@ -2477,6 +2482,81 @@ pub(super) fn under(path: &str, prefix: &str) -> bool {
 /// allow: folded, an allow grants a folder the user never marked.
 pub(super) fn denied_under(path: &str, prefix: &str) -> bool {
     under(path, prefix) || under(&fold(path), &fold(prefix))
+}
+
+// ── Why a path is denied (UNBLOCK-66) ─────────────────────────────
+//
+// One description of a deny, read by the briefing (`machine_note`'s "Denied" line) and by every
+// refusal of a denied path (`ToolContext::refusal_of`), so the model is told the same reason in
+// both places.  A daimon told in its briefing that `~/mail-backup` was "Read only" and then, on
+// reading it, that it was "Daimond's own directory" believed neither and spent the turn looking
+// for a way round (Home Tech, 31 Oct).
+
+// The machine's own deny rows and their reasons, by home-relative tail: Kimberlite's release
+// fence policy (`kimberlite/config/fence_policy.jdat`), set once when it loads.  Empty in the
+// browser, whose hand states no reasons, so a deny there is told by class.
+static DENY_WHY: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+
+/// Give the engine the machine's deny rows, `(tail, why)`, so a refusal and the briefing can say
+/// why each is denied.  Set once per process; a second call is ignored, as the rows are release
+/// data and cannot change while the process runs.
+pub fn set_deny_reasons(rows: &[(String, String)]) {
+    let _ = DENY_WHY.get_or_init(|| rows.to_vec());
+}
+
+/// Why `path`, relative to the user's home or the workspace, is denied to every tool and command,
+/// in words for the model, or `None` where nothing here denies it by that name.
+///
+/// Daimond's own directory first, then the machine's own rows, then the secrets every fence
+/// denies, then a name like a key's.  The longest matching row wins, so a narrower row's reason
+/// is not hidden by a broader one.
+pub fn deny_why(path: &str) -> Option<String> {
+    let p = normalise(path);
+    if denied_under(&p, DAIMOND_DIR) {
+        return Some(fmt!("it is Daimond's own directory, which holds the rules about what agents \
+            may do"));
+    }
+    let rows: &[(String, String)] = match DENY_WHY.get() {
+        Some(v) => v,
+        None    => &[],
+    };
+    let row = rows.iter()
+        .filter(|(t, _)| denied_under(&p, &normalise(t)))
+        .max_by_key(|(t, _)| t.len());
+    if let Some((_, why)) = row {
+        return Some(fmt!("it holds {}", why));
+    }
+    if let Some(g) = ALWAYS_DENIED.iter().find(|g| denied_under(&p, g.tail)) {
+        // The reason up to its first aside: what follows " -- " is for the code's reader.
+        let why = match g.why.split(" -- ").next() {
+            Some(w) => w,
+            None    => g.why,
+        };
+        return Some(fmt!("it holds {}", why.split_whitespace().collect::<Vec<_>>().join(" ")));
+    }
+    if secret_path(&p) {
+        return Some(fmt!("it is named like a key or credential, and such names are denied \
+            wherever they are"));
+    }
+    None
+}
+
+/// [`deny_why`] for an absolute path the fence names, read against the machine's home and then
+/// its granted root; a deny outside both is told by class.
+pub fn deny_why_abs(abs: &str, m: &Machine) -> String {
+    // The root before the home: Daimond's own directory sits in the granted root, and read
+    // against the home it would be a folder of that name one level down.
+    let why = [Some(m.root.as_str()), m.home.as_deref()].into_iter().flatten()
+        .filter(|r| !r.is_empty())
+        .filter_map(|r| {
+            let r = r.trim_end_matches('/');
+            abs.strip_prefix(r).filter(|t| t.is_empty() || t.starts_with('/'))
+        })
+        .find_map(|t| deny_why(t.trim_start_matches('/')));
+    match why {
+        Some(w) => w,
+        None    => fmt!("this computer's fence keeps it from every tool and command"),
+    }
 }
 
 // ── Secret names (F3-4 SECRET-NOW) ────────────────────────────────

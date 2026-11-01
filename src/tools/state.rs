@@ -221,6 +221,9 @@ pub struct TurnState {
     // The kinds of refusal this turn has met, held as `kits` is, so a second of one kind tells
     // the daimon to stop rather than look for another way round ([`ToolContext::refuse`]).
     pub refused: HashMap<String, Vec<&'static str>>,
+    // The turns told by that second refusal to tell the person and stop, held as `kits` is, so the
+    // end-of-turn guard ends them blocked rather than ordering another round (UNBLOCK-67).
+    pub stopped: HashSet<String>,
     /// Set once this turn has put a question to the user with [`Tool::Ask`].
     ///
     /// One decision at a time is the whole rule, and a round may carry several tool calls -- so
