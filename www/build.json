@@ -1,1 +1,1 @@
-{"build":"23551e70027d","note":"The seat says Checking after a reload or gateway restart; mail sync waits while offline."}
+{"build":"e096eef43fa8","note":"The gateway logs each hop of its wake pings to Kimberlite, and passes on hearing only from a beat Kimberlite sent."}
