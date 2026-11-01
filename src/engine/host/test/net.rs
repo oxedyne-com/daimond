@@ -53,11 +53,16 @@ impl HostNet for TestNet {
     async fn search(&self, query: &str, kind: &str, limit: Option<u32>) -> Outcome<SearchAnswer> {
         LocalNet.search(query, kind, limit).await
     }
-    async fn egress_reach(&self, turn: &str, tool: &str, url: &str, granted: bool) -> EgressWord {
-        LocalNet.egress_reach(turn, tool, url, granted).await
+    async fn egress_reach(&self, turn: &str, tool: &str, url: &str, granted: bool, shown: bool)
+        -> EgressWord
+    {
+        LocalNet.egress_reach(turn, tool, url, granted, shown).await
     }
     async fn egress_allowed_detail(&self, turn: &str, tool: &str, url: &str, detail: &str) -> Option<Verdict> {
         LocalNet.egress_allowed_detail(turn, tool, url, detail).await
+    }
+    async fn egress_query(&self, turn: &str, tool: &str, query: &str) -> Option<EgressWord> {
+        LocalNet.egress_query(turn, tool, query).await
     }
     async fn egress_allowed_act(&self, turn: &str, tool: &str, url: &str, detail: &str, alone: bool) -> Option<Verdict> {
         LocalNet.egress_allowed_act(turn, tool, url, detail, alone).await

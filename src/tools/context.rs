@@ -1127,6 +1127,37 @@ impl<H: Host> ToolContext<H> {
         lock_cache(&self.read_seen).tainted.insert(who);
     }
 
+    /// Did this conversation's search results or fetched pages show `url` as it stands?
+    pub fn was_shown(&self, url: &str) -> bool {
+        lock_cache(&self.read_seen).shown.get(&self.daimon_of)
+            .map(|s| s.has(url))
+            .unwrap_or(false)
+    }
+
+    /// Remember the addresses a search answer showed this conversation.
+    pub fn shown_answer(&self, a: &SearchAnswer) {
+        let who = self.daimon_of.clone();
+        lock_cache(&self.read_seen).shown.entry(who).or_default().put_answer(a);
+    }
+
+    /// Remember the links a fetched page at `url` showed this conversation.
+    pub fn shown_page(&self, text: &str, url: &str) {
+        let links = links_in(text, url);
+        let who = self.daimon_of.clone();
+        let mut c = lock_cache(&self.read_seen);
+        let s = c.shown.entry(who).or_default();
+        for u in &links {
+            s.put(u);
+        }
+    }
+
+    /// Read what this conversation's earlier results and pages showed it from its thread, in place
+    /// of whatever was held, at the one place a turn begins ([`ShownSet::seed`]).
+    pub fn seed_shown(&self, thread: &[crate::protocol::ChatMessage]) {
+        let who = self.daimon_of.clone();
+        lock_cache(&self.read_seen).shown.entry(who).or_default().seed(thread);
+    }
+
     /// Mark one named conversation on this client, which may not be the one this context speaks
     /// for.
     ///

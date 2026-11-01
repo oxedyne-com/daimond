@@ -6,8 +6,8 @@ import { CHAT_MODEL_FIELDS, ChatStore, bumpDiamonds, loadChatMessages, newMid, p
 	storageAlarm, storedChats, tombMark, tombstone, touchChat, touchChatMeta, touchChatModel,
 	trashRestore } from './chatstore.js';
 import { newChatId, peekDiamondLabel, takeDiamondLabel } from './parcel_apply.js';
-import { readChatLog } from './handoff.js';
-import { _sharedClients, moveComposerTo, sendUserMessage, syncComposer, turnPhase } from './send.js';
+import { peerStopTurn, readChatLog } from './handoff.js';
+import { _sharedClients, moveComposerTo, peerHeldTurns, sendUserMessage, syncComposer, turnPhase } from './send.js';
 import { journalQueue, renderQueue, resumeQueue, stopGeneration } from './steer.js';
 import { WORKERS_PAUSED_KEY, Workers } from './workers.js';
 import { Files } from './files_view.js';
@@ -1898,8 +1898,8 @@ export function abortTurn(c) {
 	} catch (e) { /* idempotent */ }
 }
 
-/// Stop what a pause has just caught running: every turn `turnHold` now holds, and
-/// every worker whose node is held.
+/// Stop what a pause has just caught running: every turn `turnHold` now holds here,
+/// every worker whose node is held, and every turn another device runs under a held node.
 ///
 /// The pause was asked when a turn started and never again. On the person's own key no
 /// mint refuses a later round and a continuation leg grants itself, so a turn running
@@ -1917,6 +1917,14 @@ function brakeHeld() {
 		c._pausedMid = node;
 		try { Workers.cancelAwaits(c.id); } catch (e) { /* no gather waiting */ }
 		abortTurn(c);
+	});
+	// A turn another device runs, a Kimberlite's or a tab's (PAUSEP): no abort here reaches
+	// it, so the pause stops it as his Stop does, its lease revoked settled (`peerStopTurn`).
+	// The runner keeps its partial answer, marked stopped, and nothing runs the turn again;
+	// a resume leaves it stopped. A chat whose record is not here is asked by its id.
+	peerHeldTurns().forEach(function (h) {
+		var c = (pg.chats || []).find(function (x) { return x && String(x.id) === h.chatId; });
+		if (turnHold(c || { id: h.chatId })) peerStopTurn(h.iturn);
 	});
 	try { Workers.pauseHeld(); } catch (e) { /* the pool is not up */ }
 }

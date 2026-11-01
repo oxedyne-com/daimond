@@ -179,7 +179,7 @@ try {
 	// for itself -- must not hand over every site with nobody asked. The app was
 	// right and the expectation was stale, so it is written as the two things that
 	// actually matter: the page is reached, and reaching it grants nothing wider.
-	// `verify_egressconvo` check 8 holds the other end of the same property.
+	// (The page answers here only on the `Ask` rung; the default rung is D1's, see verify_d1tab.)
 	check('Daimond\'s own pages are reached without asking',
 		clean === 'allow' || clean === 'allow-once', String(clean));
 	check('and reaching one grants nothing wider than that one page',
@@ -211,8 +211,8 @@ try {
 	// instead, and both go through something that cannot hang.
 	//
 	// This is the PAGE's half only. That a yes is actually recorded, and comes back
-	// on the next payload, is `web_step` in src/tools.rs and the dialog counts in
-	// dev/verify_egressconvo.mjs -- which drives whole turns rather than the bridge.
+	// on the next payload, is `web_step` in src/tools.rs (the `Ask` rung; the default
+	// rung asks nothing since UNBLOCK-88, held by dev/verify_d1tab.mjs).
 	const known = await settle(page.evaluate(() => window.__daimondEgressAllowed(JSON.stringify(
 		{ tool: 'web_fetch', url: 'https://good.test/another-page', granted: true }))),
 		'a fetch the engine says is already granted');

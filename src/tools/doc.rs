@@ -2326,7 +2326,7 @@ pub fn iso8601_utc_ms(ms: u64) -> String {
 /// and that ignorance is the feature.  What it does know is that the query leaves through
 /// Daimond's own gateway, so that is the address, and the QUERY rides beside it as the detail,
 /// because the query is the thing actually going out.
-pub(super) const SEARCH_ENDPOINT: &str = "/api/web/search";
+pub(crate) const SEARCH_ENDPOINT: &str = "/api/web/search";
 
 /// Which body of material a search asks for.
 ///

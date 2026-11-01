@@ -1540,6 +1540,19 @@ function peerLeaseHeld(tid) {
 	var r = DaimondLease.record ? DaimondLease.record(tid) : null;
 	return !(r && r.mode === 'done');
 }
+
+/// Every turn another device holds now, as `{ iturn, chatId }`: the whole lease table read
+/// by the one test `peerHeldTurnOf` asks of a single turn. What a pause stops on the other
+/// devices (PAUSEP), whether or not the chat's rows are loaded here.
+export function peerHeldTurns() {
+	var all = (window.DaimondLease && DaimondLease.snapshot) ? DaimondLease.snapshot() : null;
+	var out = [];
+	Object.keys(all || {}).forEach(function (tid) {
+		try { if (peerLeaseHeld(tid)) out.push({ iturn: tid, chatId: String((all[tid] && all[tid].chatId) || '') }); }
+		catch (e) { /* a lease that cannot be read holds nothing */ }
+	});
+	return out;
+}
 /// Is the CURRENT chat mid-turn? Generation is per-chat now, so a turn
 /// running in one chat no longer freezes the others.
 export function curGen() { return turnPhase() !== 'idle'; }

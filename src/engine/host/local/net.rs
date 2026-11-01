@@ -31,13 +31,18 @@ impl HostNet for LocalNet {
     async fn search(&self, _query: &str, _kind: &str, _limit: Option<u32>) -> Outcome<SearchAnswer> {
         unavailable("net", "search")
     }
-    async fn egress_reach(&self, _turn: &str, _tool: &str, _url: &str, _granted: bool) -> EgressWord {
+    async fn egress_reach(&self, _turn: &str, _tool: &str, _url: &str, _granted: bool, _shown: bool)
+        -> EgressWord
+    {
         EgressWord::Once(Verdict::Deny)
     }
     async fn egress_allowed_detail(&self, _turn: &str, _tool: &str, _url: &str, _detail: &str)
         -> Option<Verdict>
     {
         Some(Verdict::Deny)
+    }
+    async fn egress_query(&self, _turn: &str, _tool: &str, _query: &str) -> Option<EgressWord> {
+        Some(EgressWord::Once(Verdict::Deny))
     }
     async fn egress_allowed_act(&self, _turn: &str, _tool: &str, _url: &str, _detail: &str,
         _alone: bool)

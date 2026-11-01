@@ -93,6 +93,12 @@ pub struct TurnState {
     // A chat and a dispatched worker each get a cache of their own, where the key is the empty
     // string and the set holds at most one name.
     pub tainted: HashSet<String>,
+    // WHAT EACH CONVERSATION'S RESULTS AND PAGES SHOWED IT, for the tainted reading gate (D1 by
+    // provenance, l.254 "this chat's"; UNBLOCK-88).  Keyed by `ToolContext::daimon_of` as
+    // `tainted` is, for the same reason: every Diamond on one model shares this cache, and an
+    // address one Diamond was shown must never count as shown to another.  Re-seeded from the
+    // thread at each turn's start (`ToolContext::seed_shown`).
+    pub shown: HashMap<String, ShownSet>,
     /// Set when this agent is acting ALONE: a dispatched worker, with nobody reading its
     /// transcript as it goes and no way to put a question.
     ///

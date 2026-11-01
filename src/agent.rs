@@ -1673,6 +1673,9 @@ impl Agent {
         // AND WHAT THE ASK WANTS THE DIAMOND'S PAGE TO DRAW, for the load proof an edit of the page
         // takes (K1): an infographic ask must draw graphics, not only words.
         registry.ctx.set_ask(&user_msg);
+        // AND WHAT THE CHAT'S EARLIER RESULTS AND PAGES SHOWED IT, for the tainted reading gate
+        // (D1 by provenance, l.254; UNBLOCK-88): on every surface, at the one place a turn begins.
+        registry.ctx.seed_shown(&session.messages);
         // THIS TURN'S OWN MESSAGES BEGIN WITH THE SENTENCE ABOUT TO BE PUSHED, and the index is
         // recorded on the agent rather than left to the caller, because a fold later in the turn
         // moves it; see `Agent::turn_start`.

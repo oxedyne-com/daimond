@@ -22,9 +22,14 @@ pub trait HostNet {
     async fn fetch(&self, url: &str) -> Outcome<String>;
     async fn fetch_raw(&self, url: &str) -> Outcome<RawPage>;
     async fn search(&self, query: &str, kind: &str, limit: Option<u32>) -> Outcome<SearchAnswer>;
-    async fn egress_reach(&self, turn: &str, tool: &str, url: &str, granted: bool) -> EgressWord;
+    /// `shown`: did this conversation's results or pages show `url` as it stands (D1 by
+    /// provenance, l.254; UNBLOCK-88)?  The engine keeps that per conversation, so a port keeps none.
+    async fn egress_reach(&self, turn: &str, tool: &str, url: &str, granted: bool, shown: bool)
+        -> EgressWord;
     async fn egress_allowed_detail(&self, turn: &str, tool: &str, url: &str, detail: &str)
         -> Option<Verdict>;
+    /// A search query's gate: `None` where nobody could be asked (UNBLOCK-88).
+    async fn egress_query(&self, turn: &str, tool: &str, query: &str) -> Option<EgressWord>;
     async fn egress_allowed_act(&self, turn: &str, tool: &str, url: &str, detail: &str, alone: bool)
         -> Option<Verdict>;
     async fn egress_allowed_kit(&self, turn: &str, cmd: &str, detail: &str) -> Option<Permit>;

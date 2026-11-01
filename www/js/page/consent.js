@@ -3084,6 +3084,8 @@ async function egressAllowed(payloadJson, opts) {
 	// This memory is the search's alone and never touches the network
 	// question's `allow-net`: two questions, two answers, and one may not
 	// stand in for the other.
+	// ONLY ON THE `Ask` RUNG since UNBLOCK-88: on the default rung the engine answers a
+	// tainted chat's searches and reads itself (D1, src/tools/shown.rs) and never calls here.
 	if (req.tool === 'web_search') {
 		var q = String(req.detail || '').trim();
 		if (!q) return 'deny';				// nothing to authorise, and nothing to show.

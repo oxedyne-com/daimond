@@ -59,6 +59,7 @@ use std::sync::{Arc, Mutex};
 #[macro_use] mod run;	// toolchains, a turn's bounds, secret names
 #[macro_use] mod file;	// the two filesystems and the file tools' doors
 #[macro_use] mod web;	// strangers' content, autonomy, packs, reaching out, push
+mod shown;	// what a chat was shown, and D1's payload test (UNBLOCK-88)
 #[macro_use] mod context;	// what a run leaves, `ToolContext`, the licence, spend
 #[macro_use] mod pending;	// a daimon's lines on the Pending panel
 #[macro_use] mod tool;	// `Tool`: belts, names, descriptions, parameters
@@ -74,6 +75,7 @@ pub use doc::*;
 pub use run::*;
 pub use file::*;
 pub use web::*;
+pub use shown::*;
 pub use context::*;
 pub(crate) use pending::*;	// nothing in it is wider than the crate
 pub use tool::*;

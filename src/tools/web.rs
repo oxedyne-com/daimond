@@ -1034,6 +1034,13 @@ pub enum Verdict {
     Deny,
 }
 
+/// The longest path, query and fragment an address may carry, and the longest search query
+/// (daimond.js `EGRESS_PAYLOAD_MAX`; rulings l.253).
+pub const EGRESS_PAYLOAD_MAX: usize = 120;	// fixed: D1's payload bound, the tab's own
+
+/// The run of encoded characters that reads as a payload (daimond.js `EGRESS_BLOB`).
+pub const EGRESS_BLOB: usize = 60;	// fixed: D1's payload run, the tab's own
+
 /// What the page's gate said about reaching a destination, and HOW FAR the answer reaches.
 ///
 /// The gate answers two different questions through one door, and until this existed it answered
@@ -1046,6 +1053,8 @@ pub enum EgressWord {
     Standing(Verdict),
     // Answers for this one address
     Once(Verdict),
+    // This address or query alone, refused by the payload test with nobody asked (a runner, D1)
+    Heavy,
 }
 
 /// Read how far the page's answer reaches, where anything unrecognised refuses THIS CALL ONLY.
@@ -1220,13 +1229,23 @@ pub fn egress_decision(
 /// * `tool` - The wire name of the tool asking.
 /// * `url` - The destination it wants.
 /// * `granted` - Whether this conversation has already said yes to reaching the web.
+/// * `shown` - Whether this conversation's results or pages showed `url` as it stands (D1, l.254).
 /// * `host` - The host the question is put through.
-pub(super) async fn egress_reach<H: Host>(turn: &str, tool: &str, url: &str, granted: bool, host: &H) -> EgressWord {
+pub(super) async fn egress_reach<H: Host>(
+    turn:       &str,
+    tool:       &str,
+    url:        &str,
+    granted:    bool,
+    shown:      bool,
+    host:       &H,
+)
+    -> EgressWord
+{
     #[cfg(not(target_arch = "wasm32"))]
     if !H::HOSTED {
         return local_egress_reach(turn, tool, url, granted, host).await;
     }
-    host.net().egress_reach(turn, tool, url, granted).await
+    host.net().egress_reach(turn, tool, url, granted, shown).await
 }
 
 /// See the wasm arm of [`egress_reach`]: on native there is no user to ask, so the answer is yes,
@@ -1317,7 +1336,7 @@ pub async fn egress_check<H: Host>(tool: &str, url: &str, ctx: &ToolContext<H>) 
         WebStep::Stood(Verdict::Deny) => refuse(
             "The user was asked, once, whether Daimond may reach the web in this conversation, \
             and declined."),
-        WebStep::Stood(Verdict::Allow) => match egress_reach(&ctx.turn_tag(), tool, url, true, ctx.host()).await {
+        WebStep::Stood(Verdict::Allow) => match egress_reach(&ctx.turn_tag(), tool, url, true, ctx.was_shown(url), ctx.host()).await {
             EgressWord::Standing(Verdict::Allow) | EgressWord::Once(Verdict::Allow) => None,
             EgressWord::Once(Verdict::Deny) => refuse(
                 "This address carries more than an address needs, so it was put to the user on \
@@ -1327,8 +1346,9 @@ pub async fn egress_check<H: Host>(tool: &str, url: &str, ctx: &ToolContext<H>) 
             EgressWord::Standing(Verdict::Deny) => refuse(
                 "The address could not be read, and one the gate cannot see is one it cannot let \
                 through."),
+            EgressWord::Heavy => Some(heavy_refusal(tool, "address")),
         },
-        WebStep::Ask => match egress_reach(&ctx.turn_tag(), tool, url, false, ctx.host()).await {
+        WebStep::Ask => match egress_reach(&ctx.turn_tag(), tool, url, false, ctx.was_shown(url), ctx.host()).await {
             EgressWord::Standing(v) => {
                 ctx.set_web_consent(v);
                 match v {
@@ -1340,8 +1360,59 @@ pub async fn egress_check<H: Host>(tool: &str, url: &str, ctx: &ToolContext<H>) 
             EgressWord::Once(Verdict::Deny)  => refuse(
                 "Either the user could not be asked -- and an unanswered request is not consent \
                 -- or they were asked about this one address and declined."),
+            EgressWord::Heavy => Some(heavy_refusal(tool, "address")),
         },
     }
+}
+
+/// The refusal for one address or query the payload test stopped with nobody asked (D1, UNBLOCK-88).
+///
+/// It says what it is: this one, by its shape, and nothing wider.  The tab's words ("the user was
+/// asked, and declined", "do not retry this destination") are false here, and on 1 Nov they told
+/// a research turn that every later search was barred, since a search's destination is one door.
+pub fn heavy_refusal(tool: &str, what: &str) -> String {
+    refusal_line(&fmt!(
+        "{} was refused automatically, and nobody was asked: this {} is over {} characters or holds \
+        an unbroken run of {} or more, the shape of data being carried out, and this turn has read \
+        content from outside the workspace. Only this {} was refused; other searches and addresses \
+        still work. Use a shorter one, or an address exactly as a page or a result gave it.",
+        tool, what, EGRESS_PAYLOAD_MAX, EGRESS_BLOB, what,
+    ))
+}
+
+/// The gate for a search query (D1, UNBLOCK-88): the query is what leaves, so the host measures it,
+/// and a runner refuses a heavy one in its own words rather than as a question declined.
+///
+/// # Arguments
+/// * `tool` - The wire name of the tool asking.
+/// * `query` - The query as the model wrote it.
+/// * `ctx` - The turn, which knows whether it has read a stranger's words.
+pub async fn egress_check_query<H: Host>(tool: &str, query: &str, ctx: &ToolContext<H>) -> Option<String> {
+    if !egress_needs_consent(mode(), ctx.is_tainted()) {
+        return None;
+    }
+    let word = egress_ask_query(&ctx.turn_tag(), tool, query, ctx.host()).await;
+    let decide = |v: Option<Verdict>| match egress_decision(tool, SEARCH_ENDPOINT, mode(), true, v) {
+        Egress::Proceed        => None,
+        Egress::Refuse(reason) => Some(reason),
+    };
+    match word {
+        Some(EgressWord::Standing(Verdict::Allow)) | Some(EgressWord::Once(Verdict::Allow)) => None,
+        Some(EgressWord::Heavy)                                                            =>
+            Some(heavy_refusal(tool, "query")),
+        Some(EgressWord::Standing(Verdict::Deny)) | Some(EgressWord::Once(Verdict::Deny))   =>
+            decide(Some(Verdict::Deny)),
+        None                                                                               => decide(None),
+    }
+}
+
+/// Put the query to whoever can answer it.
+pub(super) async fn egress_ask_query<H: Host>(turn: &str, tool: &str, query: &str, host: &H) -> Option<EgressWord> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if !H::HOSTED {
+        return local_egress_ask_detail(turn, tool, SEARCH_ENDPOINT, query, host).await.map(EgressWord::Once);
+    }
+    host.net().egress_query(turn, tool, query).await
 }
 
 

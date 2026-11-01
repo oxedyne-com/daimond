@@ -1342,6 +1342,9 @@ impl Tool {
                     // `tainted_landing` books the file as a stranger's (NF5) every time rather
                     // than when a parent's async word happened to arrive first (RUNNER-WEB QA H1).
                     ctx.set_tainted();
+                    if texty(&raw.content_type) {
+                        ctx.shown_page(&String::from_utf8_lossy(&raw.bytes), &url);
+                    }
                     let ctype = raw.content_type;
                     match reach_of(ctx, &to, &path, Door::Change).await {
                         Reach::Refuse(why) => {
@@ -1506,6 +1509,7 @@ impl Tool {
                     }
                 }
                 let page = res!(ctx.host().net().fetch(&url).await);
+                ctx.shown_page(&page, &url);
                 Ok(ctx.wrap_untrusted(&url, &page))
             }
             // Searching is not fetching, and the difference is who chose the destination. Nothing
@@ -1520,11 +1524,12 @@ impl Tool {
                 // shown -- as `web_type` shows the text it is about to send. Putting a URL there
                 // instead is precisely what made the search prompt unreadable.
                 if let Some(refusal) =
-                    egress_check_detail(self.name(), SEARCH_ENDPOINT, &query, ctx).await
+                    egress_check_query(self.name(), &query, ctx).await
                 {
                     return Ok(MessageContent::text(refusal));
                 }
                 let ans = res!(ctx.host().net().search(&query, kind.id(), limit).await);
+                ctx.shown_answer(&ans);
                 Ok(Self::search_result(ctx, &ans))
             }
             // A snapshot is a control surface -- the model acts on its refs -- but every role and
