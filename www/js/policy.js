@@ -19,7 +19,7 @@
 	'use strict';
 
 	var ENDPOINT = '/api/policy';
-	var KEY      = 'daimond-net';            // cached {network, capabilities}
+	var KEY      = 'daimond-net';            // cached {network, capabilities, crystalHeight}
 	var TEST_ID  = {
 		title:    'Daimond TEST',
 		icon:     'assets/icons/test-180.png',
@@ -36,12 +36,25 @@
 		return out;
 	}
 
+	/// A whole number of at least one, or null when the gateway named none.
+	function parseCount(v) {
+		return (typeof v === 'number' && isFinite(v) && v >= 1) ? Math.floor(v) : null;
+	}
+
+	/// The crystal frame's height budget (crystal.js heightGate), or null when the
+	/// gateway named none (an older gateway): crystal.js then uses its shipped one.
+	function parseHeight(writes, secs) {
+		var n = parseCount(writes), w = parseCount(secs);
+		return n && w ? { writes: n, windowMs: w * 1000 } : null;
+	}
+
 	function load() {
 		try {
 			var j = JSON.parse(localStorage.getItem(KEY) || 'null');
-			if (j && typeof j === 'object') return { network: parseNet(j.network), capabilities: parseCaps(j.capabilities) };
+			if (j && typeof j === 'object') return { network: parseNet(j.network), capabilities: parseCaps(j.capabilities),
+				crystalHeight: j.crystalHeight ? parseHeight(j.crystalHeight.writes, j.crystalHeight.windowMs / 1000) : null };
 		} catch (e) { /* unreadable cache: start from live */ }
-		return { network: 'live', capabilities: null };
+		return { network: 'live', capabilities: null, crystalHeight: null };
 	}
 	function save(s) {
 		try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { /* private mode: this boot only */ }
@@ -98,7 +111,8 @@
 			j = await res.json();
 		} catch (e) { return null; }		// offline, or no gateway in this build
 		if (!j || j.ok !== true) return null;
-		state = { network: parseNet(j.network), capabilities: parseCaps(j.capabilities) };
+		state = { network: parseNet(j.network), capabilities: parseCaps(j.capabilities),
+			crystalHeight: parseHeight(j.crystal_height_writes, j.crystal_height_window_secs) };
 		save(state);
 		applyIdentity();
 		announce();
@@ -127,6 +141,8 @@
 		network:  network,
 		isTest:   isTest,
 		can:      can,
+		/// {writes, windowMs} for a crystal frame's height, or null. See crystal.js heightGate.
+		crystalHeight: function () { return state.crystalHeight; },
 		read:     read,
 		refresh:  refresh,
 		parseNet: parseNet,          // exposed for the dev test

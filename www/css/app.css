@@ -1604,6 +1604,11 @@ button.tag-pool { cursor: pointer; }
    bottom margin (crystal.css) is chrome in full screen, as the app's padding and gap are. */
 :root[data-cfull] #crystal-frame-wrap { margin-bottom: 0; }
 
+/* THE FRAME IS THE PANEL'S SIZE IN FULL SCREEN, NOT THE PAGE'S REPORT. The floor crystal.js
+   carries in on the frame's inline `min-height` is overridden, so the page scrolls inside its
+   own frame and no height it reports can resize the frame it is measuring (UNBLOCK-81). */
+:root[data-cfull] .crystal-frame { min-height: 0 !important; }
+
 /* THE MEMORY IS CHROME IN FULL SCREEN. The `.crystal-memory` <details> rides in
    `#crystal-body` above the frame on every face-state (daimond.js
    `crystalMemoryPanel`), but full screen exists to give the page the whole

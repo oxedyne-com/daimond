@@ -109,6 +109,14 @@
 	var MIN_H = 40;
 	var MAX_H = 20000;
 
+	/// How often a page's height report may move the frame: at most HEIGHT_WRITES
+	/// writes in any HEIGHT_WINDOW_MS. These are the shipped figures, used until the
+	/// gateway answers; `/api/policy` serves the operator's (`crystal_height_writes`,
+	/// `crystal_height_window_secs`, gateway/src/handlers/policy.rs, same values).
+	var HEIGHT_WRITES    = 12;
+	var HEIGHT_WINDOW_MS = 1000;
+	var TIMER_MAX_MS     = 2147483647;	// fixed: setTimeout's delay is a signed 32-bit count
+
 	/// The longest href the parent will carry out of the frame.
 	var HREF_MAX = 2048;
 
@@ -1957,8 +1965,9 @@
 			// armoured text once the blob has it.
 			csp: { policy: PAGE_CSP, injected: armed.injected, carried: armed.carried, at: armed.at },
 			ready: false, reported: false, done: false, loads: 0, keys: [], faces: faces,
-			timer: 0, rtimer: 0, watch: null, height: 0, onMsg: null, onLoad: null,
+			timer: 0, rtimer: 0, watch: null, height: 0, moved: null, onMsg: null, onLoad: null,
 			rev: opts.rev == null ? '' : String(opts.rev), dirty: false, spoke: false,
+			gate: heightGate(policyHeight()), htimer: 0,
 		};
 
 		live.onMsg = function (e) { onMessage(e); };
@@ -2024,6 +2033,7 @@
 		if (l.watch) { try { l.watch.disconnect(); } catch (e) { /* gone */ } }
 		clearTimeout(l.timer);
 		clearTimeout(l.rtimer);
+		clearTimeout(l.htimer);
 		if (l.url) { try { URL.revokeObjectURL(l.url); } catch (e) { /* gone */ } }
 		l.url = '';
 		l.onMsg = null;
@@ -2417,13 +2427,110 @@
 	/// fills the rest of a panel a short page does not reach. A `min-height`
 	/// only ever RAISES the floor -- a page taller than the panel still grows
 	/// past it, a page shorter than the panel still gets the whole panel.
+	///
+	/// NO PAGE MAY DRIVE A RESIZE LOOP (UNBLOCK-81). A page whose report depends
+	/// on its own frame -- `min-height: 100vh` on its body is enough, through the
+	/// template's `measure()` -- reports the frame's height plus a little, this
+	/// raised the floor by that little, the frame grew, and the page reported
+	/// again: a new frame size every animation frame, without end, and in full
+	/// screen a tab that stopped painting. So the first report after a write that
+	/// moved the frame, while the frame still stands where that write put it, is
+	/// not followed if it moved by just what the frame moved: that is the page
+	/// answering the frame's own last change, not its content. A content change
+	/// moves the report by its own amount and is believed as before. In full
+	/// screen the frame is the panel's size whatever is reported: app.css
+	/// overrides the floor there, so `setCrystalFull` stays CSS-only.
+	///
+	/// AND NO PAGE MAY MOVE THE FRAME FASTER THAN THE POLICY ALLOWS (CFP-RATE). The
+	/// echo rule above catches a page that answers the frame's move by the same
+	/// amount; a page whose report swings with the frame by a different amount
+	/// (frame+50 below a size, frame-200 above it) has no size it settles at, and
+	/// would still loop. So every write passes `heightGate`: past its budget the
+	/// frame holds its last size until the page's report has been still for the
+	/// gate's hold, and then takes the last report.
 	function onHeight(m) {
 		var px = Number(m.px);
 		if (!isFinite(px)) return;
 		px = Math.max(MIN_H, Math.min(MAX_H, Math.round(px)));
+		var g = live.gate;
+		if (g.held) { holdHeight(g.offer(px, Date.now())); return; }
+		var mv = live.moved;
+		live.moved = null;
+		var fh = Math.round(live.frame.getBoundingClientRect().height);
+		if (mv && fh === mv.to && Math.abs((px - live.height) - (mv.to - mv.from)) <= 1) return;	// fixed: one CSS pixel of rounding
 		if (px === live.height) return;
+		var wait = g.offer(px, Date.now());
+		if (wait) { holdHeight(wait); return; }
+		setHeight(px);
+	}
+
+	/// (Re)start the hold: the gate's last report is taken once the page has been
+	/// still for `wait` ms.
+	function holdHeight(wait) {
+		var l = live;
+		clearTimeout(l.htimer);
+		l.htimer = setTimeout(function () {
+			if (live !== l || !l.frame) return;
+			var px = l.gate.release(Date.now());
+			l.moved = null;
+			if (px !== l.height) setHeight(px);
+		}, wait);
+	}
+
+	function setHeight(px) {
+		var fh = Math.round(live.frame.getBoundingClientRect().height);
 		live.height = px;
 		live.frame.style.minHeight = px + 'px';
+		var to = Math.round(live.frame.getBoundingClientRect().height);
+		if (to !== fh) live.moved = { from: fh, to: to };
+	}
+
+	/// The operator's budget for frame-height writes, from `/api/policy` through
+	/// policy.js, or the shipped one when no gateway has answered.
+	function policyHeight() {
+		var p = null;
+		try { p = window.DaimondNet && DaimondNet.crystalHeight ? DaimondNet.crystalHeight() : null; } catch (e) { /* no policy.js */ }
+		return {
+			writes:   p && p.writes   >= 1 ? p.writes   : HEIGHT_WRITES,
+			windowMs: p && p.windowMs >= 1 ? p.windowMs : HEIGHT_WINDOW_MS,
+		};
+	}
+
+	/// The rate limit on a page's height writes, kept apart from the DOM so it can
+	/// be tested on its own. `offer(px, now)` answers 0 when the write may go
+	/// ahead, or the ms to hold for; `release(now)` ends a hold and answers the
+	/// last report offered. At most `writes` writes land in any `windowMs`. A
+	/// trip holds for one window; a page that is still moving the frame within a
+	/// window of a release trips again at once, and each such trip doubles the
+	/// hold, so a page with no size it settles at moves the frame ever more
+	/// rarely instead of once a window for ever. One still window after a
+	/// release forgets the trips.
+	function heightGate(p) {
+		var n = p.writes, ms = p.windowMs;
+		var g = { held: false, px: 0, wait: 0, trips: 0, last: -Infinity, log: [] };
+		g.offer = function (px, now) {
+			g.px = px;
+			if (g.held) return g.wait;
+			if (g.trips && now - g.last >= ms) g.trips = 0;
+			var keep = [], i;
+			for (i = 0; i < g.log.length; i++) if (now - g.log[i] < ms) keep.push(g.log[i]);
+			g.log = keep;
+			if (g.log.length >= n || g.trips) {
+				g.trips++;
+				g.held = true;
+				g.wait = Math.min(TIMER_MAX_MS, ms * Math.pow(2, g.trips - 1));
+				return g.wait;
+			}
+			g.log.push(now);
+			return 0;
+		};
+		g.release = function (now) {
+			g.held = false;
+			g.last = now;
+			g.log.push(now);
+			return g.px;
+		};
+		return g;
 	}
 
 	/// A link the page asked to follow. The app routes it and may refuse; this end
@@ -3321,6 +3428,9 @@
 	// ── Export ──────────────────────────────────────────────────────
 
 	window.DaimondCrystal = {
+		heightGate:     heightGate,		// exposed for the dev test
+		HEIGHT_WRITES:    HEIGHT_WRITES,
+		HEIGHT_WINDOW_MS: HEIGHT_WINDOW_MS,
 		shotFrames:     shotFrames,
 		setAssetReader: setAssetReader,
 		setPassedStore: setPassedStore,

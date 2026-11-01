@@ -1589,7 +1589,24 @@
 	/* The seat switch by the composer is the face switch's control, so it keeps the same 30px box, 44px width and 44px overlay.
 	   The row stands 7px over the message box (its own and the bar's insets, above), which the centred overlay just reaches. */
 	:root[data-skin="daylight"] .panel.ai :is(#source-switch, #seat-switch, #effort-step) { overflow: visible; }
-	:root[data-skin="daylight"] .panel.ai :is(#source-switch, #seat-switch, #effort-step) .dview-btn { position: relative; min-width: 44px; }
+	:root[data-skin="daylight"] .panel.ai :is(#source-switch, #seat-switch, #effort-step) .dview-btn { position: relative; min-width: var(--seg-floor); }
+	/* A GROUP NEVER SHRINKS BELOW ITS SEGMENTS' FLOOR (UNBLOCK-81). app.css lets the source and seat switches give
+	   way to `min-width: 0`, which clipped their names while they clipped their overflow; here they paint it (for the
+	   44px overlay above), so a seat switch shrunk to nothing drew "Here | argonaut" over the Effort step. The floor
+	   is the segments' own, plus the group's 1px border each side; the names still give way inside it. */
+	:root[data-skin="daylight"] .panel.ai { --seg-floor: 44px; }
+	:root[data-skin="daylight"] .panel.ai #source-switch { min-width: calc(var(--seg-floor) + 2px); }
+	:root[data-skin="daylight"] .panel.ai #seat-switch { min-width: calc(var(--seg-floor) + 2px); }
+	:root[data-skin="daylight"] .panel.ai #seat-switch:has(> #seat-runner:not([hidden])) { min-width: calc(2 * var(--seg-floor) + 3px); }
+	/* And when the floors together are wider than the phone (all four groups and the walk-back pair at 393px), the
+	   row takes a second line rather than drawing one control over another. A line breaks on the named groups'
+	   FLOORS, not their full names (basis 0), so the names give way before anything wraps and the source, the seat
+	   and the Effort step stay side by side; the walk-back pair is what goes down. Each name then grows back to its
+	   own width (max-content), the source's first (grow 100 to 1): the runner's name still gives way first. The
+	   14px between lines lets two 30px rows' 44px tap areas meet and not cross. */
+	:root[data-skin="daylight"] .panel.ai .composer-row { flex-wrap: wrap; row-gap: 14px; }
+	:root[data-skin="daylight"] .panel.ai #source-switch { flex: 100 1 0; max-width: max-content; }
+	:root[data-skin="daylight"] .panel.ai #seat-switch { flex: 1 100 0; max-width: max-content; }
 	:root[data-skin="daylight"] .panel.ai :is(#source-switch, #seat-switch, #effort-step) .dview-btn::before {
 		content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: 44px; transform: translate(-50%, -50%);
 	}

@@ -77,6 +77,10 @@
 		flex: none; min-height: 0; overflow: visible; margin: 0 16px; padding: 14px 16px;
 		border: 1px solid var(--border); border-radius: 14px; background: var(--bg-secondary);
 	}
+	/* In full screen the card takes the panel, so the page's frame is the panel's size: the frame's
+	   floor from the page's own report is off there (app.css), and a card hugging that report is
+	   what let a page that measures its own frame resize it every frame (UNBLOCK-81). */
+	:root[data-cfull] #app #panel-ai.on-diamond #crystal-body:has(#crystal-frame-wrap) { flex: 1 1 0; }
 	/* The Files group first, headed FILES with its + at the right (fix 4); linked Diamonds after. */
 	#app #panel-ai.on-diamond #crystal-controls { border-top: 0; padding: 18px 16px 8px; }
 	#app #panel-ai.on-diamond #arte-list { order: 1; }
