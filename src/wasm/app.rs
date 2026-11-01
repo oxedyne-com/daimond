@@ -4463,12 +4463,8 @@ pub(crate) async fn open_command(msg: String) -> Opened {
         Some(c) => c,
         None    => return Opened::Send(msg),    // not a command; an ordinary message
     };
-    let mut roots = vec![crate::tools::FileRoot::Workspace];
-    // Only while a folder is open are these two different stores; without one they are the same
-    // directory, and searching it twice would double the cost of every refusal.
-    if crate::wasm::opfs::workspace_mode() == "folder" {
-        roots.push(crate::tools::FileRoot::Opfs);
-    }
+    // One store in the browser: the workspace and Daimond's own are the same directory (R1).
+    let roots = vec![crate::tools::FileRoot::Workspace];
     // What was actually searched, for the refusal.  Each store brings its own search path, so this
     // is a union and not a constant -- a user who named a directory in the folder they have open
     // should be told it was looked in, and one who named it in the other store should be able to

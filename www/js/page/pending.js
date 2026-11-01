@@ -100,15 +100,6 @@ export function instructionsSeed() {
 //
 // With no folder open the two resolve to the same file and the second read is
 // skipped: one workspace, one layer, exactly as before.
-/// Is a real folder open, as the ENGINE holds it?
-///
-/// Asked of the wasm rather than of the page's own `folderHandle`, which lives
-/// inside the Files module and is a copy: the question is which root the file
-/// tools will actually resolve against, and only one place knows that.
-export function folderOpen() {
-	try { return Wasm.workspace_mode() === 'folder'; }
-	catch (e) { return false; }
-}
 
 export var Instructions = {
 	md: '',
@@ -223,17 +214,7 @@ export var Instructions = {
 		// fresh workspace is already better than nothing and the shape to extend is on
 		// the screen rather than in a document nobody opens.
 		if (!this.mine.trim()) this.mine = await this.seedOnce();
-		// The project's, from the folder — and only when there IS one. With no
-		// folder open both paths resolve to the same file, and reading it twice
-		// would put the user's own rules into the prompt twice over.
 		this.theirs = '';
-		if (folderOpen()) {
-			try {
-				var proj = await tools().run_tool_outcome('file_read',
-					JSON.stringify({ path: INSTRUCTIONS_FILE }));
-				if (proj && proj.outcome === 'done') this.theirs = proj.text;
-			} catch (e) { /* a folder without one is the ordinary case */ }
-		}
 		this.md = this.layered();
 		// Existing agents hold a system prompt composed at construction, so a
 		// changed DAIMOND.md only takes effect on their next turn — rebuild them.

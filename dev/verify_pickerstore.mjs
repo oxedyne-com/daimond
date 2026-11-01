@@ -100,7 +100,6 @@ const store = await page.evaluate(async () => {
 	const add = document.querySelector('#arte-list [data-act="attach-add"]');
 	return {
 		paired,
-		folder: !!(window.DaimondFiles && window.DaimondFiles.folder && window.DaimondFiles.folder()),
 		add: !!add,
 		addOff: !!add && (add.disabled || add.getAttribute('aria-disabled') === 'true'),
 	};

@@ -1,5 +1,5 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
-import { Wasm, kindName, noteFolderLost } from './wasm.js';
+import { Wasm, kindName } from './wasm.js';
 import { convKey, ownPanel, pg } from './state.js';
 import { esc, friendlyError, stripAnsi, t, tn } from './util.js';
 import { nudgeSync, trashed } from './chatstore.js';
@@ -8,10 +8,10 @@ import { deviceLabelFor, isMobileDeviceSelf, peerSyncShim, selfDeviceId } from '
 import { PeerAgents, tools } from './workers.js';
 import { diag } from './passkey_phrase.js';
 import { attachedTruly, attachedTrulyAll, attachmentsOf, bind, clear, closePop, closePreview, curDir,
-	docFilling, fmtFileBytes, folderFid, folderHandle, isOpen, joinPath, list, listNote, listed,
-	modeReconnect, openFile, parseListing, pickListing, pvEl, reknow, relabelListing, renderCrumbs,
-	renderFocus, renderMode, rootHandle, showLineNos, showModeMsg, showViewedFile, toggleAttach,
-	tryReconnect, underPath, viewEl } from './files_tree.js';
+	docFilling, fmtFileBytes, isOpen, joinPath, list, listNote, listed,
+	openFile, parseListing, pickListing, pvEl, relabelListing, renderCrumbs,
+	renderFocus, renderMode, machineFolderKept, retireMachineFolder, showLineNos, showModeMsg, showViewedFile, toggleAttach,
+	underPath, viewEl } from './files_tree.js';
 import { DaimondPanels } from './layout.js';
 import { placeOpts, selfHoldsFolder, selfHoldsHand, toolReason } from './sourcemenu.js';
 import { annotatePresence } from './turns.js';
@@ -1356,7 +1356,7 @@ function writeDir() {
 /// the sandbox, and two surfaces naming one place differently is how a reader
 /// comes to believe there are three.
 export function placeName() {
-	return folderHandle ? folderHandle.name : t('files.mode_browser');
+	return t('files.mode_browser');
 }
 
 /// A name for a new document that can be found again tomorrow.
@@ -1539,13 +1539,10 @@ export async function readRaw(path, viaStore) {
 	// the flag flipped for the NEXT open (a store picture opened over a workspace text
 	// file used to flip it, sending the following read/conflict-check/save to the wrong
 	// root). A caller that is not choosing a door omits the argument and gets the
-	// current `storeFile`, exactly as before. A read straight at the wasm, so a
-	// withdrawn grant fails here and `noteFolderLost` carries it to the one handler;
-	// OPFS (the store door) is not a grant and cannot be revoked, so it is left out.
+	// current `storeFile`, exactly as before. 
 	var s = (arguments.length > 1) ? !!viaStore : pg.storeFile;
 	if (s) return await Wasm.store_read(path);
-	try { return await Wasm.read_file(path); }
-	catch (e) { noteFolderLost(e); throw e; }
+	return await Wasm.read_file(path);
 }
 
 // ── WHAT IS TYPED BUT NOT SAVED ──────────────────────────────
@@ -2063,18 +2060,11 @@ export function install() { // page-split: install
 		/// WORKSPACE panel's, and the two panels are opened separately.
 		onDocOpen:     onDocOpen,
 		refresh:       refresh,
-		// Repaint what the Cloud chip claims, after a sync has moved residency.
-		tryReconnect:  tryReconnect,
+		// A Machine folder handle a device saved before is cleared, with one line (R1).
+		retireMachineFolder: retireMachineFolder,
+		// Is an older build's Machine folder record still waiting? The sync seed asks.
+		machineFolderKept: machineFolderKept,
 		clear:         clear,
-		// The open folder, for the status row that reports on it. Null on the sandbox.
-		folder:        function () { return folderHandle; },
-		// Whether a machine folder is remembered here, open or not (the sandbox after a
-		// lost grant keeps it to reconnect to). See `syncIndexOwed`.
-		remembersFolder: function () { return !!(folderHandle || rootHandle); },
-		// Its id on this device, which the record of marks keys it by. Empty on the sandbox.
-		folderId:      function () { return folderFid; },
-		// The engine's list of known folders read again; see `reknow`.
-		reknow:        reknow,
 		// ── What the `+` picker borrows ────────────────────────────
 		//
 		// The picker in the attachment footer browses the SAME tree this
@@ -2193,10 +2183,10 @@ export function install() { // page-split: install
 		// next time something rebuilds it.
 		relabel:       function () {
 			renderFocus();
-			// The mode row too: Browser / Machine / Cloud and the two transfer
+			// The mode row too: Browser / Cloud and the two transfer
 			// buttons beside them are built from strings once, and they are on
 			// screen for as long as the panel is.
-			renderMode(modeReconnect);
+			renderMode();
 			// The relist is still refused while a document is open -- `list` closes
 			// one -- but the tree's OWN words no longer wait for it. That guard is
 			// why the breadcrumb stayed in the language the panel was opened in from
@@ -2342,24 +2332,12 @@ export function install() { // page-split: install
 		},
 	}; // page-split: end lift
 
-	/// What root the file tools are ACTUALLY on, published for `verify_machine`.
-	///
-	/// The same reasoning as `DaimondCore.permissionMode`: the panel's chip and the
-	/// engine's root can differ, and only one of them decides where a write lands.
-	/// A check reading the chip would be measuring the drawing against itself --
-	/// which is exactly the failure `--break noswitch` reproduces, where the chip
-	/// goes active, the handle is remembered, and `set_workspace_dir` is never
-	/// called. `entries` runs a real `file_list` through the wasm tools, so what it
-	/// answers is the engine's own view and not the tree's copy of it.
+	/// What the file tools are ACTUALLY on, published for the verifiers. `entries` runs a real
+	/// `file_list` through the wasm tools, so what it answers is the engine's own view and not
+	/// the tree's copy of it.
 	window.DaimondFiles = {
-		folder:  function () { try { return Files.folder(); } catch (e) { return null; } },
 		// The viewer lets go of the Preview panel: the live pages taking it ask here.
 		previewAside: function () { try { Files.previewAside(); } catch (e) { /* no viewer yet */ } },
-		// The open folder's id on this device, for `dev/verify_m2_samename.mjs`.
-		folderId: function () { try { return Files.folderId(); } catch (e) { return ''; } },
-		// The folders this device knows, handed to the engine again: `versions.js` asks before
-		// every restore or undo opens (HK1).
-		reknow: function () { try { return Files.reknow(); } catch (e) { return Promise.resolve(); } },
 		entries: function (dir) { return Files.entries(dir || ''); },
 		// What sync may write into and delete from on another device's word: the
 		// folders shared AND in force here (R2), for the verifiers of marks.

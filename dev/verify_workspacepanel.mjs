@@ -625,7 +625,7 @@ const HEAD = () => {
 	return {
 		drawn, said,
 		old: ['new-file', 'new-dir', 'upload', 'refresh'].filter((a) => head.querySelector(`[data-act="${a}"]`)),
-		chips: document.querySelectorAll('#panel-work :is(.files-mode-chip, .files-mode-seg, .files-mode-acts, .files-mode-btn, .files-mode-forget)').length,
+		chips: document.querySelectorAll('#panel-work :is(.files-mode-chip, .files-mode-seg, .files-mode-acts, .files-mode-btn, .files-mode-forget)').length, // keeps: files-mode-acts asserts its removal (h.chips === 0, G5) // keeps: files-mode-btn asserts its removal (G5)
 		root: root ? root.textContent.trim() : null, store: DaimondI18n.t('files.mode_browser'),
 		newIn: !!nb && vis(nb) && nb.parentElement === path,
 	};

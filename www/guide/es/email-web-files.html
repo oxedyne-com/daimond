@@ -41,19 +41,17 @@
 	<h1>Archivos, correo y la web</h1>
 
 	<h2 id="s1">El espacio de trabajo</h2>
-	<p>El botón <span class="ui">Espacio</span> panel muestra tus archivos como un árbol corriente. Tres fichas arriba nombran dónde vive el espacio de trabajo.</p>
+	<p>El botón <span class="ui">Espacio</span> muestra tus archivos como un árbol normal. Dos chips arriba nombran los lugares que implica un espacio de trabajo.</p>
 	<ul>
-		<li><span class="ui">Navegador</span> es el almacenamiento privado propio de este navegador, al que no llega nada fuera de Daimond. Es el predeterminado, y se sincroniza con tus otros dispositivos.</li>
-		<li><span class="ui">Equipo</span> es una carpeta real en el disco de este equipo. Daimond trabaja directamente en ella, así que los mismos archivos están en tu gestor de archivos. Se queda en ese equipo, y viaja solo si la compartes con el <span class="ui">⇄</span> control. Solo navegadores basados en Chromium.</li>
-		<li><span class="ui">Nube</span> es donde se guardan los bytes, que es lo que permite que un espacio de trabajo sea más grande que el dispositivo que lo tiene. No es un tercer sitio donde trabajar. Los archivos se cifran antes de salir.</li>
+		<li><span class="ui">Navegador</span> es el almacenamiento privado de este navegador, inalcanzable para nada fuera de Daimond. Es donde vive un espacio de trabajo, y se sincroniza con tus otros dispositivos.</li>
+		<li><span class="ui">Nube</span> es donde se guardan los bytes, lo que permite que un espacio de trabajo sea más grande que el dispositivo que lo tiene. No es un segundo lugar donde trabajar. Los archivos se cifran antes de salir.</li>
 	</ul>
-	<p>La carpeta que abres como <span class="ui">Equipo</span> es todo lo que Daimond puede ver, sin nada por encima ni nada al lado.</p>
+	<p>El navegador no abre una carpeta del disco de tu ordenador. Para trabajar en una carpeta propia, ejecuta Kimberlite en ese ordenador. Un navegador que antes tenía una carpeta abierta avisa una vez de que ya no la tiene, y no se pierde nada del espacio de trabajo.</p>
 
 	<h3 id="s2">Meter un archivo</h3>
 	<ul>
 		<li><strong>Subir archivos</strong>, la flecha hacia la bandeja de la cabecera, coge un archivo o un puñado.</li>
 		<li><strong>Importar una carpeta&hellip;</strong> copia una carpeta dentro, y a partir de ahí se sincroniza como todo lo demás.</li>
-		<li><strong>Abrir una carpeta de verdad</strong> con la <span class="ui">Equipo</span> ficha. No se copia nada, y se sincroniza solo si la compartes.</li>
 	</ul>
 	<p>El correo llega aquí como archivos corrientes, y un daimon escribe aquí donde se le permite.</p>
 
@@ -63,7 +61,7 @@
 	<p>A un daimon se le dice con claridad cuando un archivo que quiere está en la nube, y tiene que traerlo deliberadamente. Un tope limita cuánto puede bajar por su cuenta.</p>
 
 	<h2 id="s4">Entregar una carpeta</h2>
-	<p>Cada fila del árbol tiene un <span class="ui">◈</span> y un <span class="ui">⋯</span>. El ◈ añade el archivo o la carpeta a lo que está en foco, o lo quita, y el ⋯ dice lo mismo con palabras: <span class="ui">Añadir a</span> el diamond por su nombre, o <span class="ui">Añadir a este chat</span>, y <span class="ui">Quitar de</span> cuando ya está dentro. En un ordenador los dos aparecen al pasar el puntero por la fila; en un teléfono el ◈ se ve siempre y una pulsación larga abre el ⋯. Un diamond nuevo empieza sin nada añadido, y su lista <span class="ui">Puede cambiar</span> dice desde dónde añadir.</p>
+	<p>Every row in the tree has a <span class="ui">◈</span> and a <span class="ui">⋯</span>. The ◈ adds the file or folder to what is in focus, or takes it out, and the ⋯ says the same in words: <span class="ui">Add to</span> the diamond by name, or <span class="ui">Add to this chat</span>, and <span class="ui">Remove from</span> once it is in. On a computer both appear when the pointer is over the row; on a phone the ◈ is always drawn and a long press opens the ⋯. A new diamond starts with nothing added, and its <span class="ui">Can change</span> list says where to add from.</p>
 	<ul>
 		<li><strong>Un diamond está en foco.</strong> El archivo o la carpeta se une al espacio de trabajo de ese diamond y se queda hasta que lo sacas.</li>
 		<li><strong>Un chat está en foco.</strong> El adjunto vale solo para el próximo turno.</li>
@@ -82,12 +80,10 @@
 	<p>Cualquier cosa que un daimon adjuntó por su cuenta, como la cosecha de un pliegue o un archivo que guardó un agente, está bajo un encabezado plegado, <span class="ui">Añadido por el daimon</span>, con un recuento y un <span class="ui">Quitar todos</span>. Tus propios adjuntos se quedan donde están.</p>
 
 	<h3 id="s7">Carpetas añadidas y tus otros dispositivos</h3>
-	<p>Añadir una carpeta o un archivo a un diamond, o una carpeta al espacio de trabajo de un chat, se sincroniza con tus otros dispositivos, pero allí no surte efecto hasta que lo pulsas de nuevo en ese dispositivo. Abre el mismo diamond en un segundo dispositivo y una carpeta añadida en otro sitio aparece como aún no en uso aquí, con <span class="ui">Usar aquí</span> para empezar a usarla allí, o <span class="ui">Usar todas aquí</span> para todo lo que aún no está en uso de una vez. Quitar una carpeta llega a todos los dispositivos por sí solo; empezar a usarla no, así que una carpeta añadida solo está en uso en un dispositivo donde se añadió o se volvió a pulsar. Tras esta actualización, una carpeta de la máquina que añadiste puede pedir una pulsación más: una compartida necesita <span class="ui">Usar aquí</span> y después ⇄ otra vez, y una carpeta del espacio de trabajo de un chat o una adjuntada con <span class="ui">Leer</span> también necesita pulsarse de nuevo. La carpeta que Neil añadió para esta guía puede pedir esa misma pulsación una vez, donde se configuró por primera vez con una carpeta de la máquina abierta.</p>
+	<p>Añadir una carpeta o un archivo a un diamond, o una carpeta al espacio de trabajo de un chat, se sincroniza con tus otros dispositivos, pero allí no surte efecto hasta que lo pulsas de nuevo en ese dispositivo. Abre el mismo diamond en un segundo dispositivo y una carpeta añadida en otro sitio aparece como aún no en uso aquí, con <span class="ui">Usar aquí</span> para empezar a usarla allí, o <span class="ui">Usar todas aquí</span> para todo lo que aún no está en uso de una vez. Quitar una carpeta llega a todos los dispositivos por sí solo; empezar a usarla no, así que una carpeta añadida solo está en uso en un dispositivo donde se añadió o se volvió a pulsar.</p>
 
 	<h3 id="s8">Compartir una carpeta con tus otros dispositivos</h3>
-	<p>Una carpeta <span class="ui">Equipo</span> vive en un solo ordenador, y tu teléfono no puede abrirla. El botón <span class="ui">⇄</span> control de la fila es cómo llega a él de todas formas, con <span class="ui">Compartir con dispositivos sin acceso nativo</span>.</p>
-	<p>Desactivado, solo los dispositivos que pueden abrir la carpeta por sí mismos la ven. Activado, se copia a tus otros dispositivos, hasta <strong>200&nbsp;MiB</strong> por carpeta. El ajuste es por carpeta, sea cual sea el dispositivo desde el que lo pongas, y solo puede ponerlo un dispositivo que pueda abrir la carpeta.</p>
-	<p>Una carpeta que supera el techo se deja fuera entera, y un aviso dice cuál es y cuánto pesaba. Comparte una carpeta más pequeña, o saca algo de ella.</p>
+	<p>Una carpeta en el almacenamiento propio del navegador llega a tus otros dispositivos por sí sola, así que no hay nada que compartir a mano. Una carpeta del disco de tu ordenador es cosa de Kimberlite y se queda en ese ordenador.</p>
 
 	<h2 id="s9">Documentos, y libros</h2>
 	<p>Abre un <code>.typ</code> archivo y el panel Doc gana dos botones. <span class="ui">Compilar</span> maqueta el documento en la página y escribe un PDF de vista previa junto a la fuente, y mientras esas páginas están abiertas, cada guardado las reconstruye. Púlsalo en un capítulo y compila el documento que incluye ese capítulo, y luego te lleva a la página de ese capítulo.</p>
@@ -98,6 +94,7 @@
 	<h2 id="s10">Cualquier tipo de archivo</h2>
 	<p>Cualquier archivo se guarda y viaja, hasta un gigabyte cada uno. Un documento o una hoja de cálculo se abre como una <strong>vista de lectura</strong>, que muestra lo que dice y no cómo se imprime. Los valores son los guardados, las fórmulas no se recalculan, y las macros ni se ejecutan ni se leen. <span class="ui">Guardar una copia</span> escribe una en tu propio dispositivo y deja el archivo de aquí intacto.</p>
 	<p>Donde nada reconoce un archivo, se muestran sus bytes, y el panel lo dice.</p>
+	<p>A scan or picture saved as BMP, TIFF, HEIC or ICO is turned into a PNG or JPEG as it is opened, so a daimon can look at it, read the text in it, or place it in a document, with nothing to convert first. The text is read from every page of a TIFF that has several; looking at one shows its first page.</p>
 
 	<h2 id="s11">Correo</h2>
 	<p>Un navegador no puede abrir una conexión de correo, así que Daimond se conecta a través de la pasarela, que devuelve el mensaje en bruto y olvida tu credencial. Tu correo se escribe en el espacio de trabajo como archivos corrientes.</p>

@@ -19,20 +19,8 @@
 //      check that asks the page what it thinks the sentence is would pass with
 //      every sentence replaced by the same one.
 //
-//   2. A WITHDRAWN FOLDER GRANT IS NOTICED ON THE PANEL'S OWN READS. Both
-//      halves, because either alone is satisfiable by a mistake: a NotAllowed
-//      failure under a folder root must raise `daimond:folder-lost`, and an
-//      ORDINARY failure under the same root must raise nothing. A change that
-//      fired on every failure would drop the user's folder because a file was
-//      missing, which is its own bug and a worse one.
-//
-//      And the predicate is compared, term by term, with `folder_loss_reported`
-//      in `src/tools.rs`. It exists in two languages until the Rust side raises
-//      the event itself; two copies of a rule drift, and this is what stops them
-//      drifting quietly. Since 2026-09-13 the Rust half reads the outcome and the
-//      thrown `DOMException.name` rather than matching a tool RESULT, which is
-//      also asserted here: a search hit that merely NAMES the exception cost the
-//      user their folder mid-turn.
+//   2. (Retired with the browser's Machine folder, G5, D-20261031-11: the
+//      browser opens no folder, so no grant can be withdrawn.)
 //
 //   3. THE IMPROVE PANEL'S "i" OPENS THE PAGE ABOUT THE IMPROVE PANEL.
 //      `guide/social.html` documents it and was reachable only from the guide's
@@ -68,7 +56,6 @@
 //   node dev/verify_joinedup.mjs --break oldinfo     # the "i" goes back to interface.html
 //   node dev/verify_joinedup.mjs --break noverify    # About drops the build check
 //   node dev/verify_joinedup.mjs --break noversion   # the import stops reading the version
-//   node dev/verify_joinedup.mjs --break anyfailure  # ANY failure drops the folder
 //   node dev/verify_joinedup.mjs --break deadlogo    # the dead CSS rule comes back
 //   node dev/verify_joinedup.mjs                     # and then, clean
 //
@@ -112,8 +99,6 @@ const IMP_INFO  = "\t\tif (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.gui
 const VERIFY_IN = '\t\tbody.appendChild(check);\n';
 const VER_GUARD = "\t\t\tvar ver = data.version === undefined ? BACKUP_VERSION : data.version;\n"
 	+ "\t\t\tif (typeof ver !== 'number' || !isFinite(ver) || ver > BACKUP_VERSION) {";
-const LOST_TEST = "\tvar text = (e && typeof e === 'object' && e.message) ? String(e.message) : String(e);\n"
-	+ "\treturn text.indexOf('NotAllowedError') >= 0;";
 const LOGO_RULE = '.empty-state h2 { margin: 0; color: var(--text-primary); font-size: var(--fs-3xl); }';
 
 const BREAKS = {
@@ -132,9 +117,6 @@ const BREAKS = {
 	noverify:    [{ file: SRC, find: VERIFY_IN, with: '' }],
 	// The import stops reading the version, exactly as it shipped.
 	noversion:   [{ file: SRC, find: VER_GUARD, with: '\t\t\tif (false) {' }],
-	// Any failure at all counts as a withdrawn grant, so a missing file costs the
-	// user their folder.
-	anyfailure:  [{ file: SRC, find: LOST_TEST, with: '\treturn true;' }],
 	// The dead rule comes back, in the stylesheet where it lived.
 	deadlogo:    [{ file: 'css/app.css', find: LOGO_RULE,
 		with: '.empty-state .empty-logo { width: 56px; height: 56px; opacity: 0.9; margin-bottom: 4px; }\n'
@@ -274,73 +256,6 @@ async function stubGateway(page) {
 	await page.route('**/api/balance',        r => r.fulfill(json({ ok: true, credits_minor: 5000, currency: 'usd', entries: [] })));
 	await page.route('**/api/licence',        r => r.fulfill(json({ ok: true, licence: true, held: true, currency: 'usd' })));
 	await page.route('**/api/sync**',         r => r.fulfill(json({ ok: true, version: 0, blob: null })));
-}
-
-// ── 2. The predicate, in two languages ───────────────────────────────
-//
-// STATIC, and first, because it needs no browser and because it is the check
-// that stops the duplication rotting. The terms are pulled OUT of the Rust
-// source: nothing here restates them, so a change to the rule that the browser
-// mirror does not follow goes red.
-//
-// The rule moved on 2026-09-13. It used to be `is_folder_lost(result)` in
-// `src/wasm/opfs.rs`, a substring test over EVERY tool result, and a `file_search`
-// that matched that file's own doc comment cost the user their folder mid-turn.
-// It is now `folder_loss_reported(outcome, thrown)` in `src/tools.rs`: the call's
-// outcome first, then the NAME the browser threw, and never the result's words.
-{
-	const ts = readPage(path.join(ROOT, 'src/tools.rs'), 'utf8');
-	const os = readPage(path.join(ROOT, 'src/wasm/opfs.rs'), 'utf8');
-	const js = readPage(path.join(WWW, SRC), 'utf8');
-
-	const name = (ts.match(/pub const WITHDRAWN_GRANT: &str = "([^"]+)"/) || [])[1] || '';
-	check('src/tools.rs names the withdrawn-grant exception', !!name, name);
-
-	const pred = (ts.match(/pub fn folder_loss_reported\([^)]*\) -> bool \{([\s\S]*?)\n\}/) || [])[1] || '';
-	check('and holds the rule that reads it', !!pred.trim(), pred.trim().slice(0, 90));
-	// The outcome term is the one the defect turned on: a call that SUCCEEDED is
-	// never a lost folder, however its result reads.
-	check('which asks the outcome before anything else',
-		/outcome\s*!=\s*CallOutcome::Done/.test(pred), pred.trim().slice(0, 90));
-	check('and classifies by the thrown NAME, not by the result',
-		/is_withdrawn_grant\(thrown\)/.test(pred) && !/result/.test(pred), pred.trim().slice(0, 90));
-
-	// The evidence itself: the edge records what it caught, and the tool layer
-	// arms it before each call so no call inherits an earlier one's verdict.
-	check('the file edge records the exception name it caught',
-		/js_prop\(e, "name"\)/.test(os) && /pub fn take_thrown\(\)/.test(os));
-	check('and the tool layer arms it before every call',
-		ts.includes('crate::wasm::opfs::arm_folder_watch();')
-		&& ts.includes('crate::wasm::opfs::take_thrown()'));
-
-	// NOBODY reads a withdrawn grant out of a tool result any more. The unit test
-	// `test_nothing_reads_a_withdrawn_grant_out_of_a_tool_result_00` says the same
-	// of the Rust; this says it of the pair, which is where the copy lives.
-	check('no Rust source matches the name in a result',
-		!/contains\("NotAllowed/.test(ts) && !/contains\("NotAllowed/.test(os));
-
-	const mirror = (js.match(/function folderWasLost\(e\) \{([\s\S]*?)\n\}/) || [])[1] || '';
-	// One line, so a failure prints something a reader can take in.
-	const flat = mirror.replace(/\s+/g, ' ').trim().slice(0, 150);
-	check('js/daimond.js carries the mirror', !!mirror.trim());
-	check('which asks the same question of the root',
-		mirror.includes("workspace_mode() !== 'folder'"), flat);
-	// The WHOLE name, so the browser half cannot drift back to the substring.
-	check('and tests the whole name in what the call threw',
-		mirror.includes(`'${name}'`), flat);
-
-	// The event name, likewise read from the Rust constant rather than typed.
-	const ev = (os.match(/pub const FOLDER_LOST_EVENT: &str = "([^"]+)"/) || [])[1] || '';
-	check('the browser raises the event the Rust names', !!ev && js.includes(`dispatchEvent(new CustomEvent('${ev}'))`), ev);
-	check('and the one handler is still the only listener for it',
-		js.split(`window.addEventListener('${ev}', handlePermissionLoss)`).length === 2,
-		'handlePermissionLoss');
-
-	// Every direct-call site the panel owns now reports. Named individually,
-	// because "at least one" is satisfied by the first one anybody wired.
-	const sites = js.split('noteFolderLost(').length - 1;
-	check('and every direct read reports through it, not just one',
-		sites >= 6, `${sites} references (declaration plus call sites)`);
 }
 
 // ── 6. The dead word-mark swap, at the source ────────────────────────
@@ -659,80 +574,6 @@ check('nothing threw in the page', threw.length === 0, threw.slice(0, 3).join(' 
 
 } finally {
 	await s.close();
-}
-
-// ── 2, live. A withdrawn grant, on the panel's own read ──────────────
-//
-// The wasm glue is patched so that the workspace root reports itself as a real
-// folder and a read fails the way a revoked grant fails. That is fault injection
-// and not a break: it stands in for a browser event this harness cannot produce,
-// and BOTH outcomes are asked for -- a NotAllowed failure must raise the alarm,
-// and an ordinary one under the same root must not.
-const GLUE = 'pkg/oxedyne_daimond.js';
-const NOT_ALLOWED = "OPFS: open dir 'x' failed: NotAllowedError: The request is not allowed "
-	+ 'by the user agent or the platform in the current context.. [IO, File, Read]';
-
-const glueSrc = readPage(path.join(WWW, GLUE), 'utf8');
-const MODE_FN = 'export function workspace_mode() {';
-const READ_FN = 'export function read_file(path) {';
-for (const anchor of [MODE_FN, READ_FN]) {
-	if (glueSrc.split(anchor).length !== 2) {
-		console.error(`the wasm glue no longer carries '${anchor}' exactly once; `
-			+ 'the injection below would prove nothing.');
-		process.exit(2);
-	}
-}
-const glue = glueSrc
-	.replace(MODE_FN, MODE_FN + "\n    return 'folder';\t// injected: a real folder is open")
-	.replace(READ_FN, READ_FN
-		+ `\n    return Promise.reject(String(path).indexOf('lost/') === 0`
-		+ `\n        ? ${JSON.stringify(NOT_ALLOWED)}`
-		+ `\n        : "OPFS: open file 'x' failed: NotFoundError. [IO, File, Read]");`);
-
-const PROFILE2 = scratch('pw', 'joinedup-lost' + (BREAK ? '-' + BREAK : ''));
-fs.rmSync(PROFILE2, { recursive: true, force: true });
-const s2 = await open({
-	name: 'joinedlost', profile: PROFILE2, connect: false,
-	route: async (page) => {
-		await serveBroken(page);
-		await page.route('**/' + GLUE, r => r.fulfill({
-			status: 200, contentType: 'application/javascript', body: glue,
-		}));
-		// The counter has to exist before the app does, or a boot-time read would
-		// be missed and the count below would be the wrong number for a good reason.
-		await page.addInitScript(() => {
-			window.__lost = 0;
-			window.addEventListener('daimond:folder-lost', () => { window.__lost++; });
-		});
-	},
-});
-try {
-	const p2 = s2.page;
-	await p2.waitForFunction(() => !!(window.DaimondCore && window.DaimondCore.readFile),
-		null, { timeout: 15000 });
-	check('the workspace root reports itself as a real folder',
-		await p2.evaluate(async () => (await import('/pkg/oxedyne_daimond.js')).workspace_mode()) === 'folder');
-
-	const before = await p2.evaluate(() => window.__lost);
-	// An ORDINARY failure first. A read that fails because the file is not there
-	// must NOT cost the user their folder -- and asking this FIRST means the
-	// positive half below cannot be satisfied by an alarm already ringing.
-	await p2.evaluate(() => window.DaimondCore.readFile('ordinary/missing.md').catch(() => {}));
-	await p2.waitForTimeout(300);
-	const afterOrdinary = await p2.evaluate(() => window.__lost);
-	check('a read that fails because the file is missing raises no alarm',
-		afterOrdinary === before, `${before} → ${afterOrdinary}`);
-
-	await p2.evaluate(() => window.DaimondCore.readFile('lost/anything.md').catch(() => {}));
-	await p2.waitForTimeout(300);
-	const afterLost = await p2.evaluate(() => window.__lost);
-	check('and a read that fails on a withdrawn grant raises it, from the PANEL\'s own door',
-		afterLost > afterOrdinary, `${afterOrdinary} → ${afterLost}`);
-
-	const threw2 = errors(s2).filter(e => !/Failed to load resource|502|WebSocket|ERR_|NotFound|NotAllowed/i.test(e));
-	check('nothing threw in the injected page', threw2.length === 0, threw2.slice(0, 3).join(' | '));
-} finally {
-	await s2.close();
 }
 
 guardRan(ok.length + bad.length);

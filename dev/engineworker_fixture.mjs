@@ -1,18 +1,18 @@
 // engineworker_fixture.mjs -- the folder the engine-worker starvation probe searches (U5, 2026-10-11).
 //
-// A real-folder grant of about forty thousand files, NONE of them in a directory the walk
-// ignores (.git, node_modules, target), so the search has to open every one: what keeps the
-// probe RED after the FIRE fixes that cut the walk of ignored trees. It is written into the
-// page's own storage (OPFS) and handed to the app through `standInFolders` in `harness.mjs`,
-// the stand-in for a folder picked on this computer.
+// A tree of about forty thousand files, NONE of them in a directory the walk ignores (.git,
+// node_modules, target), so the search has to open every one: what keeps the probe RED after
+// the FIRE fixes that cut the walk of ignored trees. It is written into his agreed tree, the
+// page's own store (root '/'), through the page's own door (`DaimondCloud.writeText`); the
+// browser Machine folder it once stood in went with G5 (D-20261031-11).
 //
 // The tree is deterministic: `top-NN/sub-NN/file-NN.<ext>`, each file a few hundred bytes of
 // source-like text. The needle `ENGWORK_NEEDLE` sits in one file in five hundred, so a search
-// for it reads the whole tree and reports a few dozen hits. It is written after
-// `standInFolders` has made (and emptied) the folder, so every run searches a fresh tree.
+// for it reads the whole tree and reports a few dozen hits. Each run is a fresh profile, so
+// every run searches a fresh tree.
 //
 //   import { FIXTURE, seedFixture } from './engineworker_fixture.mjs';
-//   const shape = await seedFixture(page, { tag: 'engwork', name: 'usr' });
+//   const shape = await seedFixture(page, { dir: 'engwork' });
 
 export const FIXTURE = {
 	tops:	40,				// top-level directories
@@ -24,13 +24,10 @@ export const FIXTURE = {
 
 export const fixtureCount = (f = FIXTURE) => f.tops * f.subs * f.files;
 
-/// Write the tree into OPFS `<tag>-a/<name>`. Runs in the page; returns `{ files, ms, needles }`.
-export async function seedFixture(page, { tag, name = 'usr', fixture = FIXTURE }) {
-	return page.evaluate(async ({ tag, name, f }) => {
+/// Write the tree into the store at `dir`. Runs in the page; returns `{ files, ms, needles }`.
+export async function seedFixture(page, { dir, fixture = FIXTURE }) {
+	return page.evaluate(async ({ dir, f }) => {
 		const t0   = performance.now();
-		const root = await navigator.storage.getDirectory();
-		const top  = await (await root.getDirectoryHandle(tag + '-a', { create: true }))
-			.getDirectoryHandle(name, { create: true });
 		const total = f.tops * f.subs * f.files;
 		const needles = Math.floor((total - 1) / f.every) + 1;
 		const exts = ['md', 'rs', 'js', 'txt', 'typ'];
@@ -45,8 +42,7 @@ export async function seedFixture(page, { tag, name = 'usr', fixture = FIXTURE }
 			if (k % f.every === 0) s += 'const marker = "' + f.needle + '";\n';
 			return s;
 		};
-		// Sixty-four writes in flight: OPFS writes are cheap, but forty thousand of them one at a
-		// time take minutes.
+		// Sixty-four writes in flight: forty thousand of them one at a time take minutes.
 		const jobs = [];
 		for (let a = 0; a < f.tops; a++) {
 			for (let b = 0; b < f.subs; b++) jobs.push([a, b]);
@@ -56,18 +52,14 @@ export async function seedFixture(page, { tag, name = 'usr', fixture = FIXTURE }
 		const worker = async () => {
 			while (next < jobs.length) {
 				const [a, b] = jobs[next++];
-				const d = await (await top.getDirectoryHandle('top-' + pad(a), { create: true }))
-					.getDirectoryHandle('sub-' + pad(b), { create: true });
+				const d = dir + '/top-' + pad(a) + '/sub-' + pad(b);
 				for (let c = 0; c < f.files; c++) {
 					const k = (a * f.subs + b) * f.files + c;
-					const w = await (await d.getFileHandle('file-' + pad(c) + '.' + exts[k % exts.length],
-						{ create: true })).createWritable();
-					await w.write(body(k));
-					await w.close();
+					await window.DaimondCloud.writeText(d + '/file-' + pad(c) + '.' + exts[k % exts.length], body(k));
 				}
 			}
 		};
 		await Promise.all(Array.from({ length: 64 }, worker));
 		return { files: total, ms: Math.round(performance.now() - t0), needles };
-	}, { tag, name, f: fixture });
+	}, { dir, f: fixture });
 }

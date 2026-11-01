@@ -4,7 +4,7 @@
 use crate::marks::{self, DiamondId, Hold, Live, Reach, Record};
 use crate::engine::worker::brief;
 use crate::tools::Bound;
-use crate::wasm::{diamond, opfs};
+use crate::wasm::diamond;
 
 use oxedyne_fe2o3_core::prelude::*;
 
@@ -82,10 +82,7 @@ pub fn trashed() -> Outcome<Vec<String>> {
 /// The workspace open in THIS engine, as the record keys it: the folder the file tools are on,
 /// and its id on this device, never what a page says is open.
 pub fn root_here() -> String {
-    match (opfs::folder_name(), opfs::folder_id()) {
-        (Some(name), Some(fid)) => marks::root_key(true, &name, &fid),
-        _                       => marks::root_key(false, "", ""),
-    }
+    marks::root_key(false, "", "")	// the browser opens no real folder (R1)
 }
 
 /// What the Diamond `id` reaches on this device now: its sidecar rows, this device's record,

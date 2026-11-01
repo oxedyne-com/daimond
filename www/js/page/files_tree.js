@@ -1,9 +1,9 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
-import { Wasm, kindIcon, kindName, noteFolderLost, pathName, set_workspace_dir, use_opfs_workspace } from './wasm.js';
+import { Wasm, kindIcon, kindName, pathName } from './wasm.js';
 import { KITS, kitsAwaiting, ownPanel, pg, setKitsWaiting } from './state.js';
 import { esc, friendlyError, readJson, stripAnsi, t, tn } from './util.js';
 import { nudgeSync, underTrashedDiamond } from './chatstore.js';
-import { SYNC_FOLDER_SHARE_MAX, fmtSyncBytes } from './parcel_collect.js';
+import { SYNC_FOLDER_SHARE_MAX, fmtSyncBytes, noteFolderBehind } from './parcel_collect.js';
 import { Workers, tools } from './workers.js';
 import { Files, closeView, compileTypst, docEmbed, draftDrop, draftKeep, draftRead, fileMsg,
 	followConversation, newDir, newFile, placeName, publishViaDev, readRaw, refresh, renameEntry,
@@ -14,21 +14,20 @@ import { DaimondPanels, isMobile } from './layout.js';
 import { toolReason } from './sourcemenu.js';
 import { signalLinksChanged } from './links.js';
 import { toast } from './passkey_phrase.js';
-import { FsaDB } from './termpanel.js';
 import { chatBounds, confirmDialog, noticeDialog, readRecent } from './consent.js';
 import { abortTurn, undoAble, versionsPath } from './chats.js';
 import { chatDisplayName } from './tilestyle.js';
-import { INSTRUCTIONS_FILE, Instructions, PROMPTS_DIR, Prompts, folderOpen } from './pending.js';
+import { INSTRUCTIONS_FILE, Instructions, PROMPTS_DIR, Prompts } from './pending.js';
 import { diamondApp, loadDiamonds } from './diamonds.js';
 import { watchedPath } from './agentspanel.js';
-import { askUseHere, attachChanged, attachFocus, chatAttachFind, chatAttachList, chatAttachToggle,
+import { askUseHere, attachFocus, chatAttachFind, chatAttachList, chatAttachToggle,
 	chatConfirmHere, chatWaiting, confirmMarkHere, dropRefused, grantHoldHere, heldLink, isUsersMark,
 	linkAmong, linkTo, markForce, markHere, markInForce, markWaiting, marksNotSaved, ownLinkById,
 	ownLinks, parseRef, refReachable, refWhere, removeLinkHere, renderArtefacts, rootHere, rootedRef,
 	samePlace, shareRefused } from './marks.js';
 // page-split: end imports
 export let showLineNos; // page-split: hoisted
-let sysShown, knowing, drawnKey, restShown; // page-split: hoisted
+let sysShown, drawnKey, restShown; // page-split: hoisted
 
 // ── Workspace (OPFS over run_tool) ─────────────────────────
 // page-split: lift Files fmtBytes=fmtFileBytes
@@ -37,7 +36,6 @@ let sysShown, knowing, drawnKey, restShown; // page-split: hoisted
 // were one element until the two panels were split apart, which is why so
 // much below comes in pairs.
 export var pathEl, treeEl, viewEl, pvEl, modeEl;
-export var modeReconnect = null;	// the handle the mode row is offering to reconnect
 export var curDir = '';
 // page-split: install 38
 // Set while this module is showing the Doc panel BECAUSE IT HAS SOMETHING TO
@@ -50,22 +48,6 @@ export var docFilling = 0;
 // page-split: install 39
 export var listed = false;
 // page-split: install 40
-// The active FSA real-folder handle, or null for the OPFS sandbox.
-// The wasm override is a single global (a thread-local, wasm being
-// single-threaded), so every DaimondApp instance follows this handle;
-// this variable only mirrors it for the UI.
-export var folderHandle = null;
-// That folder's id on this device (`FsaDB.folderId`), set in the same step as the handle
-// and empty on the sandbox. The record of marks keys a machine folder by it, so it is
-// never stale for a moment: a mark of one folder must not be read under another.
-export var folderFid = '';
-// The last real folder this account used, remembered ACROSS a switch to the browser
-// sandbox. Switching to the sandbox used to delete the stored handle outright, so going
-// back meant picking the folder again from a native dialog -- every single time. A user
-// who moves between the two (the sandbox syncs; a folder does not) was doing that all
-// day. This is what makes the way back one click, and it is a separate variable from
-// `folderHandle` precisely because the agent is NOT working here.
-export var rootHandle = null;
 
 // ── The Diamond's workspace: a view, not a container ───────
 //
@@ -257,7 +239,7 @@ function foldCrumbs(el, kids, go) {
 /// new things are made where the eye already is.
 function paintPath() {
 	if (!pathEl) return;
-	renderCrumbs(pathEl, folderHandle ? folderHandle.name : t('files.mode_browser'), curDir, goDir);
+	renderCrumbs(pathEl, t('files.mode_browser'), curDir, goDir);
 	var b = document.createElement('button');
 	b.type = 'button';
 	b.className = 'files-new';
@@ -277,7 +259,7 @@ function paintPath() {
 /// + New: a file or a folder named in place, an upload, and on Chromium in the
 /// browser store an imported folder.
 function openNewMenu(anchor) {
-	var canImport = typeof window.showDirectoryPicker === 'function' && !folderHandle;
+	var canImport = typeof window.showDirectoryPicker === 'function';
 	openPop('new', anchor, t('work.new'), function (item, sep) {
 		item('file', t('work.file'), function () { startNaming(false); });
 		item('dir', t('work.folder'), function () { startNaming(true); });
@@ -412,7 +394,6 @@ function searchFiles(q) {
 	var roots = [];
 	if (own) roots.push({ id: 'store', path: own });
 	roots.push({ id: 'store', path: '', skip: own ? [own] : [] });
-	if (folderOpen()) roots.push({ id: 'folder', path: '' });
 	var shown = 0;
 	var w = window.DaimondWsSearch.walk({
 		query: q, roots: roots, maxResults: SEARCH_MAX, maxVisits: SEARCH_WALK_MAX,
@@ -474,10 +455,7 @@ function searchRow(h, own) {
 		when.textContent = DaimondRecent.when(h.at, Date.now(), loc, t('sync.when_just_now'), DaimondTime.fmtLocal);
 		row.appendChild(when);
 	}
-	// A store hit with a folder open is read through the store's door: the same name in
-	// the folder is a different file. With none open the two are one root.
-	var store = h.root === 'store' && folderOpen();
-	sysRowAsButton(row, h.path, function () { openFile(h.path, store ? { store: true } : undefined); });
+	sysRowAsButton(row, h.path, function () { openFile(h.path); });
 	return row;
 }
 
@@ -1215,24 +1193,14 @@ export async function renderFocus() {
 /// hidden files and, for a Diamond, its toolchains.
 function openHeadMenu(anchor) {
 	if (popOpen('head')) { closePop(); return; }
-	var onMachine = !!folderHandle;
 	var canPick   = (typeof window.showDirectoryPicker === 'function');
 	var f = attachFocus();
 	openPop('head', anchor, t('chat.more'), function (item, sep) {
 		if (canPick) {
-			// The way back to a folder this session has used needs no picker; only the
-			// first use, or choosing another, does.
-			item('machine', t('work.open_machine'), (!onMachine && rootHandle)
-				? function () { reconnectFolder(rootHandle); } : openFolder);
-			if (onMachine) {
-				item('browser', t('work.use_browser'), switchToOpfs, undefined, t('files.browser_switch'));
-				item('forget', t('files.forget_root'), forgetRoot, undefined, t('files.forget_root_help'));
-			} else {
-				item('import', t('files.import_folder'), importFolder, undefined, t('files.import_folder_help'));
-				item('savecopy', t('files.save_copy'), exportFolder, undefined, t('files.save_copy_help'));
-			}
+			item('import', t('files.import_folder'), importFolder, undefined, t('files.import_folder_help'));
+			item('savecopy', t('files.save_copy'), exportFolder, undefined, t('files.save_copy_help'));
 		}
-		if (!onMachine && window.DaimondCloud) item('cloud', t('work.cloud'), showCloudView);
+		if (window.DaimondCloud) item('cloud', t('work.cloud'), showCloudView);
 		item('refresh', t('common.refresh'), async function () {
 			if (await list(curDir)) showModeMsg(t('files.refreshed'), false, 3000);
 		});
@@ -1308,8 +1276,6 @@ function onDiamondChanged() {
 }
 
 export function bind() {
-	// Another tab minted or forgot a folder's id: this tab's engine reads the record again.
-	try { FsaDB.changed(function () { reknow(); }); } catch (e) { /* no record to follow */ }
 	var panel = document.getElementById('panel-work');
 	if (!panel) return;
 	pathEl = panel.querySelector('.files-path');
@@ -1380,8 +1346,6 @@ export function bind() {
 		clearTimeout(filterTimer);
 		filterTimer = setTimeout(applyFilter, 180);
 	});
-	// "Open a folder" is not bound here: it lives in the mode row, beside the chip that
-	// says which files the agent is touching (see renderMode).
 	// The parent-folder BUTTON used to live up here in the panel's header,
 	// three controls away from the listing it acts on, and the owner said so
 	// on 2026-08-24: "is such a button even needed when you could add a '..'
@@ -1399,12 +1363,6 @@ export function bind() {
 	renderMode();
 }
 
-// ── FSA real-folder mode ───────────────────────────────────
-// The OPFS root and an FSA folder are both a FileSystemDirectory-
-// Handle with the same interface, so "open a real folder" simply
-// swaps the root handle the file tools resolve against (in wasm).
-// Diamond/crystal/`.daimond` storage pins OPFS and is never affected.
-
 // ── Transfers ──────────────────────────────────────────────
 // Moving files in or out never changes where the agent works. A directory
 // handle can be read or written without being promoted to the workspace
@@ -1412,24 +1370,14 @@ export function bind() {
 // switch — which also makes the consequence explicit: what you import
 // starts syncing, and one day starts costing.
 
-/// The root the workspace ACTUALLY is: the open real folder, or this
-/// account's OPFS sandbox when there is none.
-///
-/// Both transfers below reach the workspace twice — the export lists it and
-/// then reads its bytes, the import writes into it — and the two reaches
-/// have to arrive at the same directory. They did not: the listing went
-/// through `file_list`, which resolves the real-folder override inside the
-/// wasm, while the bytes went through `DaimondCloud`, which is OPFS and
-/// nothing else. With a folder open that is two different places, so a
-/// "Save a copy" listed the user's real files, looked for them in a sandbox
-/// that had never held them, and wrote an EMPTY copy without failing;
-/// an import put the files where the agent could not see them.
+/// The root the workspace is: this account's browser storage. Both transfers
+/// below reach it, the export to list and read it, the import to write into it.
 ///
 /// Streamed rather than routed through the wasm `write_bytes`, which would
 /// also be correct: a folder import is whole files of any size, and this
 /// way none of them is ever held in memory at once.
 async function wsRoot() {
-	return folderHandle || await DaimondCloud.opfsRoot();
+	return await DaimondCloud.opfsRoot();
 }
 
 function pathParts(path) {
@@ -1470,7 +1418,7 @@ async function wsWriteBlob(path, blob) {
 	}
 	var leaf = await wsDiskName(dir, p[p.length - 1]);
 	// Under the file's write lock, so a restore's compare-and-swap cannot land over it.
-	var w = await DaimondCloud.fileLock().writable(folderHandle ? 'folder' : 'sandbox', path,
+	var w = await DaimondCloud.fileLock().writable('sandbox', path,
 		async function () { return await (await dir.getFileHandle(leaf, { create: true })).createWritable(); });
 	try { await w.write(blob); }
 	catch (e) { try { await w.abort(); } catch (e2) { /* already gone */ } throw e; }
@@ -1523,14 +1471,6 @@ async function exportFolder() {
 	var dest;
 	try { dest = await window.showDirectoryPicker({ mode: 'readwrite' }); }
 	catch (e) { if (!(e && e.name === 'AbortError')) showModeMsg('Could not open that folder.', true); return; }
-	// NOT INTO THE OPEN FOLDER ITSELF (OPFS-LOCK check2, D4). A copy written there rewrites
-	// the workspace's own files in place, under no file lock, and puts back bytes a restore
-	// had just replaced.
-	if (window.DaimondFileLock && await DaimondFileLock.inside(folderHandle, dest)) {
-		showModeMsg('"' + dest.name + '" is the open folder or inside it. Choose a folder outside it '
-			+ 'to save the copy in.', true);
-		return;
-	}
 	var app; try { app = tools(); } catch (e) { return; }
 	var wrote = 0, away = 0, unread = 0;
 	async function out(dir, rel) {
@@ -1592,31 +1532,11 @@ async function exportFolder() {
 		+ '.');
 }
 
-// Render the mode row: which files the agent is touching, and the ways to change that.
-//
-// The row states the root, so the controls that CHANGE the root belong in it. "Open a
-// folder" used to be an icon in the header, among New file, New folder and Upload — the
-// one control there that does not act on a file at all, which made it read as a file
-// operation and made the mode chip look like a label with no switch. State and the switch
-// that moves it now sit together, and there is one place to look.
-//
-// `reconnect` is a stored handle whose permission needs a gesture; it is offered as a
-// button and never prompted for on load.
-export function renderMode(reconnect) {
+// Render the mode row: the crumb line names the open store, and the store's own controls
+// (the transfers and cloud storage) are in the head ⋯.
+export function renderMode() {
 	if (!modeEl) return;
-	// Held, so a language change can draw the SAME row again rather than one
-	// with the reconnect offer dropped out of it.
-	modeReconnect = reconnect || null;
 	modeEl.innerHTML = '';
-	// The store switch, the transfers and cloud storage are in the head ⋯, and the
-	// crumb line names the open store. What stays here is what cannot wait for
-	// someone to look in a menu: a folder that needs a press to come back.
-	if (reconnect) {
-		var acts = document.createElement('div'); acts.className = 'files-mode-acts';
-		acts.appendChild(modeBtn(t('files.machine_reconnect', { name: reconnect.name }),
-			t('files.machine_pick'), function () { reconnectFolder(reconnect); }, true));
-		modeEl.appendChild(acts);
-	}
 	paintPath();
 	modeChanged();
 }
@@ -1738,42 +1658,10 @@ async function showCloudView() {
 	});
 }
 
-/// Forget the open folder: its record, its kept handle and this device's marks on it.
-/// Without this there would be NO way to make Daimond forget a folder.
-async function forgetRoot() {
-	if (!folderHandle) return;
-	try { await FsaDB.clear(); } catch (e) { /* nothing stored */ }
-	// The kept handle goes too (M2-F4): otherwise "Forget" only forgot the
-	// reconnect slot, and a folder picked again kept its old id and its marks.
-	try { await FsaDB.forget(folderFid); } catch (e) { /* nothing stored */ }
-	// THIS DEVICE'S OWN MARKS ON THE FOLDER (M2-R2-1, 2026-09-25). Without
-	// this a mark pressed in the folder stayed in force -- and its fence
-	// with it -- until the page reloaded. Repainted at once
-	// (`signalLinksChanged`) rather than left for the next redraw to catch.
-	try {
-		DaimondMarksHere.forgetRoot(
-			DaimondMarksHere.rootKey({ kind: 'machine', name: folderHandle.name, fid: folderFid }));
-	} catch (e) { /* nothing recorded */ }
-	rootHandle = null;
-	renderMode();
-	showModeMsg(t('files.root_forgotten'));
-	signalLinksChanged();
-}
-
 /// The status rows report which files the agent is touching, so they are stale the moment
 /// this row is redrawn — opening a folder, closing it, or losing it all pass through here.
 function modeChanged() {
 	try { DaimondAdmin.status(); } catch (e) { /* the panel is not up yet */ }
-}
-
-/// One control in the mode row.
-function modeBtn(text, title, onClick, accent) {
-	var b = document.createElement('button');
-	b.className = 'files-mode-btn' + (accent ? ' accent' : '');
-	b.textContent = text;
-	b.title = title;
-	b.addEventListener('click', onClick);
-	return b;
 }
 
 // A note in the mode bar (errors, guidance). With `ms` it takes its own leave: an answer to a press, not a standing fact.
@@ -1788,397 +1676,56 @@ export function showModeMsg(text, isErr, ms) {
 	if (ms) setTimeout(function () { if (msg.parentNode) msg.remove(); }, ms);
 }
 
-// Query, then (if needed) request read/write permission on a
-// handle, returning the final permission state.
-async function ensurePermission(handle) {
-	try {
-		var opts = { mode: 'readwrite' };
-		if ((await handle.queryPermission(opts)) === 'granted') return 'granted';
-		return await handle.requestPermission(opts);
-	} catch (e) { return 'denied'; }
+// ── The browser Machine folder, retired ─────────────────────
+// A device without Kimberlite works on browser storage and the cloud, the diamond's own synced
+// files (R1, D-20261031-11). A device that once opened a real folder kept its handles in two
+// IndexedDB databases; they are handles, never data, so they are cleared at boot, and a device
+// that held one is told once, in one line, where its work is now.
+var MACHINE_DBS = ['daimond-fsa', 'daimond-folders'];	// fixed: the names the old folder record was kept under
+
+/// This account's Machine folder databases an older build left, listed and never opened.
+async function machineDbsLeft() {
+	var idb = window.indexedDB;
+	if (!idb || typeof idb.databases !== 'function') return [];
+	var ns = (window.DaimondAccounts && DaimondAccounts.opfsNs()) ? '-' + DaimondAccounts.opfsNs() : '';
+	var names = MACHINE_DBS.map(function (n) { return n + ns; });
+	var have;
+	try { have = await idb.databases(); } catch (e) { return []; }
+	return (have || []).filter(function (d) { return d && names.indexOf(d.name) >= 0; });
 }
 
-// "Open folder": pick a real directory, grant read/write, and make
-// it the workspace root.  Degrades cleanly off Chromium.
-/// The running turns that work in the open folder, each with its name, whether it is
-/// still running, and how to stop it: a chat's or a Diamond's turn, or a worker of one,
-/// whose fence holds a path here. A fence's own folder is in the store, so a turn with
-/// nothing added here is not in this folder, and a change moves nothing under it.
-async function turnsInFolder() {
-	var out = [];
-	async function here(diamondId, chatId) {
+/// Is a Machine folder record from an older build still waiting to be retired? The sync seed
+/// reads it as a folder behind this device, whichever of it and the retirement runs first.
+export async function machineFolderKept() {
+	return (await machineDbsLeft()).length > 0;
+}
+
+/// Clear this account's saved Machine folder handles. Does a device that held one get the line?
+///
+/// A held handle is first folded into the sync folder history (`noteFolderBehind`): a device that
+/// worked in a folder may have merged only its shares, and clearing the handle must not make the
+/// whole-commit seed read it as a sandbox device.
+export async function retireMachineFolder() {
+	var idb = window.indexedDB;
+	var old = await machineDbsLeft();
+	if (!old.length) return false;
+	function done(q) { return new Promise(function (res) { q.onsuccess = q.onerror = q.onblocked = function () { res(q.result); }; }); }
+	var held = false;
+	for (var i = 0; i < old.length; i++) {
+		// Opened only because it is listed, so this never makes one; any store with a row is a handle.
 		try {
-			var b = diamondId ? await Files.bounds(diamondId) : await chatBounds(chatId);
-			return !!(b && b.attached && b.attached.length);
-		} catch (e) { return true; }		// unread is not proven elsewhere
+			var db = await done(idb.open(old[i].name));
+			var stores = ['handles', 'folders'].filter(function (s) { return db && db.objectStoreNames.contains(s); });
+			for (var k = 0; k < stores.length; k++) {
+				if ((await done(db.transaction(stores[k], 'readonly').objectStore(stores[k]).count())) > 0) held = true;
+			}
+			if (db) db.close();
+		} catch (e) { held = true; }	// unreadable: say so rather than clear a handle unannounced
+		if (held) noteFolderBehind();
+		await done(idb.deleteDatabase(old[i].name));
 	}
-	function nameOf(diamondId, c) {
-		var d = diamondId ? pg.diamonds.find(function (x) { return x.id === diamondId; }) : null;
-		return d ? d.name : chatDisplayName(c);
-	}
-	for (var i = 0; i < (pg.chats || []).length; i++) {
-		var c = pg.chats[i];
-		if (!c || !c._generating || !(await here(c.diamondId, c.id))) continue;
-		out.push({ name: nameOf(c.diamondId, c), live: (function (c) { return function () { return !!c._generating; }; })(c),
-			stop: (function (c) { return function () { abortTurn(c); }; })(c) });
-	}
-	var runs = (Workers && Workers.runs) || [];
-	for (var j = 0; j < runs.length; j++) {
-		var r = runs[j];
-		if (r.status !== 'running' || !(await here(r.diamondId, r.chatId))) continue;
-		var pc = (pg.chats || []).find(function (x) { return x.id === r.chatId; });
-		out.push({ name: nameOf(r.diamondId, pc), live: (function (r) { return function () { return r.status === 'running'; }; })(r),
-			stop: (function (r) { return function () { Workers.stop(r); }; })(r) });
-	}
-	return out;
-}
-
-/// Changing the root swaps the workspace out from under whatever is
-/// running: the agent resolves every path against one root, so a switch
-/// mid-turn leaves it reading and writing somewhere else entirely. Only the
-/// turns working here are asked about (UNBLOCK-15): they are named, and
-/// Stop and change stops them and goes on. Declining is a choice, not a fault,
-/// so nothing here is red.
-async function rootSwitchBlocked() {
-	var busy = await turnsInFolder();
-	if (!busy.length) return false;
-	var names = busy.map(function (b) { return b.name; })
-		.filter(function (n, i, a) { return a.indexOf(n) === i; }).join(', ');
-	if (!(await confirmDialog(t('files.switch_busy', { names: names }), t('files.stop_and_change'),
-		{ title: t('files.switch_busy_title') }))) return true;
-	busy.forEach(function (b) { b.stop(); });
-	// An abort lands at the turn's next await; the change waits for it, briefly.
-	for (var k = 0; k < 30 && busy.some(function (b) { return b.live(); }); k++) {
-		await new Promise(function (res) { setTimeout(res, 100); });
-	}
-	if (busy.some(function (b) { return b.live(); })) { showModeMsg(t('files.still_stopping'), false); return true; }
-	return false;
-}
-
-// Stamp of folder ids already checked for the stray digest below, so a folder with
-// none, or one already swept, is not opened and read on every activation.
-var STALE_DIGEST_STAMP = 'daimond-stale-digest-retired';
-
-// The exact header `signals.js digest()` always writes, and its next section --
-// long and specific enough that a file the person wrote themselves could not
-// coincide with it by accident.
-var STALE_DIGEST_MARKER = '# How this account is being used\n\n'
-	+ 'Counted on this device. No message text is kept and none of this has\n'
-	+ 'been sent anywhere. Numbers are from the last ';
-var STALE_DIGEST_SECTION = '\n## diamonds\n';
-
-/// Retire the usage digest an older build (before `984af4ca`, 2026-09-25) left on the
-/// real disk at `<folder>/system/usage/digest.md` -- back when `writeUsageDigest`
-/// followed whatever folder was open, rewriting it there after every metered turn. The
-/// current build's own digest lives only in the browser store (`writeUsageDigest`,
-/// `Wasm.store_write`), so nothing here writes it again; this only clears what an
-/// older build left behind, once, so the owner has nothing to do.
-///
-/// READ AND DELETED THROUGH `handle` DIRECTLY, NEVER THROUGH THE SANDBOX. `handle` is
-/// always a genuine machine folder here (a fresh pick, a return, or the boot
-/// reconnect); a helper that fell back to OPFS when none was open would find and
-/// delete the CURRENT build's own live digest instead, which is exactly the file this
-/// must never touch.
-///
-/// Retired only when the file's content starts with the digest's own unmistakable
-/// header and carries its `## diamonds` section too -- never a folder of the person's
-/// own called `system`, common in a project, and never a `usage/digest.md` that is not
-/// this app's. Runs once per folder id, remembered in `localStorage`.
-async function retireStaleDigest(handle, fid) {
-	if (!handle || !fid) return;
-	var seen = readJson(STALE_DIGEST_STAMP, []);
-	if (!Array.isArray(seen)) seen = [];
-	if (seen.indexOf(fid) >= 0) return;
-	try {
-		var sysDir   = await handle.getDirectoryHandle('system');
-		var usageDir = await sysDir.getDirectoryHandle('usage');
-		var fh   = await usageDir.getFileHandle('digest.md');
-		var text = await (await fh.getFile()).text();
-		if (text.indexOf(STALE_DIGEST_MARKER) === 0 && text.indexOf(STALE_DIGEST_SECTION) > 0) {
-			await usageDir.removeEntry('digest.md');
-			console.log('Daimond: retired an old build\'s usage digest left in this '
-				+ 'folder\'s system/usage/ (' + fid + ').');
-		}
-	} catch (e) { /* no system/usage/digest.md here, or it could not be read: leave it */ }
-	seen.push(fid);
-	if (seen.length > 40) seen = seen.slice(seen.length - 40);
-	try { localStorage.setItem(STALE_DIGEST_STAMP, JSON.stringify(seen)); }
-	catch (e) { /* best effort: a private tab tries again next time */ }
-}
-
-async function openFolder() {
-	if (await rootSwitchBlocked()) return;
-	if (typeof window.showDirectoryPicker !== 'function') {
-		showModeMsg('Real-folder mode needs a Chromium-based browser. Staying on OPFS.', true);
-		return;
-	}
-	var handle;
-	try {
-		// `id` gives this picker its own remembered location, so choosing a workspace does
-		// not move where an unrelated save dialog opens. `startIn` puts it where the user
-		// already is: a "Change folder…" that opened in Documents, three levels from the
-		// project they are in, is a dialog they have to navigate every time.
-		handle = await window.showDirectoryPicker({
-			mode:    'readwrite',
-			id:      'daimond-workspace',
-			startIn: rootHandle || 'documents',
-		});
-	} catch (e) {
-		if (e && e.name === 'AbortError') return;   // user cancelled
-		showModeMsg('Could not open folder: ' + (e && e.message ? e.message : e), true);
-		return;
-	}
-	if ((await ensurePermission(handle)) !== 'granted') {
-		showModeMsg('Read/write permission was not granted. Staying on OPFS.', true);
-		return;
-	}
-	await activateFolder(handle, true);
-}
-
-/// Hand the engine the folders this device knows as its record of folders stands now,
-/// with the open folder's own handle and id (HK1 of HR's QA round 3, 2026-09-27).
-///
-/// The list was handed only when this tab opened a folder, so a folder picked later in
-/// another tab was one this device "cannot name" here: a Restore asked about its row
-/// with a sentence that was false, and "Replace them" wrote that folder's file into
-/// this one. Called before every restore or undo opens (`versions.js` `restoreAt`), at
-/// every turn's start (a daimon's `file_revert` reads the list too), when another tab
-/// mints or forgets a folder (`FsaDB.changed`), and after every activation.
-///
-/// ONE READ AT A TIME, IN ORDER: two reads can finish out of order, and the older one
-/// handed last would undo the newer. Answers once the list is handed, or after
-/// `KNOWN_WAIT_MS`, whichever is first: past that the caller goes on with the list as
-/// it stood, whose worst is a known folder asked about as unknown -- a question, never
-/// a write -- and the read is still handed when it finishes.
-var KNOWN_WAIT_MS = 3000;
-// page-split: install 42
-export function reknow() {
-	var run = knowing.then(handKnown);
-	knowing = run.catch(function () { /* the next call reads again */ });
-	return Promise.race([run.catch(function () {}),
-		new Promise(function (r) { setTimeout(r, KNOWN_WAIT_MS); })]);
-}
-async function handKnown() {
-	var h = folderHandle;
-	if (!h) return;                 // browser storage: the engine reads no list there
-	var known;
-	try { known = await FsaDB.known(); } catch (e) { return; }   // keep what it holds
-	// THE SAME FOLDER ONLY. One switched, closed or lost while the record was read has
-	// said what is open itself, and handing this handle back would undo it.
-	if (folderHandle !== h) return;
-	try { set_workspace_dir(h, folderFid, JSON.stringify(known || [])); }
-	catch (e) { /* the engine keeps the list it had */ }
-}
-
-// Point the wasm file tools at `handle`, mirror the UI, re-read the rules from
-// the root that is now active, optionally persist the handle for reconnect, and
-// refresh the tree.
-async function activateFolder(handle, persist) {
-	// WHICH FOLDER THIS IS, before anything moves, on every caller: a pick, a return and
-	// the boot reconnect alike. The record of marks keys a machine folder by this id
-	// (M2), so the root and its id change in one step and no reader ever sees the new
-	// folder under the old id. An id that cannot be had leaves it empty, which grants
-	// nothing: every mark in the folder waits, and a press there is refused.
-	var fid = '';
-	try { fid = await FsaDB.folderId(handle); } catch (e) { fid = ''; }
-	// THE FOLDERS THIS DEVICE KNOWS (HX1): a row from one of them is another folder's
-	// file and is left; a row from any other -- another device's folder, a moved one,
-	// one forgotten -- is asked about before it goes back over different bytes.
-	var known = [];
-	try { known = await FsaDB.known(); } catch (e) { known = []; }
-	try {
-		// The engine names the folder by the same id, so a version row of a file in it
-		// goes back into this folder and no other (HR, 2026-09-25).
-		set_workspace_dir(handle, typeof fid === 'string' ? fid : '', JSON.stringify(known || []));
-	} catch (e) {
-		showModeMsg('Failed to switch to the folder: ' + (e && e.message ? e.message : e), true);
-		return;
-	}
-	folderHandle = handle;
-	folderFid = typeof fid === 'string' ? fid : '';
-	// A folder another tab minted while this one read the record would be missing from
-	// the list just handed: read again, in turn behind any read already running.
-	reknow();
-	rootHandle = handle;            // the folder to offer after a trip to the sandbox
-	if (persist) { try { await FsaDB.save(handle); } catch (e) { /* non-fatal */ } }
-	renderMode();
-	// The chat footer names the workspace it is drawing, and which
-	// holdings can be reached at all changed the moment the root did.
-	attachChanged();
-	await rereadRootRules();
-	await adoptFolderDiamonds();
-	await retireStaleDigest(handle, folderFid);
-	list('');
-}
-
-/// Re-read `DAIMOND.md` and the role prompts, because the root they are read from
-/// has just moved.
-///
-/// Both are loaded from the ACTIVE workspace root, and nothing on the switch path
-/// re-read them: the first turn after a switch ran on the other root's rules while
-/// the chip in the Workspace head named a file it was no longer reading. Every
-/// other trigger is downstream of that turn -- the pair is refreshed when a turn
-/// ENDS, on a save of one of those paths, and on a full redraw -- so the one turn
-/// that was wrong was the one nobody could see was wrong.
-///
-/// AWAITED, and before anything else the switch does. `Instructions.refresh` drops
-/// each chat's built agent so the next turn composes a fresh system prompt, and a
-/// turn started while this was still in flight would compose the old one. It runs
-/// ahead of `adoptFolderDiamonds` for the same reason: adoption can put a dialog
-/// on screen and wait for the user to read it.
-///
-/// Both are idempotent -- each re-reads, compares, and does nothing when nothing
-/// changed -- so running on every activation, boot reconnect included, costs two
-/// file reads and no redraw. They are run together because neither touches what
-/// the other reads, and `run_tool` takes `&self`, so two calls into the one wasm
-/// app are not a borrow conflict.
-///
-/// NOT called from `handlePermissionLoss`, which is the third way the root moves.
-/// That one fires from inside a running turn -- the wasm raises it when a tool call
-/// meets a withdrawn grant -- and `Instructions.refresh` nulls `chat.app`, which is
-/// what Stop and interject read. Trading a working Stop for rules that the end of
-/// that same turn refreshes anyway is the wrong way round.
-async function rereadRootRules() {
-	try { await Promise.all([Instructions.refresh(), Prompts.refresh()]); }
-	catch (e) { /* an unreadable root has no rules, which is what refresh records */ }
-}
-
-/// Bring home any Diamond files this folder is holding, and say so.
-///
-/// A build before this one let Daimond's own store follow the workspace root, so a
-/// Diamond worked on with a folder open wrote `diamonds/<id>/…` into the user's project:
-/// outside the sync parcel, and gone from view the moment they switched back. The engine
-/// copies those files into the store — never deleting, never overwriting — and this
-/// reports what it did. It runs on every activation, boot reconnect included, so it is
-/// silent when there was nothing to bring home.
-///
-/// The folder's copies are LEFT WHERE THEY ARE, and the user is told that too. Deleting
-/// from someone's own project folder to tidy up after our bug is the more dangerous of
-/// the two mistakes available here.
-///
-/// AND WHAT DID NOT COME. The engine copies under a budget -- 8 MiB for one file,
-/// 64 MiB for one run -- and puts everything past it, along with anything it could
-/// not read, into `skipped`. This read only `adopted` and `kept`, so a Diamond whose
-/// big file was left behind was adopted WITHOUT IT and announced as though whole,
-/// and a run that took nothing and skipped everything returned before saying a word.
-/// This is a migration that runs once over data the user has held since seq 63, and
-/// the one thing it must not do is leave them believing it brought everything.
-async function adoptFolderDiamonds() {
-	if (!Wasm || typeof Wasm.adopt_folder_diamonds !== 'function') return;
-	var rep;
-	try { rep = JSON.parse(await Wasm.adopt_folder_diamonds() || '{}'); }
-	catch (e) { return; }                  // an older engine, or nothing to look at
-	var took   = Array.isArray(rep.adopted) ? rep.adopted : [];
-	var missed = Array.isArray(rep.skipped) ? rep.skipped : [];
-	if (!took.length && !missed.length) return;
-	if (took.length) {
-		// The rail reads the store, and the store just gained Diamonds.
-		try { await loadDiamonds(); } catch (e) { /* the next refresh will find them */ }
-		refresh();
-	}
-	var kept = [];
-	took.forEach(function (d) { (d.kept || []).forEach(function (k) { kept.push(k); }); });
-	var body = '';
-	if (took.length) {
-		var names = took.map(function (d) { return d.name || d.id; });
-		body = t('files.adopted_body', { names: names.join(', ') });
-		if (kept.length) body += '\n\n' + t('files.adopted_kept', { paths: kept.join('\n') });
-	}
-	if (missed.length) {
-		body += (body ? '\n\n' : '') + t('files.adopted_skipped', { paths: missed.join('\n') });
-	}
-	// A run that skipped everything adopted nothing, so the adopted title would be a
-	// lie: the dialog is titled by what actually happened.
-	var title = took.length ? tn('files.adopted_title', took.length) : t('files.adopt_left_title');
-	noticeDialog(title, body, { pre: kept.length > 0 || missed.length > 0 });
-}
-
-// Switch the agent back to the OPFS sandbox, KEEPING the folder to come back to.
-//
-// This used to call `FsaDB.clear()`, which is what made the round trip expensive: the
-// stored handle was gone, so the Machine chip had nothing to reconnect and fell back to
-// the picker. Going to the sandbox says where the agent works, not which folder this
-// browser is allowed to reach -- and the grant survives either way, so deleting the
-// record only cost the user the dialog. Forgetting the folder is now its own deliberate
-// control (`forgetRoot`, in the head ⋯).
-async function switchToOpfs() {
-	if (await rootSwitchBlocked()) return;
-	try { use_opfs_workspace(); } catch (e) { /* ignore */ }
-	rootHandle = folderHandle || rootHandle;
-	folderHandle = null;
-	folderFid = '';
-	renderMode();
-	attachChanged();			// the footer names the root, and reachability just moved
-	await rereadRootRules();		// the sandbox has its own DAIMOND.md and its own prompts
-	list('');
-}
-
-// Re-grant a stored handle (a user gesture drives requestPermission)
-// and reactivate it.
-async function reconnectFolder(handle) {
-	// Reconnecting is a ROOT SWAP like any other, and it never had this guard: it was
-	// only ever reached from boot and from a withdrawn grant, neither of which can happen
-	// mid-turn. The Machine chip now routes the way BACK through here, which is an
-	// ordinary click at an arbitrary moment -- so the gap became reachable and the agent
-	// could have had the ground moved under it mid-turn.
-	if (await rootSwitchBlocked()) return;
-	if ((await ensurePermission(handle)) !== 'granted') {
-		showModeMsg('Reconnect was declined. Staying on OPFS.', true);
-		return;
-	}
-	await activateFolder(handle, false);
-}
-
-// On boot (after wasm init): if a handle was stored, reuse it
-// silently when still granted; otherwise offer a one-click
-// reconnect.  Never auto-prompts — a gesture is required to
-// re-grant.
-export async function tryReconnect() {
-	var handle = null;
-	try { handle = await FsaDB.load(); } catch (e) { return; }
-	if (!handle) return;
-	var perm;
-	try { perm = await handle.queryPermission({ mode: 'readwrite' }); }
-	catch (e) { return; }
-	if (perm === 'granted') {
-		await activateFolder(handle, false);
-	} else {
-		// Not granted, but still the folder this account works in: remembered, so a later
-		// switch to the sandbox and back does not lose it.
-		rootHandle = handle;
-		renderMode(handle);         // 'prompt' / 'denied' → offer reconnect
-	}
-}
-
-// The browser took the folder away: drop to OPFS and offer a reconnect rather than
-// failing silently.
-//
-// This is raised by the wasm file edge (`daimond:folder-lost`), at the single door every
-// tool result passes through, so it fires for the AGENT's file calls as much as for this
-// panel's own. It used to be noticed only here, when the tree was listed — which meant a
-// revoked grant left the agent writing into nothing while the panel went on naming a
-// folder it could no longer reach.
-//
-// Idempotent: several tool calls can fail on the same withdrawn grant, and the first one
-// to say so is the one that matters.
-function handlePermissionLoss() {
-	if (!folderHandle) return;
-	// A RUNNER THAT LOST THE FOLDER CANNOT BE GIVEN IT BACK FROM ANOTHER DEVICE:
-	// `requestPermission` needs a user gesture on THIS page. So the turn's other
-	// devices are TOLD (owner ruling 2026-09-12) -- the tile says the runner needs
-	// a click and offers "Run here instead" -- rather than left to read a spinner
-	// until the deadline. Report-only by construction, which is why the blocker
-	// carries no Allow.
-	try { if (window.DaimondHandoffBlock) DaimondHandoffBlock.folderLost(); }
-	catch (e) { /* the panel's own notice below still stands */ }
-	var lost = folderHandle;
-	try { use_opfs_workspace(); } catch (e) { /* ignore */ }
-	folderHandle = null;
-	folderFid = '';
-	renderMode(lost);
-	attachChanged();			// the footer names the root, and reachability just moved
-	showModeMsg('Lost access to the folder. Reconnect to continue.', true);
-	refresh();
+	if (held) showModeMsg(t('files.folder_retired'));
+	return held;
 }
 // page-split: install 43
 
@@ -2267,8 +1814,6 @@ export async function list(dir) {
 	listBusy();
 	await loadAttached();		// so a row can say whether it is attached
 	var res = await tools().run_tool_outcome('file_list', JSON.stringify({ path: curDir || '.' }));
-	// A revoked grant is detected at the file edge, which raises `daimond:folder-lost`
-	// for every tool call rather than only this one — so there is nothing to check here.
 	if (!res || res.outcome !== 'done') {
 		drawnKey = null;
 		treeEl.innerHTML = '';
@@ -2796,7 +2341,7 @@ async function downloadPath(path, store, name, info, msgEl) {
 		}
 		DaimondViewer.handOver(new Blob(parts, { type: (info && info.mime) || 'application/octet-stream' }),
 			'', name || path.split('/').pop() || 'file');
-	} catch (e) { noteFolderLost(e); fileMsg(friendlyError(e), true, msgEl); }
+	} catch (e) { fileMsg(friendlyError(e), true, msgEl); }
 }
 
 /// Delete a tree row's file or folder, confirmed, with a five-second way back for
@@ -3059,7 +2604,7 @@ export async function showViewedFile(path, info, store, label) {
 			wasm:    Wasm,
 			// The viewer reads bytes through the module handed to it above, so its
 			// failures are the panel's own direct calls by another name.
-			onError: function (e) { noteFolderLost(e); fileMsg(friendlyError(e), true, pvEl); },
+			onError: function (e) { fileMsg(friendlyError(e), true, pvEl); },
 		});
 }
 
@@ -3522,9 +3067,7 @@ export function install() { // page-split: install
 		catch (e) { return false; }
 	})();
 	// page-split: install 42
-	/* var */ knowing = Promise.resolve();
 	// page-split: install 43
-	window.addEventListener('daimond:folder-lost', handlePermissionLoss);
 	// page-split: install 44
 
 	// What the tree last drew, as scope and folder. Reading the SAME one again keeps its

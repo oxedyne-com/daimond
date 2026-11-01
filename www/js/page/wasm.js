@@ -1,7 +1,7 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
 // page-split: end imports
 export let Wasm, init, DaimondApp, builtin_tools, qr_matrix, set_account_ns, heap_bytes,
-	grow_on_purpose, install_panic_hook, set_workspace_dir, use_opfs_workspace, compose_prompt,
+	grow_on_purpose, install_panic_hook, compose_prompt,
 	compose_prompt_for, default_prompt, safety_clause, Sbj; // page-split: hoisted
 // page-split: import 0 (in js/daimond.js)
 
@@ -23,38 +23,14 @@ export let Wasm, init, DaimondApp, builtin_tools, qr_matrix, set_account_ns, hea
 /// Use `run_tool('file_read')` ONLY to ask a model-shaped question — chiefly "does
 /// this file exist", where the answer is the error prefix and not the content.
 export async function readBytes(path) {
-	try { return await Wasm.read_file(path); }
-	catch (e) { noteFolderLost(e); throw e; }
+	return await Wasm.read_file(path);
 }
 
 /// A file's raw BYTES, whole, with the same withdrawn-grant alarm. For a reader that must
 /// not have them decoded as UTF-8 first: a message in ISO-8859-1 is not UTF-8.
 export async function readRawBytes(path) {
-	try { return await Wasm.read_bytes(path, 0, 4294967295); }
-	catch (e) { noteFolderLost(e); throw e; }
+	return await Wasm.read_bytes(path, 0, 4294967295);
 }
-
-// ── A withdrawn folder grant, on the paths the tool registry never sees ──
-//
-// The browser can take a real folder away at any moment, and every call that
-// touches it then fails while the app goes on naming the folder. `src/tools.rs`
-// catches that at `ToolRegistry::dispatch`, which is the single door EVERY tool
-// result passes through, and raises `daimond:folder-lost`; the Workspace panel
-// listens for it (`handlePermissionLoss`) and drops to the sandbox.
-//
-// The panel's own reads do not go through that door. `Wasm.read_file`,
-// `Wasm.read_bytes` and the viewer's probes are called straight from here, so a
-// revoked grant broke the panel's own operations and raised nothing at all: the
-// alarm went off only if an AGENT happened to run a file tool afterwards.
-//
-// So the same test is applied where those calls fail, and the SAME EVENT is
-// raised -- not a second copy of the handler, which stays the one place that
-// decides what to do about it.
-//
-// THE PROPER FIX IS IN `src/wasm/entry.rs`, where `read_file` and its siblings
-// could raise the event themselves and this pair would not need to exist. Until
-// then the predicate lives in two languages and can drift; `dev/verify_joinedup.mjs`
-// compares them to the character so that it cannot drift quietly.
 
 /// A file, folder or cloud copy, drawn as an outline icon rather than an emoji.
 ///
@@ -123,40 +99,6 @@ export function pathName(el, kind, pre, name) {
 	return el;
 }
 
-/// Whether a failed direct file call failed BECAUSE the open folder was taken away.
-///
-/// The mirror of `folder_loss_reported` in `src/tools.rs`: the workspace root is a
-/// real folder, and the browser reported the failure as a `NotAllowedError`. A
-/// missing file, or a path outside the jail, is an ordinary error and must not
-/// cost the user their folder.
-///
-/// THE WHOLE NAME, not `NotAllowed`. The Rust side reads `DOMException.name` and
-/// compares it whole; a substring of it is what turned a search HIT into a revoked
-/// grant on 2026-09-13 and cost the user their folder mid-turn. Here there is no
-/// name to read -- `to_js_err` rejects with a string -- so the test is still over
-/// text, but only over text a call THREW.
-///
-/// # Arguments
-/// * `e` - Whatever the rejected call threw. `to_js_err` rejects with a string,
-///   so both a string and an `Error` carrying one have to read the same.
-function folderWasLost(e) {
-	try { if (Wasm.workspace_mode() !== 'folder') return false; }
-	catch (err) { return false; }			// an engine too old to say is not a loss
-	var text = (e && typeof e === 'object' && e.message) ? String(e.message) : String(e);
-	return text.indexOf('NotAllowedError') >= 0;
-}
-
-/// Raise `daimond:folder-lost` when `e` says the grant is gone. True if it did.
-///
-/// Idempotent by construction: `handlePermissionLoss` returns at once once the
-/// folder has been let go, so several calls failing on the one withdrawal say it
-/// once between them.
-export function noteFolderLost(e) {
-	if (!folderWasLost(e)) return false;
-	try { window.dispatchEvent(new CustomEvent('daimond:folder-lost')); }
-	catch (err) { /* a window that cannot dispatch has nothing listening either */ }
-	return true;
-}
 // page-split: import 1 (in js/daimond.js)
 // page-split: import 2 (in js/daimond.js)
 
@@ -171,8 +113,6 @@ export function bindWasm(w) { // page-split: bind
 	heap_bytes = w.heap_bytes;
 	grow_on_purpose = w.grow_on_purpose;
 	install_panic_hook = w.install_panic_hook;
-	set_workspace_dir = w.set_workspace_dir;
-	use_opfs_workspace = w.use_opfs_workspace;
 	compose_prompt = w.compose_prompt;
 	compose_prompt_for = w.compose_prompt_for;
 	default_prompt = w.default_prompt;

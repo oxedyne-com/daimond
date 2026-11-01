@@ -11,7 +11,6 @@ import { tools } from './workers.js';
 import { Files } from './files_view.js';
 import { renderSeatSwitch } from './sourcemenu.js';
 import { diag } from './passkey_phrase.js';
-import { FsaDB } from './termpanel.js';
 import { buildId } from './turns.js';
 import { INSTRUCTIONS_FILE, Instructions, Pending, Prompts, instructionsSeed } from './pending.js';
 import { diamondApp, diamondModels } from './diamonds.js';
@@ -2328,14 +2327,18 @@ export async function syncIndexOwed(known) {
 	return true;
 }
 
-/// Is there a machine folder behind this device: one remembered, open or not (the sandbox after a
-/// lost grant keeps it to reconnect to), or one it collected and then forgot? The upgrade seed
+/// Is there a machine folder behind this device: one an older build kept a handle to, or one it
+/// collected? The browser opens none now (R1, D-20261031-11); the handle record is read until boot
+/// retires it, and the retirement folds it into the history (`noteFolderBehind`). The upgrade seed
 /// and the transition rule refuse such a device.
 async function syncFolderBehind() {
-	var folder = false;
-	try { folder = !!(Files && Files.remembersFolder && Files.remembersFolder()); } catch (e) { folder = true; }
-	if (!folder) { try { folder = !!(await FsaDB.load()); } catch (e) { folder = false; } }
-	return folder || syncFolderHistory();
+	if (syncFolderHistory()) return true;
+	try { return !!(Files && Files.machineFolderKept && (await Files.machineFolderKept())); } catch (e) { return true; }
+}
+
+/// Record that a machine folder was behind this device, for `syncFolderHistory`.
+export function noteFolderBehind() {
+	try { localStorage.setItem(SYNC_FOLDER_EVER_KEY, '1'); } catch (e) { /* read as a folder: see syncFolderHistory */ }
 }
 
 /// Did this device ever collect a machine folder? FORGET CLEARS THE HANDLE AND NOTHING ELSE (QCMG's

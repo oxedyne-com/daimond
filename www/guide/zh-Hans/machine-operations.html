@@ -74,7 +74,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 
 	<div class="note stop"><strong>要装一个不同的浏览器？你的账户不会自动跟过去。</strong> 你的账户是一把签名密钥，存在你建它时用的那个浏览器里。密码短语不会重新造出那把密钥，只会解开存在那里的那一份，所以同一句密码短语，在一个全新的浏览器里开出的是一个 <em>另外的</em> 账户，有它自己的额度，没有 Pro。这把密钥本身得能搬家，所以在你退役旧浏览器之前，先在里面做以下一件事： <strong><span class="ui">关联另一台设备</span></strong>，然后在新浏览器里输入那个码；添加一个通行密钥；或者 <strong><span class="ui">导出一份备份</span></strong>，把聊天、diamond 和工作区文件连同密钥一起写下来，密钥仍然被你的密码短语包着，供一个还没有账户的浏览器采用。参见 <a href="sync.html">不止一台设备</a> 和 <a href="accounts.html">安全和修复</a>.</div>
 
-	<div class="note"><strong>这和 Machine 工作区不是一回事。</strong>  <span class="ui">本机</span> 标签，在 <a href="email-web-files.html">工作区</a> 面板里，给 Daimond 一个你硬盘上真实文件夹的读写权限。「在本机运行命令」让它能 <strong>运行程序</strong>。这是两个分开的授权，分开给。「运行命令」确实需要这个工作区，因为一条命令要针对一个真实的文件夹运行，所以这个工作区必须是一个真实文件夹，而且是同一个。</div>
+	<div class="note stop"><strong>目前命令会被拒绝。</strong> 手会对在 <a href="email-web-files.html">工作区</a> 面板中打开的文件夹执行命令，而浏览器已不再打开你磁盘上的文件夹，所以通过手发送的每条命令都会被拒绝，并附一行说明原因。要让 Daimond 在你自己的文件夹上工作，请在那台电脑上运行 Kimberlite。</div>
 
 	<h2 id="s6">安装它</h2>
 	<p>安装要在 Daimond 仓库的根目录下，在终端里敲两条命令，然后在浏览器里做两件事。加起来，是每个浏览器配置文件里一个小小的 JSON 文件，再加上一个你自己构建的二进制文件。安装完不会留下任何监听端口的东西，没有守护进程在跑，也没有秘密可偷。</p>
@@ -112,9 +112,8 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<pre><code translate="no">hand/install/install.sh --check</code></pre>
 	<p>这个检查不会改变任何东西，只为每一件必须成立的事打印一行：一个能用的浏览器、注册信息、这个二进制文件、日志目录和它的权限模式， <code translate="no">root.txt</code>、日志目录位于被授权文件夹之外，还有这个扩展。失败的一行，修法就写在它下面一行。从上往下逐一处理，因为靠后的一行常常只是因为前面一行没弄好才失败的。</p>
 
-	<h2 id="s12">最后两步由你来做</h2>
-	<p>上面这些步骤，没有一步替你做决定。剩下的两件事，才是真正的决定。</p>
-	<p><strong>在 Daimond 里打开同一个文件夹。</strong> 在工作区面板里，用 <span class="ui">本机</span> 标签，打开你授权的那个文件夹。必须是同一个。hand 会往 <code translate="no">&lt;folder&gt;/.daimond/workspace.id</code> 里写一个令牌，并在自我介绍时点出它的名字；页面则通过自己已经握着的句柄读这个文件，把两者对比。一个是浏览器自己存储的工作区，或者是一个和 <code translate="no">root.txt</code>里不一样的文件夹，它的命令都会被拒绝，并附一行说明是哪一种。这个令牌住在 <code translate="no">.daimond</code> 因为隔离舱永远拒绝那个目录，所以一条命令读不到这个令牌，也没法替一个它不在其中的文件夹说话。</p>
+	<h2 id="s12">最后一步由你来做</h2>
+	<p>上面的步骤都没有替你做决定。剩下的一件，就是那件需要你决定的事。</p>
 	<p><strong>允许第一条命令。</strong> Daimond 第一次想运行点什么时，一个 <strong translate="no">Daimond Hands</strong> 窗口会打开来问。没有哪个浏览器权限涵盖「可以在这台电脑上运行程序」，所以这扇窗口 <em>就是</em> 那个批准，扩展自己记录你的回答。这也正是它能被撤销的原因，因为浏览器没有什么可以拿走的。在你允许之前，什么都不会运行。</p>
 	<p>这扇窗口会点出文件夹和提出请求的页面，并用一行字说明一条命令在这台机器上能碰到多远。 <span class="ui">这管着什么，又不管什么</span> ，打开其余的部分：这个隔离舱拦住了什么、没拦住什么，以及怎么收回这个权限。</p>
 

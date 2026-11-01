@@ -28,7 +28,7 @@
 // Needs a world for the mock provider (`eval "$(bash dev/world.sh N --env)"`).
 //
 //	node dev/verify_kitask.mjs
-import { open, markHere, standInFolders } from './harness.mjs';
+import { open, markHere } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
@@ -70,15 +70,15 @@ const ids = await p.evaluate(async () => {
 });
 
 // THE FOLDER A COMMAND RUNS IN. The page no longer hands the engine a Diamond's attached list
-// (HIST-SAFE U2): `code` is a machine folder opened in the panel and marked into each Diamond
-// here, as a person does, so the engine's own read of the marks puts it in the bounds.
-const F = await standInFolders(s, { tag: 'kitask', which: ['a'], dirs: ['code'] });
-const picked = await F.pick('a');
+// (HIST-SAFE U2): `code` is a folder in his agreed tree (the page's store; the browser Machine
+// folder went with G5, D-20261031-11), marked into each Diamond here, as a person does, so the
+// engine's own read of the marks puts it in the bounds.
+await p.evaluate(async () => { const m = await import('/pkg/oxedyne_daimond.js'); await m.store_write('code/keep.md', 'kept\n'); });
 const ref = await p.evaluate(() => DaimondAttach.ref('dir', 'code'));
 const pressed = [];
 for (const id of Object.values(ids)) pressed.push((await markHere(s, id, ref)).confirmed);
-check('0. the folder code is open and marked into each Diamond here',
-	picked.landed && pressed.every(Boolean), JSON.stringify({ picked, pressed }));
+check('0. the folder code is in the store and marked into each Diamond here',
+	pressed.every(Boolean), JSON.stringify({ ref, pressed }));
 
 // One daimon turn, started and left running so the card can be answered from here.
 const start = (id, argv = ['cargo', '--version']) => p.evaluate(async (a) => {
@@ -196,7 +196,6 @@ await p.evaluate(async (ids) => {
 		try { await DaimondCore.diamondApp().delete_diamond(id); } catch (e) { /* left */ }
 	}
 }, ids);
-await F.tidy();
 await s.close();
 guardRan(ok.length + bad.length);
 console.log(`\n${ok.length} ok, ${bad.length} failed`);

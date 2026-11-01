@@ -1,5 +1,5 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
-import { Wasm, kindIcon, kindName, markName, noteFolderLost, readBytes } from './wasm.js';
+import { Wasm, kindIcon, kindName, markName, readBytes } from './wasm.js';
 import { crystalBody, diamondTurning, pg } from './state.js';
 import { friendlyError, starterTags, t, tn } from './util.js';
 import { bumpDiamonds, persistChats, threadStarted, touchChat, touchChatMeta, trashed,
@@ -1913,7 +1913,7 @@ async function attachReadBodies(list, chatId) {
 	for (var i = 0; i < want.length; i++) {
 		var body = null;
 		try { body = await Wasm.read_file(want[i].path); }
-		catch (e) { noteFolderLost(e); body = null; }
+		catch (e) { body = null; }
 		if (typeof body !== 'string') continue;
 		var cut = body.length > ATTACH_READ_MAX;
 		out += '\n' + t('attach.read_block', { path: want[i].path }) + '\n'

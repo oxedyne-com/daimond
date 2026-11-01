@@ -21,7 +21,8 @@ const check = (name, cond, detail) => {
 	else { bad++; console.log('  FAIL ' + name + (detail ? '  -- ' + detail : '')); }
 };
 const A = 'if (run._priorSession && run._priorSession.length && run.app.restore_session) {';
-const Z = 'await Files.reknow();';
+// Up to the turn's own try, where `Files.reknow()` stood until the Machine folder went (R1, G5).
+const Z = 'try {\n\t\t\t\ttry {\n\t\t\t\t\t// Cleared as it is read, so one re-route';
 const a = D.indexOf(A), z = D.indexOf(Z, a);
 if (a < 0 || z < 0) { console.log('  FAIL could not lift the segment'); process.exit(1); }
 const seg = D.slice(a, z);

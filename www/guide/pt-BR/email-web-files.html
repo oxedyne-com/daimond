@@ -41,19 +41,17 @@
 	<h1>Arquivos, e-mail e a web</h1>
 
 	<h2 id="s1">O Espaço de trabalho</h2>
-	<p>O botão <span class="ui">Espaço</span> mostra seus arquivos como uma árvore comum. Três chips no alto nomeiam onde o espaço de trabalho vive.</p>
+	<p>O botão <span class="ui">Espaço</span> mostra seus arquivos como uma árvore comum. Dois chips no topo nomeiam os lugares que um espaço de trabalho envolve.</p>
 	<ul>
-		<li><span class="ui">Navegador</span> é o armazenamento privado do próprio navegador, fora do alcance de tudo o que não seja o Daimond. É o padrão, e sincroniza com os seus outros dispositivos.</li>
-		<li><span class="ui">Máquina</span> é uma pasta de verdade no disco deste computador. O Daimond trabalha nela diretamente, então os mesmos arquivos estão no seu gerenciador de arquivos. Ela fica naquele computador, e só viaja se você a compartilhar com o controle <span class="ui">⇄</span> . Só em navegadores baseados no Chromium.</li>
-		<li><span class="ui">Nuvem</span> é onde os bytes ficam guardados, o que permite que um espaço de trabalho seja maior do que o dispositivo que o guarda. Não é um terceiro lugar para trabalhar. Os arquivos são criptografados antes de sair.</li>
+		<li><span class="ui">Navegador</span> é o armazenamento privado deste navegador, inalcançável por qualquer coisa fora do Daimond. É onde fica um espaço de trabalho, e ele sincroniza com seus outros dispositivos.</li>
+		<li><span class="ui">Nuvem</span> é onde os bytes ficam guardados, o que permite que um espaço de trabalho seja maior que o dispositivo que o guarda. Não é um segundo lugar para trabalhar. Os arquivos são criptografados antes de sair.</li>
 	</ul>
-	<p>A pasta que você abre como <span class="ui">Máquina</span> é tudo o que o Daimond consegue ver, sem nada acima dela e nada ao lado dela.</p>
+	<p>O navegador não abre uma pasta no disco do seu computador. Para trabalhar numa pasta sua, execute o Kimberlite nesse computador. Um navegador que já teve uma pasta aberta avisa uma vez que não tem mais, e nada no espaço de trabalho se perde.</p>
 
 	<h3 id="s2">Trazer um arquivo para dentro</h3>
 	<ul>
 		<li><strong>Enviar arquivos</strong>, a seta para dentro da bandeja no cabeçalho, pega um arquivo ou um punhado.</li>
 		<li><strong>Importar uma pasta&hellip;</strong> copia uma pasta para dentro, e depois disso ela sincroniza como todo o resto.</li>
-		<li><strong>Abrir uma pasta de verdade</strong> com o chip <span class="ui">Máquina</span> . Nada é copiado, e só sincroniza se você a compartilhar.</li>
 	</ul>
 	<p>O correio chega aqui como arquivos comuns, e um daimon escreve aqui onde tem permissão.</p>
 
@@ -63,7 +61,7 @@
 	<p>Um daimon é avisado com todas as letras quando um arquivo que ele quer está na nuvem, e tem de buscá-lo de propósito. Um teto limita quanto ele pode baixar por conta própria.</p>
 
 	<h2 id="s4">Entregando uma pasta</h2>
-	<p>Cada linha da árvore tem um <span class="ui">◈</span> e um <span class="ui">⋯</span>. O ◈ adiciona o arquivo ou a pasta ao que está em foco, ou o retira, e o ⋯ diz o mesmo em palavras: <span class="ui">Adicionar a</span> o diamond pelo nome, ou <span class="ui">Adicionar a este chat</span>, e <span class="ui">Remover de</span> quando já está dentro. No computador os dois aparecem com o ponteiro sobre a linha; no telefone o ◈ fica sempre visível e um toque longo abre o ⋯. Um diamond novo começa sem nada adicionado, e sua lista <span class="ui">Pode alterar</span> diz de onde adicionar.</p>
+	<p>Every row in the tree has a <span class="ui">◈</span> and a <span class="ui">⋯</span>. The ◈ adds the file or folder to what is in focus, or takes it out, and the ⋯ says the same in words: <span class="ui">Add to</span> the diamond by name, or <span class="ui">Add to this chat</span>, and <span class="ui">Remove from</span> once it is in. On a computer both appear when the pointer is over the row; on a phone the ◈ is always drawn and a long press opens the ⋯. A new diamond starts with nothing added, and its <span class="ui">Can change</span> list says where to add from.</p>
 	<ul>
 		<li><strong>Um diamond está em foco.</strong> O arquivo ou a pasta entra no espaço de trabalho daquele diamond e fica até você tirá-lo.</li>
 		<li><strong>Um chat está em foco.</strong> O anexo vale só para o próximo turno.</li>
@@ -82,12 +80,10 @@
 	<p>Qualquer coisa que um daimon anexou para si mesmo, como a colheita de uma dobra ou um arquivo que um agente guardou, fica sob um único cabeçalho recolhido, <span class="ui">Adicionado pelo daimon</span>, com uma contagem e um <span class="ui">Remover todos</span>. Seus próprios anexos ficam onde estão.</p>
 
 	<h3 id="s7">Pastas adicionadas e seus outros dispositivos</h3>
-	<p>Adicionar uma pasta ou um arquivo a um diamond, ou uma pasta ao espaço de trabalho de uma conversa, sincroniza com seus outros dispositivos, mas só vale lá depois que você toca de novo naquele dispositivo. Abra o mesmo diamond em um segundo dispositivo e uma pasta adicionada em outro lugar aparece como ainda não em uso aqui, com <span class="ui">Usar aqui</span> para começar a usá-la lá, ou <span class="ui">Usar todas aqui</span> para tudo o que ainda não está em uso de uma vez. Remover uma pasta chega a todos os dispositivos sozinho; começar a usá-la não, então uma pasta adicionada só fica em uso num dispositivo onde foi adicionada ou tocada de novo. Depois desta atualização, uma pasta da máquina que você adicionou pode pedir mais um toque: uma compartilhada precisa de <span class="ui">Usar aqui</span> e depois ⇄ mais uma vez, e uma pasta do espaço de trabalho de uma conversa ou uma anexada com <span class="ui">Ler</span> também precisa ser tocada de novo. A pasta que o Neil adicionou para este guia pode pedir esse mesmo toque uma vez, onde foi configurada pela primeira vez com uma pasta da máquina aberta.</p>
+	<p>Adicionar uma pasta ou um arquivo a um diamond, ou uma pasta ao espaço de trabalho de uma conversa, sincroniza com seus outros dispositivos, mas só vale lá depois que você toca de novo naquele dispositivo. Abra o mesmo diamond em um segundo dispositivo e uma pasta adicionada em outro lugar aparece como ainda não em uso aqui, com <span class="ui">Usar aqui</span> para começar a usá-la lá, ou <span class="ui">Usar todas aqui</span> para tudo o que ainda não está em uso de uma vez. Remover uma pasta chega a todos os dispositivos sozinho; começar a usá-la não, então uma pasta adicionada só fica em uso num dispositivo onde foi adicionada ou tocada de novo.</p>
 
 	<h3 id="s8">Compartilhando uma pasta com seus outros dispositivos</h3>
-	<p>Uma pasta <span class="ui">Máquina</span> vive em um computador, e o seu telefone não consegue abri-la. O controle <span class="ui">⇄</span> na linha é como ela chega lá mesmo assim, com <span class="ui">Compartilhar com dispositivos sem acesso nativo</span>.</p>
-	<p>Desligado, só os dispositivos que conseguem abrir a pasta sozinhos a veem. Ligado, ela é copiada para os seus outros dispositivos, até <strong>200&nbsp;MiB</strong> por pasta. O ajuste é por pasta, de qualquer dispositivo que você o defina, e só um dispositivo que consiga abrir a pasta pode defini-lo.</p>
-	<p>Uma pasta acima do teto fica de fora por inteiro, e uma faixa diz qual foi e quanto pesava. Compartilhe uma pasta menor, ou tire parte dela.</p>
+	<p>Uma pasta no armazenamento próprio do navegador chega aos seus outros dispositivos sozinha, então não há nada para compartilhar à mão. Uma pasta no disco do seu computador fica a cargo do Kimberlite e permanece nesse computador.</p>
 
 	<h2 id="s9">Documentos, e livros</h2>
 	<p>Abra um arquivo <code>.typ</code> e o painel Doc ganha dois botões. <span class="ui">Compilar</span> compõe o documento na página e escreve um PDF de prévia ao lado da fonte, e enquanto essas páginas estão abertas, cada salvamento as reconstrói. Aperte-o em um capítulo, e ele compila o documento que inclui aquele capítulo, e então leva você até a página daquele capítulo.</p>
@@ -98,6 +94,7 @@
 	<h2 id="s10">Qualquer tipo de arquivo</h2>
 	<p>Qualquer arquivo é guardado e viaja, até um gigabyte cada. Um documento ou uma planilha abre como uma <strong>visão de leitura</strong>, que mostra o que ele diz e não como ele imprime. Os valores são como estão guardados, as fórmulas não são recalculadas, e as macros não são executadas nem lidas. <span class="ui">Salvar uma cópia</span> grava uma no seu próprio dispositivo e deixa o arquivo aqui intocado.</p>
 	<p>Onde nada reconhece um arquivo, os bytes dele são mostrados, e o painel avisa isso.</p>
+	<p>A scan or picture saved as BMP, TIFF, HEIC or ICO is turned into a PNG or JPEG as it is opened, so a daimon can look at it, read the text in it, or place it in a document, with nothing to convert first. The text is read from every page of a TIFF that has several; looking at one shows its first page.</p>
 
 	<h2 id="s11">E-mail</h2>
 	<p>Um navegador não consegue abrir uma conexão de correio, então o Daimond se conecta pelo gateway, que devolve a mensagem bruta e esquece a sua credencial. Seu correio é escrito no espaço de trabalho como arquivos comuns.</p>

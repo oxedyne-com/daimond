@@ -1947,9 +1947,6 @@ export async function runTurn(chat, text, opts) {
 				hold = turnHold(chat);
 			}
 			if (hold) throw DaimondModels.pauseError(hold);
-			// The folders this device knows, as its record stands at the turn's start: the
-			// daimon's `file_revert` asks the engine which rows are another folder's (HK1).
-			await Files.reknow();
 			// This device's name, as the person knows it, so a sentence the turn ends on
 			// says where it ran: on a handed-off turn the reader is elsewhere (UNBLOCK-32 F4b).
 			try {

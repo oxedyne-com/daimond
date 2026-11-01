@@ -28,29 +28,14 @@
 //! whichever root it is written to — and so cannot arrive under a second spelling of itself.
 //! Migrating `mail/` (see [`crate::wasm::diamond::adopt_from_folder`]) rests on exactly that.
 //!
-//! ## Two roots, one interface (FSA real-folder mode)
+//! ## One root (the browser opens no folder)
 //!
-//! Every operation resolves against a [`FileSystemDirectoryHandle`].  Two
-//! handles are possible and share the same interface:
-//!
-//! - the **OPFS root** from `navigator.storage.getDirectory()` (the
-//!   zero-setup sandbox), and
-//! - an **FSA folder** from `showDirectoryPicker()` — a real local
-//!   directory the user grants read/write to.
-//!
-//! FSA mode is therefore not a new filesystem but a *swapped root handle*.
-//! A thread-local override (wasm is single-threaded, so no `Send` bound is
-//! needed) holds the FSA handle when one is open.  Which root a given call
-//! uses is selected by [`crate::tools::FileRoot`] **and by the path**:
-//! [`FileRoot::Workspace`](crate::tools::FileRoot::Workspace) honours the
-//! override (the file tools / Workspace edit the real folder) for the user's
-//! work, and pins the OPFS root for a path naming Daimond's own store
-//! ([`is_store_path`](crate::tools::is_store_path)), so a Diamond is the same
-//! Diamond in either mode;
-//! [`FileRoot::Opfs`](crate::tools::FileRoot::Opfs) always pins the OPFS
-//! root so Daimond's own Diamond/crystal/`.daimond` state can never pollute the user's
-//! real repo; and [`FileRoot::Machine`](crate::tools::FileRoot::Machine) always
-//! resolves to the real folder, for the one operation that copies out of it.
+//! Every operation resolves against the OPFS root from `navigator.storage.getDirectory()`, the
+//! zero-setup sandbox.  The browser once also opened a real local folder through
+//! `showDirectoryPicker()` and swapped it in as a thread-local override; that door is gone (R1,
+//! D-20261031-11).  A device without Kimberlite works on OPFS and the diamond's synced files, and
+//! a path that [`crate::tools::storage_for`] places on a folder or the machine reaches nothing
+//! here rather than falling back to the sandbox.
 //!
 //! The synchronous `createSyncAccessHandle` path (single-writer Worker,
 //! for the append-only `.daimond` log) is deferred; this async edge covers
@@ -91,34 +76,6 @@ use web_sys::{
 
 
 thread_local! {
-    /// The active FSA real-folder handle, or `None` for OPFS-only mode.
-    ///
-    /// Set by [`set_override`] when the user opens a folder and reused
-    /// across the session; only [`FileRoot::Workspace`] resolution
-    /// consults it, so Daimond's own state ([`FileRoot::Opfs`]) is never
-    /// affected.  A thread-local suffices because wasm runs single-
-    /// threaded, which also keeps the handle off any `Send` bound.
-    static WORKSPACE_OVERRIDE: RefCell<Option<FileSystemDirectoryHandle>> =
-        const { RefCell::new(None) };
-
-    /// Which folder [`WORKSPACE_OVERRIDE`] is, as a version row names it: the id this device gave
-    /// the folder when it was first picked, set in the same step as the handle ([`set_override`]).
-    static WORKSPACE_ID: RefCell<String> = const { RefCell::new(String::new()) };
-
-    /// The ids of the folders this device knows ([`folder_known`]), as the page hands them over
-    /// with a folder ([`set_known`]).  Empty until it does: then no folder but the open one is known.
-    static KNOWN_FOLDERS: RefCell<std::collections::BTreeSet<String>> =
-        const { RefCell::new(std::collections::BTreeSet::new()) };
-
-    /// This page's number for the open folder's handle ([`folder_number`]): the storage a file
-    /// tool's read of the folder is filed under ([`storage_of`]).
-    static FOLDER_NO: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-
-    /// The folder handles this page has opened, with their numbers, newest last, and the next
-    /// number to give.  See [`folder_number`].
-    static FOLDERS: RefCell<Vec<(FileSystemDirectoryHandle, u64)>> = const { RefCell::new(Vec::new()) };
-    static FOLDER_NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
-
     /// The current account's OPFS subdirectory, or empty for the primary account.
     ///
     /// Several people may share one browser, one at a time; each account's workspace and Daimond's
@@ -146,158 +103,13 @@ pub fn set_account_ns(ns: String) {
     forget_all();
 }
 
-/// Install `handle` as the FSA real-folder root for the file tools /
-/// Workspace.  Subsequent [`FileRoot::Workspace`] operations resolve
-/// against it until [`clear_override`] is called.
-///
-/// **The folder and its id change in one step** (HR, 2026-09-25): a version row of a relative path
-/// records which folder it was written in ([`folder_id`]), so no reader may see the new folder
-/// under the old id.  A folder opened with no id -- the device's record of folders refused one, or
-/// a caller with none to give -- is [`UNNAMED_FOLDER`], which names no folder: a row written in
-/// one is asked about before it goes back over different bytes anywhere, that folder included.
-/// The page names each folder it opens.
-///
-/// # Arguments
-/// * `id` - The id this device keeps for the folder (`FsaDB.folderId` in the page), or empty.
-pub fn set_override(handle: FileSystemDirectoryHandle, id: &str) {
-    let id = match id.trim() {
-        ""  => UNNAMED_FOLDER.to_string(),
-        one => one.to_string(),
-    };
-    let n = folder_number(&handle);
-    if FOLDER_NO.with(|c| c.get()) != n {
-        forget_folders();
-    }
-    WORKSPACE_OVERRIDE.with(|c| *c.borrow_mut() = Some(handle));
-    WORKSPACE_ID.with(|c| *c.borrow_mut() = id);
-    FOLDER_NO.with(|c| c.set(n));
-}
-
-/// How many folder handles [`folder_number`] remembers.  One forgotten costs only its reads.
-const FOLDERS_MAX: usize = 32;
-
-/// This page's number for `handle`: the one it had if this page has opened it before, else a new
-/// one.
-///
-/// **The same handle handed again keeps its number** (E2b, 2026-09-27).  The page hands the open
-/// folder again, unchanged, at moments that switch nothing (every turn start and restore, to pass
-/// the folders it knows), and a number per call would forget every read at each.  A handle is
-/// matched by identity (`===`), which is what the page keeps for a folder while it lives; the same
-/// directory picked again is a new handle and a new number, which forgets its reads -- a write
-/// then goes unguarded, never refused over a read of something else.
-fn folder_number(handle: &FileSystemDirectoryHandle) -> u64 {
-    let seen = FOLDERS.with(|f| f.borrow().iter()
-        .find(|(h, _)| AsRef::<JsValue>::as_ref(h) == AsRef::<JsValue>::as_ref(handle))
-        .map(|(_, n)| *n));
-    if let Some(n) = seen {
-        return n;
-    }
-    let n = FOLDER_NEXT.with(|c| { let n = c.get(); c.set(n + 1); n });
-    FOLDERS.with(|f| {
-        let mut f = f.borrow_mut();
-        if f.len() >= FOLDERS_MAX {
-            f.remove(0);
-        }
-        f.push((handle.clone(), n));
-    });
-    n
-}
-
 /// Where a file tool's `path`, spelled against `root`, resolves now: the storage its read is
 /// filed under by the stale-read guard, from the same decision [`resolve_root`] takes the bytes
 /// by ([`crate::tools::storage_for`]).
 pub fn storage_of(root: FileRoot, path: &str) -> Storage {
-    let folder = match folder_open() {
-        true  => Some(FOLDER_NO.with(|c| c.get())),
-        false => None,
-    };
+    // No real folder is ever open here: the browser works on its own storage (R1, D-20261031-11).
     let ns = ACCOUNT_NS.with(|c| c.borrow().clone());
-    crate::tools::storage_for(root, path, folder, &ns)
-}
-
-/// Clear any FSA override, returning the file tools / Workspace to the
-/// OPFS sandbox root.
-pub fn clear_override() {
-    WORKSPACE_OVERRIDE.with(|c| *c.borrow_mut() = None);
-    WORKSPACE_ID.with(|c| c.borrow_mut().clear());
-    forget_folders();
-}
-
-/// What a real folder opened with no id of its own is called in a version row ([`set_override`]).
-pub use crate::diamond_versions::UNNAMED_FOLDER;
-
-/// Replace the folders this device knows with `ids`: the ids its record of folders holds for
-/// folders still where they were picked (`FsaDB.known` in the page).
-///
-/// **Which folder a row was written in is only worth knowing where this device can name it**
-/// (HX1 of HR's QA, 2026-09-25).  A row from a folder this device knows, other than the open one,
-/// is another folder's file and is left; a row from any other folder -- another device's, a moved
-/// or renamed one, one picked again after "Forget" -- is placed as a row from before folders were
-/// recorded, and asked about over different bytes ([`crate::diamond_versions::route`]).  The
-/// unnamed folder and browser storage are never among them.
-pub fn set_known<I: IntoIterator<Item = String>>(ids: I) {
-    let ids: std::collections::BTreeSet<String> = ids.into_iter()
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty() && id != UNNAMED_FOLDER
-            && id != crate::diamond_versions::BROWSER_FOLDER)
-        .collect();
-    KNOWN_FOLDERS.with(|k| *k.borrow_mut() = ids);
-}
-
-/// Is `id` a folder this device knows ([`set_known`])?
-pub fn folder_known(id: &str) -> bool {
-    KNOWN_FOLDERS.with(|k| k.borrow().contains(id))
-}
-
-/// The id of the real folder open now, or `None` where the file tools are on browser storage.
-pub fn folder_id() -> Option<String> {
-    match folder_open() {
-        true  => Some(WORKSPACE_ID.with(|c| c.borrow().clone())),
-        false => None,
-    }
-}
-
-/// The open folder's own name, or `None` where the file tools are on browser storage.
-pub fn folder_name() -> Option<String> {
-    WORKSPACE_OVERRIDE.with(|c| c.borrow().as_ref().map(|h| h.name()))
-}
-
-/// Whether a real folder is open at all.
-///
-/// [`workspace_mode`] answers the same question for the page, which wants a word to render; a
-/// caller that wants to know whether [`FileRoot::Machine`] can resolve wants a boolean, and
-/// comparing strings to find out is how the two answers drift apart.
-pub fn folder_open() -> bool {
-    WORKSPACE_OVERRIDE.with(|c| c.borrow().is_some())
-}
-
-/// The current file-tool root mode: `"folder"` when an FSA real folder is
-/// open, else `"opfs"`.
-pub fn workspace_mode() -> String {
-    WORKSPACE_OVERRIDE
-        .with(|c| if c.borrow().is_some() { "folder" } else { "opfs" })
-        .to_string()
-}
-
-/// The event dispatched on `window` when the browser takes the real folder away.
-pub const FOLDER_LOST_EVENT: &str = "daimond:folder-lost";
-
-/// Tell the page that the open folder is no longer reachable, so it can drop to the sandbox and
-/// offer to reconnect.
-///
-/// A grant can be withdrawn at any time -- the browser revokes it, the user resets the
-/// permission, the folder goes away -- and the file tools then fail with `NotAllowedError` while
-/// the app carries on believing the folder is open.  That is the worst of both: the agent's
-/// writes fail, and the panel still names a folder the agent cannot reach.  The rule the design
-/// sets is that this must never be silent, so the edge says so out loud and the page decides what
-/// to do about it (see `handlePermissionLoss` in `daimond.js`); the override is cleared there, in
-/// one place, rather than half here and half there.
-pub fn notify_folder_lost() {
-    if let Some(win) = web_sys::window() {
-        if let Ok(ev) = web_sys::CustomEvent::new(FOLDER_LOST_EVENT) {
-            let _ = win.dispatch_event(&ev);
-        }
-    }
+    crate::tools::storage_for(root, path, None, &ns)
 }
 
 /// The name of the exception the edge caught since the watch was armed, and clear it.
@@ -474,12 +286,6 @@ fn forget_all() {
     FILES.with(|c| c.borrow_mut().clear());
 }
 
-/// Forget the handles of every opened folder (one closed or replaced).
-fn forget_folders() {
-    DIRS.with(|c| c.borrow_mut().forget_scopes("f"));
-    FILES.with(|c| c.borrow_mut().forget_scopes("f"));
-}
-
 /// The browser's filesystem, as [`crate::handle_cache`] walks it.
 struct Opfs;
 
@@ -637,56 +443,27 @@ async fn account_root(origin: &FileSystemDirectoryHandle, ns: &str)
 
 /// Resolve the root handle a call operates against, for the path it is about to address.
 ///
-/// [`FileRoot::Workspace`] returns the FSA override when one is open, else the OPFS root;
-/// [`FileRoot::Opfs`] always returns the OPFS root; [`FileRoot::Machine`] always returns the
-/// override and fails when there is none.
-///
-/// The path is what makes the first of those true of Daimond's own state as well as of the user's
-/// work.  A Diamond lives at `diamonds/<id>`, and every reader of that path other than the store
-/// itself -- the file tools, the Workspace panel, a dispatched worker -- asks for
-/// [`FileRoot::Workspace`].  With a folder open they were reading and writing the user's project,
-/// so a Diamond's own files vanished from the panel on a switch and a worker's output landed
-/// outside the sync parcel where nothing would ever see it again.  The rule is one line and it is
-/// applied here, once: a path naming the store resolves against OPFS whatever root is active (see
-/// [`crate::tools::is_store_path`]).
-///
-/// A mailbox at `mail/<address>` is the same rule for a different reason, and it was missing:
-/// mail belongs to an ACCOUNT, so following the folder put the messages inside whichever one
-/// happened to be open, hid them when none was, and wrote them somewhere else again after a
-/// switch.  A real folder would not even take the names -- a Maildir colon is refused outside the
-/// sandbox.  See [`crate::tools::MAIL_ROOT`].
-///
-/// [`FileRoot::Opfs`] is NOT made redundant by that and must not be deleted as though it were.  It
-/// is the belt to this test's braces: `crystal.json` is written through two doors and read through
-/// a third, and the day one of them stops agreeing with the others is the day an agent reads an
-/// empty crystal and writes over work it never saw.
-///
 /// **The decision is [`crate::tools::storage_for`]'s**, taken through [`storage_of`], which is also
 /// what the stale-read guard files a read under (E2b, 2026-09-27): the root the bytes go to and the
-/// storage a read is remembered in cannot disagree.  Daimond's own store never follows the folder,
-/// whoever asked; and [`FileRoot::Machine`] with no folder open is `Nowhere`, never a fallback to
-/// the sandbox -- the one caller is a copy OUT of the folder, and a fallback would copy the sandbox
-/// onto itself and call it a migration.
+/// storage a read is remembered in cannot disagree.  Only the sandbox resolves; a folder or machine
+/// address is an error, never a fallback to the sandbox, because the browser opens no folder (R1)
+/// and a fallback would quietly write the user's work somewhere he did not ask.
 ///
 /// # Arguments
 /// * `root` - Which root the caller asked for.
 /// * `path` - The workspace-relative path the call addresses; empty addresses the root itself.
 async fn resolve_base(root: FileRoot, path: &str) -> Outcome<Base<FileSystemDirectoryHandle>> {
-    // Both read in one synchronous step, so the number and the handle are the same folder's.
-    let open = WORKSPACE_OVERRIDE.with(|c| c.borrow().clone());
-    let n = FOLDER_NO.with(|c| c.get());
-    match (storage_of(root, path), open) {
-        (Storage::Sandbox(_), _)        => {
+    match storage_of(root, path) {
+        Storage::Sandbox(_)             => {
             let (dir, held) = res!(opfs_root().await);
             let ns = ACCOUNT_NS.with(|c| c.borrow().clone());
             Ok(Base { dir, scope: fmt!("s{}", ns), held })
         },
-        // The page's own handle: never one this edge held.
-        (Storage::Folder(_), Some(h))   => Ok(Base { dir: h, scope: fmt!("f{}", n), held: false }),
-        (Storage::Folder(_), None)
-        | (Storage::Machine(_), _)
-        | (Storage::Nowhere, _)         => Err(err!(
-            "OPFS: '{}' was addressed on the machine folder, and no folder is open.", path;
+        // The browser opens no real folder (R1): a folder or machine address reaches nothing.
+        Storage::Folder(_)
+        | Storage::Machine(_)
+        | Storage::Nowhere              => Err(err!(
+            "OPFS: '{}' was addressed on a machine folder, and the browser opens none.", path;
             IO, File, Missing)),
     }
 }

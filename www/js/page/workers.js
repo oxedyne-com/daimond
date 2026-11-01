@@ -1979,9 +1979,6 @@ export var Workers = {
 		// whole headroom in one fresh ensure (WKEY-FRESH), so a turn over the float is not
 		// refused at the cap; a second ask here, inside the gateway's per-slot floor, was
 		// the 429 that left every worker on the float.
-		// The folders this device knows, as its record stands at the turn's start: a
-		// worker's `file_revert` asks the engine which rows are another folder's (HK1).
-		await Files.reknow();
 		try {
 			try {
 				// Cleared as it is read, so one re-route buys one vision nudge: a worker

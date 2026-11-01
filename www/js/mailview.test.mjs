@@ -268,12 +268,12 @@ test('the frame: sandbox unchanged with no allow-scripts, the policy as before C
 	assert.equal(p.hides.length, 0, 'no close to listen for');
 });
 
-test('daimond.js hands mail.js the bytes door, whole and with the withdrawn-grant alarm', async () => {
+test('daimond.js hands mail.js the bytes door, whole, with no folder-grant alarm (R1)', async () => {
 	const { readFileSync } = await import('node:fs');
 	const src = readPage(new URL('./daimond.js', import.meta.url), 'utf8');
 	const fn = (src.match(/\nasync function readRawBytes\(path\) \{\n([\s\S]*?)\n\}\n/) || [])[1] || '';
 	assert.match(fn, /Wasm\.read_bytes\(path, 0, 4294967295\)/, 'the whole file, not a prefix');
-	assert.match(fn, /catch \(e\) \{ noteFolderLost\(e\); throw e; \}/, 'a withdrawn grant is raised, then rethrown');
+	assert.doesNotMatch(fn, /noteFolderLost/, 'the browser opens no folder, so no grant can be withdrawn'); // keeps: noteFolderLost asserts its removal (G5)
 	const init = (src.match(/DaimondMail\.init\(\{([\s\S]*?)\n\t\t\t\}\);/) || [])[1] || '';
 	assert.match(init, /\n\t\t\t\treadBytes:\s+readRawBytes,/, 'DaimondMail.init is given it as readBytes');
 });

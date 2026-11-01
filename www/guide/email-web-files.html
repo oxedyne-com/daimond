@@ -41,19 +41,17 @@
 	<h1>Files, email &amp; the web</h1>
 
 	<h2 id="s1">The Workspace</h2>
-	<p>The <span class="ui">Workspace</span> panel shows your files as an ordinary tree. Three chips at the top name where the workspace lives.</p>
+	<p>The <span class="ui">Workspace</span> panel shows your files as an ordinary tree. Two chips at the top name the places a workspace involves.</p>
 	<ul>
-		<li><span class="ui">Browser</span> is this browser's own private storage, reachable by nothing outside Daimond. It is the default, and it syncs to your other devices.</li>
-		<li><span class="ui">Machine</span> is a real folder on this computer's disk. Daimond works in it directly, so the same files are in your file manager. It stays on that computer, and travels only if you share it with the <span class="ui">⇄</span> control. Chromium-based browsers only.</li>
-		<li><span class="ui">Cloud</span> is where the bytes are kept, which is what lets a workspace be larger than the device holding it. It is not a third place to work. Files are encrypted before they leave.</li>
+		<li><span class="ui">Browser</span> is this browser's own private storage, reachable by nothing outside Daimond. It is where a workspace lives, and it syncs to your other devices.</li>
+		<li><span class="ui">Cloud</span> is where the bytes are kept, which is what lets a workspace be larger than the device holding it. It is not a second place to work. Files are encrypted before they leave.</li>
 	</ul>
-	<p>The folder you open as <span class="ui">Machine</span> is the whole of what Daimond can see, with nothing above it and nothing beside it.</p>
+	<p>The browser does not open a folder on your computer's disk. To work on a folder of your own, run Kimberlite on that computer. A browser that once had a folder open says once that it no longer does, and nothing in the workspace is lost.</p>
 
 	<h3 id="s2">Getting a file in</h3>
 	<ul>
 		<li><strong>Upload files</strong>, the arrow-into-tray in the header, takes one file or a handful.</li>
 		<li><strong>Import a folder&hellip;</strong> copies a folder in, after which it syncs like everything else.</li>
-		<li><strong>Open a real folder</strong> with the <span class="ui">Machine</span> chip. Nothing is copied, and it syncs only if you share it.</li>
 	</ul>
 	<p>Mail arrives here as ordinary files, and a daimon writes here where it is allowed to.</p>
 
@@ -82,12 +80,10 @@
 	<p>Anything a daimon attached for itself, such as a fold's harvest or a file an agent kept, sits under one collapsed heading, <span class="ui">Added by the daimon</span>, with a count and a <span class="ui">Drop all</span>. Your own attachments stay where they are.</p>
 
 	<h3 id="s7">Added folders and your other devices</h3>
-	<p>Adding a folder or a file to a diamond, or a folder to a chat&rsquo;s workspace, syncs to your other devices, but it does not take effect there until you press it again on that device. Open the same diamond on a second device and a folder added elsewhere reads as not yet in use here, with <span class="ui">Use here</span> to start using it there, or <span class="ui">Use all here</span> for everything not yet in use at once. Removing a folder reaches every device on its own; starting to use one does not, so an added folder is in use only on a device where it was added or pressed again. After this update, a machine folder you added can ask for one press again: a shared one needs <span class="ui">Use here</span> and then ⇄ once more, and a folder in a chat&rsquo;s workspace or one attached with <span class="ui">Read</span> needs pressing again too. The folder Neil added for this guide can ask for that same press once too, where it was first set up with a machine folder open.</p>
+	<p>Adding a folder or a file to a diamond, or a folder to a chat&rsquo;s workspace, syncs to your other devices, but it does not take effect there until you press it again on that device. Open the same diamond on a second device and a folder added elsewhere reads as not yet in use here, with <span class="ui">Use here</span> to start using it there, or <span class="ui">Use all here</span> for everything not yet in use at once. Removing a folder reaches every device on its own; starting to use one does not, so an added folder is in use only on a device where it was added or pressed again.</p>
 
 	<h3 id="s8">Sharing a folder to your other devices</h3>
-	<p>A <span class="ui">Machine</span> folder lives on one computer, and your phone cannot open it. The <span class="ui">⇄</span> control on the row is how it reaches one anyway, with <span class="ui">Share with devices that lack native access</span>.</p>
-	<p>Off, only devices that can open the folder themselves see it. On, it is copied to your other devices, up to <strong>200&nbsp;MiB</strong> per folder. The setting is per folder, whichever device you set it from, and only a device that can open the folder can set it.</p>
-	<p>A folder over the ceiling is left out whole, and a banner says which one and what it weighed. Share a smaller folder, or take some of it out.</p>
+	<p>A folder in the browser's own storage reaches your other devices on its own, so there is nothing to share by hand. A folder on your computer's disk is Kimberlite's to work on, and stays on that computer.</p>
 
 	<h2 id="s9">Documents, and books</h2>
 	<p>Open a <code>.typ</code> file and the Doc panel gains two buttons. <span class="ui">Compile</span> lays the document out in the page and writes a preview PDF beside the source, and while those pages are up, every save rebuilds them. Press it on a chapter and it compiles the document that includes the chapter, then takes you to that chapter's page.</p>

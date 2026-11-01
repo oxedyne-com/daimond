@@ -41,19 +41,17 @@
 	<h1>Fichiers, e-mail &amp; le web</h1>
 
 	<h2 id="s1">L’Espace de travail</h2>
-	<p>Le bouton <span class="ui">Espace</span> montre vos fichiers comme une arborescence ordinaire. Trois puces en haut nomment où vit l’espace de travail.</p>
+	<p>Le bouton <span class="ui">Espace</span> affiche vos fichiers sous forme d’arbre ordinaire. Deux puces en haut nomment les lieux qu’implique un espace de travail.</p>
 	<ul>
-		<li><span class="ui">Navigateur</span> est le stockage privé propre à ce navigateur, inaccessible à tout ce qui est hors de Daimond. C’est le réglage par défaut, et il se synchronise vers vos autres appareils.</li>
-		<li><span class="ui">Machine</span> est un vrai dossier sur le disque de cet ordinateur. Daimond y travaille directement, si bien que les mêmes fichiers sont dans votre gestionnaire de fichiers. Il reste sur cet ordinateur, et ne voyage que si vous le partagez avec le <span class="ui">⇄</span> contrôle. Navigateurs à base de Chromium seulement.</li>
-		<li><span class="ui">Cloud</span> est là où les octets sont gardés, ce qui permet à un espace de travail d’être plus grand que l’appareil qui le détient. Ce n’est pas un troisième endroit où travailler. Les fichiers sont chiffrés avant de partir.</li>
+		<li><span class="ui">Navigateur</span> est le stockage privé de ce navigateur, que rien hors de Daimond ne peut atteindre. C’est là que vit un espace de travail, et il se synchronise avec vos autres appareils.</li>
+		<li><span class="ui">Cloud</span> est l’endroit où les octets sont conservés, ce qui permet à un espace de travail d’être plus grand que l’appareil qui le contient. Ce n’est pas un second lieu de travail. Les fichiers sont chiffrés avant de partir.</li>
 	</ul>
-	<p>Le dossier que vous ouvrez comme <span class="ui">Machine</span> est la totalité de ce que Daimond peut voir, sans rien au-dessus et rien à côté.</p>
+	<p>Le navigateur n’ouvre pas de dossier sur le disque de votre ordinateur. Pour travailler sur un dossier à vous, lancez Kimberlite sur cet ordinateur. Un navigateur qui avait autrefois un dossier ouvert le signale une fois, et rien n’est perdu dans l’espace de travail.</p>
 
 	<h3 id="s2">Faire entrer un fichier</h3>
 	<ul>
 		<li><strong>Téléverser des fichiers</strong>, la flèche vers le plateau dans l’en-tête, prend un fichier ou une poignée.</li>
 		<li><strong>Importer un dossier&hellip;</strong> copie un dossier, après quoi il se synchronise comme tout le reste.</li>
-		<li><strong>Ouvrir un vrai dossier</strong> avec la puce <span class="ui">Machine</span> . Rien n’est copié, et il se synchronise seulement si vous le partagez.</li>
 	</ul>
 	<p>Le courrier arrive ici comme des fichiers ordinaires, et un daimon y écrit là où il en a la permission.</p>
 
@@ -63,7 +61,7 @@
 	<p>Un daimon est informé clairement quand un fichier qu’il veut est dans le cloud, et doit le récupérer délibérément. Un plafond limite ce qu’il peut redescendre de lui-même.</p>
 
 	<h2 id="s4">Confier un dossier</h2>
-	<p>Chaque ligne de l’arbre porte un <span class="ui">◈</span> et un <span class="ui">⋯</span>. Le ◈ ajoute le fichier ou le dossier à ce qui est en focus, ou l’en retire, et le ⋯ dit la même chose en mots : <span class="ui">Ajouter à</span> le diamond par son nom, ou <span class="ui">Ajouter à cette discussion</span>, et <span class="ui">Retirer de</span> une fois qu’il y est. Sur un ordinateur, les deux apparaissent quand le pointeur passe sur la ligne ; sur un téléphone, le ◈ est toujours affiché et un appui long ouvre le ⋯. Un nouveau diamond commence vide, et sa liste <span class="ui">Peut modifier</span> dit d’où ajouter.</p>
+	<p>Every row in the tree has a <span class="ui">◈</span> and a <span class="ui">⋯</span>. The ◈ adds the file or folder to what is in focus, or takes it out, and the ⋯ says the same in words: <span class="ui">Add to</span> the diamond by name, or <span class="ui">Add to this chat</span>, and <span class="ui">Remove from</span> once it is in. On a computer both appear when the pointer is over the row; on a phone the ◈ is always drawn and a long press opens the ⋯. A new diamond starts with nothing added, and its <span class="ui">Can change</span> list says where to add from.</p>
 	<ul>
 		<li><strong>Un diamond est en focus.</strong> Le fichier ou le dossier rejoint l’espace de travail de ce diamond et y reste jusqu’à ce que vous l’enleviez.</li>
 		<li><strong>Un chat est en focus.</strong> La pièce jointe est pour le prochain tour seulement.</li>
@@ -82,12 +80,10 @@
 	<p>Tout ce qu’un daimon a joint pour lui-même, comme la récolte d’un repliage ou un fichier qu’un agent a gardé, se tient sous un même en-tête replié, <span class="ui">Ajouté par le daimon</span>, avec un compte et un <span class="ui">Tout retirer</span>. Vos propres pièces jointes restent où elles sont.</p>
 
 	<h3 id="s7">Dossiers ajoutés et vos autres appareils</h3>
-	<p>Ajouter un dossier ou un fichier à un diamond, ou un dossier à l’espace de travail d’un chat, se synchronise avec vos autres appareils, mais n’y prend effet qu’une fois que vous appuyez de nouveau sur cet appareil. Ouvrez le même diamond sur un deuxième appareil et un dossier ajouté ailleurs s’affiche comme pas encore utilisé ici, avec <span class="ui">Utiliser ici</span> pour commencer à l’utiliser là, ou <span class="ui">Tout utiliser ici</span> pour tout ce qui n’est pas encore utilisé, en une fois. Retirer un dossier atteint chaque appareil de lui-même ; commencer à l’utiliser non, donc un dossier ajouté n’est utilisé que sur un appareil où il a été ajouté ou validé de nouveau. Après cette mise à jour, un dossier de la machine que vous avez ajouté peut redemander un appui : un dossier partagé demande <span class="ui">Utiliser ici</span> puis ⇄ une fois de plus, et un dossier de l’espace de travail d’un chat ou un dossier joint avec <span class="ui">Lire</span> demande lui aussi un nouvel appui. Le dossier que Neil a ajouté pour ce guide peut demander ce même appui une fois, là où il a d’abord été configuré avec un dossier de la machine ouvert.</p>
+	<p>Ajouter un dossier ou un fichier à un diamond, ou un dossier à l’espace de travail d’un chat, se synchronise avec vos autres appareils, mais n’y prend effet qu’une fois que vous appuyez de nouveau sur cet appareil. Ouvrez le même diamond sur un deuxième appareil et un dossier ajouté ailleurs s’affiche comme pas encore utilisé ici, avec <span class="ui">Utiliser ici</span> pour commencer à l’utiliser là, ou <span class="ui">Tout utiliser ici</span> pour tout ce qui n’est pas encore utilisé, en une fois. Retirer un dossier atteint chaque appareil de lui-même ; commencer à l’utiliser non, donc un dossier ajouté n’est utilisé que sur un appareil où il a été ajouté ou validé de nouveau.</p>
 
 	<h3 id="s8">Partager un dossier vers vos autres appareils</h3>
-	<p>Un dossier <span class="ui">Machine</span> vit sur un ordinateur, et votre téléphone ne peut pas l’ouvrir. Le <span class="ui">⇄</span> contrôle sur la ligne est comment il en atteint un quand même, avec <span class="ui">Partager avec les appareils sans accès natif</span>.</p>
-	<p>Désactivé, seuls les appareils qui peuvent ouvrir le dossier eux-mêmes le voient. Activé, il est copié vers vos autres appareils, jusqu’à <strong>200&nbsp;Mio</strong> par dossier. Le réglage est par dossier, quel que soit l’appareil depuis lequel vous le réglez, et seul un appareil qui peut ouvrir le dossier peut le régler.</p>
-	<p>Un dossier au-dessus du plafond est laissé de côté en entier, et une bannière dit lequel et combien il pesait. Partagez un dossier plus petit, ou retirez-en une partie.</p>
+	<p>Un dossier dans le stockage propre du navigateur atteint vos autres appareils de lui-même, il n’y a donc rien à partager à la main. Un dossier sur le disque de votre ordinateur relève de Kimberlite et reste sur cet ordinateur.</p>
 
 	<h2 id="s9">Documents, et livres</h2>
 	<p>Ouvrez un <code>.typ</code> fichier et le panneau Doc gagne deux boutons. <span class="ui">Compiler</span> met le document en page et écrit un PDF d’aperçu à côté de la source, et tant que ces pages sont affichées, chaque enregistrement les reconstruit. Appuyez dessus sur un chapitre et cela compile le document qui inclut le chapitre, puis vous mène à la page de ce chapitre.</p>
@@ -98,6 +94,7 @@
 	<h2 id="s10">N’importe quel type de fichier</h2>
 	<p>N’importe quel fichier est stocké et voyage, jusqu’à un gigaoctet chacun. Un document ou une feuille de calcul s’ouvre comme une <strong>vue de lecture</strong>, qui montre ce qu’il dit et non comment il s’imprime. Les valeurs sont telles que stockées, les formules ne sont pas recalculées, et les macros ne sont ni exécutées ni lues. <span class="ui">Enregistrer une copie</span> en écrit une sur votre propre appareil et laisse le fichier ici intact.</p>
 	<p>Là où rien ne reconnaît un fichier, ses octets sont montrés, et le panneau le dit.</p>
+	<p>A scan or picture saved as BMP, TIFF, HEIC or ICO is turned into a PNG or JPEG as it is opened, so a daimon can look at it, read the text in it, or place it in a document, with nothing to convert first. The text is read from every page of a TIFF that has several; looking at one shows its first page.</p>
 
 	<h2 id="s11">E-mail</h2>
 	<p>Un navigateur ne peut pas ouvrir une connexion de courrier, si bien que Daimond se connecte par la passerelle, qui rend le message brut et oublie votre identifiant. Votre courrier est écrit dans l’espace de travail comme des fichiers ordinaires.</p>

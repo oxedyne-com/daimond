@@ -5489,15 +5489,12 @@
 	//   ask       -- the `ask` TOOL's question, with its options. Answerable
 	//                anywhere, because answering it is only sending the chat's
 	//                next message.
-	//   fsa       -- File System Access wants a click. NOT answerable remotely:
-	//                `requestPermission` needs a user gesture ON the runner, so
-	//                the tile REPORTS it and offers to run the turn here instead.
 	//   lock      -- the runner is locked (or reloaded mid-turn). Report-only.
 	//   provider  -- the model provider refused (401/402, out of credit).
 	//                Report-only; the turn is handed back.
 	// ════════════════════════════════════════════════════════════
 
-	var BLOCKER_KINDS = ['consent', 'ask', 'fsa', 'lock', 'provider', 'place', 'toolkit', 'run', 'change'];
+	var BLOCKER_KINDS = ['consent', 'ask', 'lock', 'provider', 'place', 'toolkit', 'run', 'change'];
 
 	// ── Permits: the three engine questions a hand-off routes home ──
 	//
@@ -5640,10 +5637,9 @@
 	}
 
 	/// Can a blocker of this kind be ANSWERED from another device, or only
-	/// reported there? `fsa` needs a user gesture on the runner's own page
-	/// (`requestPermission` is refused without one) and `lock`/`provider` are facts
-	/// about the runner that no answer elsewhere changes -- so those three offer
-	/// "Run here instead" and nothing that pretends to reach across.
+	/// reported there? `lock`/`provider` are facts about the runner that no answer
+	/// elsewhere changes -- so those offer "Run here instead" and nothing that
+	/// pretends to reach across.
 	function blockerAnswerable(kind) {
 		return kind === 'consent' || kind === 'ask' || permitAsk(kind);
 	}
@@ -5831,13 +5827,11 @@
 	/// recover from is handed back instead of counting as a silent crash.
 	///
 	/// A genuine crash is deliberately left to expire (the relay keeps the errand
-	/// and the phone reclaims), but three failures are not crashes and the old
+	/// and the phone reclaims), but some failures are not crashes and the old
 	/// reading of them cost the originator the whole deadline:
 	///   'provider'  -- the model provider refused the key or the credit (401, 402,
 	///                  "insufficient credits"). Re-running on this device would
 	///                  refuse identically, so there is nothing to wait for.
-	///   'fsa'       -- the folder grant was withdrawn or declined. Another device
-	///                  may well hold its own grant, so hand it back at once.
 	///   'lock'      -- Daimond locked under the turn; nothing can be sealed.
 	/// Anything else is `null`: unchanged behaviour, the errand stays on the relay.
 	function runnerErrorKind(err) {
@@ -5851,7 +5845,6 @@
 		if (/\b(401|402)\b/.test(msg)) return 'provider';
 		if (/insufficient\s+credit|out\s+of\s+credit|no\s+credit\s+remaining/i.test(msg)) return 'provider';
 		if (/invalid\s+api\s+key|unauthori[sz]ed|api\s+key\s+(is\s+)?(missing|invalid)/i.test(msg)) return 'provider';
-		if (/permission\s+(was\s+)?(not\s+granted|denied)|folder\s+access|lost\s+access\s+to\s+the\s+folder/i.test(msg)) return 'fsa';
 		if (/\bis\s+locked\b|Daimond\s+is\s+locked/i.test(msg)) return 'lock';
 		return null;
 	}
@@ -5867,8 +5860,6 @@
 		var who = String(name || '') || 'the other device';
 		if (kind === 'provider') return 'The AI provider refused the turn on ' + who
 			+ ' -- its key or its credit. Nothing was spent; run it here or top up.';
-		if (kind === 'fsa')      return who + ' no longer has access to the folder this turn needs, '
-			+ 'so it handed the turn back.';
 		if (kind === 'lock')     return who + ' locked while this turn was running, so it handed the turn back.';
 		return 'The turn stopped on ' + who + ' and was handed back.';
 	}

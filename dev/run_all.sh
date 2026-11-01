@@ -43,6 +43,9 @@
 [ "${RUN_ALL_FUNCTIONS_ONLY:-}" = 1 ] || bash "$(dirname "$0")/predeploy_guard.sh" run_all.sh "$@" || exit $?	# first: deploy first, refused (41) on code that is not live (D-20261023-04)
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT=$(pwd)
+# The folder-grant model is going (D-20261031-11): its count is shown on every run while G1-G3 remove it.
+# G4 makes it blocking: drop the `|| true` once dev/grant_gone.sh reads 0 at head.
+[ "${RUN_ALL_FUNCTIONS_ONLY:-}" = 1 ] || GRANT_GONE_SHOW=0 bash dev/grant_gone.sh || true
 
 # Scratch root for logs, profiles and artefacts.  NOT /tmp: it is a tmpfs, so
 # leftovers there are RAM charged to the agent fleet's cgroup, reclaimable only

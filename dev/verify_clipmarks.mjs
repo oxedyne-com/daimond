@@ -43,11 +43,11 @@
 //
 // Exits 1 unless every check passed AND there were exactly EXPECTED of them, so a check
 // that silently fell away fails the run too.
-import { open, newChat, chat, scratch, storedChats, standInFolders, workMenu, pressRowMark } from './harness.mjs';
+import { open, newChat, chat, scratch, storedChats, workMenu, pressRowMark } from './harness.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const J = (x) => JSON.stringify(x);
-const EXPECTED = 58;
+const EXPECTED = 47;	// 58 before G5 cut M4's folder arms, item 4 and item 6
 
 const ok = [], bad = [];
 function check(name, cond, detail) {
@@ -376,13 +376,12 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// Session C: the seeds, in the browser and in a machine folder. M4.
+// Session C: the seeds, in the browser. M4.
 // ════════════════════════════════════════════════════════════════════════
 {
 	const s = await open({ name: 'r5c', defaults: true, profile: scratch('pw', 'r5c-' + process.pid) });
 	const p = s.page;
 	const HELP = '0da1000000e1';
-	let folders = null;
 	try {
 		let seeded = false;
 		for (let i = 0; i < 40 && !seeded; i++) {
@@ -395,65 +394,8 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		const b0 = await p.evaluate((h) => DaimondDiamond.bounds(h), HELP);
 		check('M4. control: in the browser workspace Help reads its guide with no press',
 			seeded && (b0.read_only || []).includes('system/guide') && !(b0.unconfirmed || []).includes('system/guide'), J({ seeded, b0 }));
-		folders = await standInFolders(s, { tag: 'r5m4', name: 'usr', which: ['a'], dirs: ['system'] });
-		const pk = await folders.pick('a');
-		// A Help row naming this machine folder: what the seeding wrote on a device that
-		// booted with the folder open, or what a sync or a forged parcel brings.
-		const onDisk = await p.evaluate(() => DaimondAttach.ref('dir', 'system/guide'));
-		await p.evaluate(async ({ h, ref }) => {
-			await DaimondCore.diamondApp().add_link(h, 'diamond:' + h, ref, 'consulted', '', 'user');
-			document.dispatchEvent(new CustomEvent('daimond-links-changed'));
-		}, { h: HELP, ref: onDisk });
-		await sleep(600);
-		const m1 = await p.evaluate(async ({ h, ref }) => ({
-			root: DaimondAttach.root(),
-			f: await DaimondAttach.inForce(h, ref),
-			b: await DaimondDiamond.bounds(h),
-		}), { h: HELP, ref: onDisk });
-		check('M4. control: a machine folder called usr is open', pk.landed && /^machine:usr#[0-9a-f]{32}$/.test(m1.root)
-			&& /^dir:\[machine:usr@[0-9a-f]+\]system\/guide$/.test(onDisk), J({ pk, root: m1.root, onDisk }));
-		check('M4. there, a Help row naming the folder grants nothing with no press',
-			!m1.f && !(m1.b.attached || []).includes('system/guide') && !(m1.b.read_only || []).includes('system/guide'), J(m1));
-		check('M4. it waits for "Use here", and the daimon is told so', (m1.b.unconfirmed || []).includes('system/guide'), J(m1.b));
-		const m2 = await p.evaluate(async ({ h, ref }) => {
-			const c = await DaimondAttach.confirmHere(h, ref);
-			return { c, f: await DaimondAttach.inForce(h, ref), b: await DaimondDiamond.bounds(h) };
-		}, { h: HELP, ref: onDisk });
-		check('M4. pressed here, it is in force read-only in this folder', !!m2.f && m2.f.rel === 'consulted' && m2.f.share === false
-			&& (m2.b.read_only || []).includes('system/guide'), J(m2));
-		const m3 = await p.evaluate((h) => DaimondAttach.inForce(h, 'dir:[browser]system/guide'), HELP);
-		check('M4. control: the browser seed row grants nothing in the machine folder', !m3, J(m3));
-
-		// ── item 4 (M2-R2-1): Forget drops this device's marks at once ────
-		//
-		// A second Diamond's mark, pressed in this same machine folder, so Forget's
-		// effect is seen on a row `showMachineInfo` never touches directly.
-		const d4 = await p.evaluate(() => DaimondCore.diamondApp().create_diamond('Forget probe'));
-		const fref = await p.evaluate(() => DaimondAttach.ref('dir', 'system'));
-		await p.evaluate(async ({ id, ref }) => {
-			await DaimondCore.diamondApp().add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
-			document.dispatchEvent(new CustomEvent('daimond-links-changed'));
-			await DaimondAttach.confirmHere(id, ref);
-		}, { id: d4, ref: fref });
-		await sleep(600);
-		const before4 = await p.evaluate(async ({ id, ref }) => ({
-			f: await DaimondAttach.inForce(id, ref),
-			b: await DaimondDiamond.bounds(id),
-		}), { id: d4, ref: fref });
-		check('item4. control: a second Diamond\'s mark is in force in this machine folder',
-			!!before4.f && (before4.b.attached || []).includes('system'), J(before4));
-		// Forget is in the head ⋯ while a folder is open (Workspace round 2 P4).
-		await showWork(p);
-		const sawForget = await workMenu(p, 'head', 'forget');
-		await sleep(1000);
-		const after4 = await p.evaluate(async ({ id, ref }) => ({
-			f: await DaimondAttach.inForce(id, ref),
-			b: await DaimondDiamond.bounds(id),
-		}), { id: d4, ref: fref });
-		check('item4 (M2-R2-1). Forget drops this device\'s mark at once, with no reload',
-			sawForget && !after4.f && !(after4.b.attached || []).includes('system'), J({ sawForget, after4 }));
+		// M4's machine-folder arms and item 4 (Forget) went with the browser Machine folder (G5).
 	} catch (e) { check('session C ran to the end', false, e && e.stack); }
-	if (folders) await folders.tidy();
 	await s.browser.close().catch(() => {});
 }
 
@@ -699,62 +641,7 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 	await s.browser.close().catch(() => {});
 }
 
-// ════════════════════════════════════════════════════════════════════════
-// Session G: item 6 -- the guide mirror and the usage digest are the app's
-// own store, never the folder that happens to be open when they are seeded.
-// ════════════════════════════════════════════════════════════════════════
-{
-	const s = await open({ name: 'r5g', defaults: false, profile: scratch('pw', 'r5g-' + process.pid) });
-	const p = s.page;
-	const HELP = '0da1000000e1';
-	let folders = null;
-	try {
-		folders = await standInFolders(s, { tag: 'r5item6', name: 'usr6', which: ['a'] });
-		const pk = await folders.pick('a');
-		check('item6. control: a machine folder is open before the account is seeded',
-			pk.landed, J(pk));
-		// Seeded with the machine folder already open -- the scenario the old
-		// `rootedRef` write would have named, and did on a device that booted with
-		// a folder open. `open({ defaults: false })` seeds on the ordinary boot and
-		// then DELETES the two Diamonds, marking them offered so they never return
-		// -- the flag that marker sets is cleared here so this seeding is a fresh
-		// first offer, now that a folder is open.
-		await p.evaluate(() => { try { localStorage.removeItem('daimond-defaults-seeded-2'); } catch (e) {} });
-		await p.evaluate(() => window.DaimondDiamond.seedDefaults());
-		let seeded = false, row = null;
-		for (let i = 0; i < 40 && !seeded; i++) {
-			row = await p.evaluate(async (h) => {
-				const rows = JSON.parse(await DaimondCore.diamondApp().links_touching('diamond:' + h) || '[]');
-				return rows.find((l) => /system\/guide$/.test(l.to)) || null;
-			}, HELP);
-			seeded = !!row;
-			if (!seeded) await sleep(500);
-		}
-		check('item6. the seed grant always names the browser workspace, whatever was open',
-			seeded && row.to === 'dir:[browser]system/guide', J(row));
-		// The mirror and the digest landed in the app's OWN store...
-		const inStore = await p.evaluate(async () => {
-			const m = await import('/pkg/oxedyne_daimond.js');
-			const guide = String(await m.store_list('system/guide') || '');
-			const usage = String(await m.store_list('system/usage') || '');
-			return { guide: guide.split('\n').filter(Boolean).length, usage: usage.split('\n').filter(Boolean).length };
-		});
-		check('item6. the guide mirror and the usage digest are in the app\'s own store',
-			inStore.guide > 0 && inStore.usage > 0, J(inStore));
-		// ...and NOT on the stand-in "disk" the machine folder was open on.
-		const onDisk = await p.evaluate(async ({ tag, name }) => {
-			const root = await navigator.storage.getDirectory();
-			const top = await (await root.getDirectoryHandle(tag + '-a')).getDirectoryHandle(name);
-			const names = [];
-			for await (const [n] of top.entries()) names.push(n);
-			return names;
-		}, { tag: 'r5item6', name: 'usr6' });
-		check('item6. nothing was written into the folder that happened to be open',
-			!onDisk.includes('system'), J(onDisk));
-	} catch (e) { check('session G ran to the end', false, e && e.stack); }
-	if (folders) await folders.tidy();
-	await s.browser.close().catch(() => {});
-}
+// Session G (item 6: the seeds never land in an open folder) went with the browser Machine folder (G5).
 
 console.log(`\n${ok.length} passed, ${bad.length} failed (${ok.length + bad.length} of ${EXPECTED} expected)`);
 if (bad.length) console.log('FAILED:\n  ' + bad.join('\n  '));

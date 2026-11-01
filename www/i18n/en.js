@@ -471,15 +471,6 @@
 	'astat.store_of':            '{used} of {quota} this browser allows.',
 	'astat.store_persistent':    'Marked persistent, so the browser will not evict it.',
 	'astat.store_evictable':     'Ask the browser to keep this',
-	'astat.not_connected':       'not connected',
-	'astat.native_help':         'Use a folder on this computer',
-	'astat.n_files':             '{n} files',
-	'astat.counting':            'Counting. Click to stop.',
-	'astat.part':                '(part)',
-	'astat.counted':             '{n} files under {folder}.',
-	'astat.counted_partial':     '{n} files under {folder}, counted until you stopped it.',
-	'astat.count_again':         'Click to count again.',
-	'astat.count_offer':         'Count files (may take a while)',
 
 	// ── Pro, in its own words ──────────────────────────────────
 	// Pro is a FIVE-YEAR licence, not a perpetual one: it gates sync, cloud
@@ -1784,8 +1775,6 @@
 	'work.file': 'File',
 	'work.folder': 'Folder',
 	'work.upload_menu': 'Upload…',
-	'work.open_machine': 'Open a folder on this computer…',
-	'work.use_browser': 'Use browser files',
 	'work.cloud': 'Cloud storage…',
 	'work.hidden': 'Show hidden files',
 	'work.kits': 'Toolchains…',
@@ -2704,8 +2693,6 @@
 	'turn.block_consent_named': '{name} needs your permission to {act}.',
 	'turn.block_ask':          'Your other device is asking: {q}',
 	'turn.block_ask_named':    '{name} is asking: {q}',
-	'turn.block_fsa':          'Your other device needs a click to grant folder access.',
-	'turn.block_fsa_named':    '{name} needs a click to grant folder access.',
 	'turn.block_lock':         'Your other device is locked.',
 	'turn.block_lock_named':   '{name} is locked.',
 	'turn.block_provider':     'Your other device’s AI provider refused the turn.',
@@ -3170,20 +3157,14 @@
 	'files.hold_add': 'Keep this file with {name}',
 	'files.hold_drop': 'Stop keeping this file with {name}',
 	'files.mode_browser': 'Browser',
-	'files.browser_switch': 'Switch the agent back to the private in-browser workspace.',
+	'files.folder_retired': 'This browser no longer works in a folder on this computer. Your files there are untouched: reach them through Kimberlite, or work on the diamond’s synced files.',
 	'files.refreshed': 'Refreshed.',
-	'files.machine_pick': 'A folder on this computer; does not sync.',
-	'files.machine_reconnect': 'Reconnect {name}',
 	'files.import_folder': 'Import a Folder…',
 	'files.import_folder_help': 'Copy a folder in',
 	'files.save_copy': 'Save a Copy…',
 	'files.save_copy_help': 'Save a copy to this computer',
 	'files.delete':          'Delete',
 	'files.rename_move':     'Rename or move',
-	'files.switch_busy_title': 'Change folder?',
-	'files.switch_busy': 'Working in this folder: {names}. Changing it stops them.',
-	'files.stop_and_change': 'Stop and change',
-	'files.still_stopping': 'Still stopping. Try again in a moment.',
 	'files.add_to': 'Add to {name}',
 	'files.remove_from': 'Remove from {name}',
 	'files.add_to_diamond': 'Add to this Diamond',
@@ -3282,22 +3263,15 @@
 	// disk. The Machine chip used to do both, so a user who had gone to the sandbox and back was
 	// shown the folder picker every time -- and had no way to state the root's scope, which is the
 	// one thing they most need to know before pointing an agent at a directory.
-	'files.forget_root':      'Forget this folder',
-	'files.forget_root_help': 'Stops offering this folder; nothing about it is kept.',
-	'files.root_forgotten':   'Forgotten. Daimond no longer holds a record of that folder.',
 
 	// Diamond files an earlier build left in a folder, brought back into Daimond's own storage.
 	// Said out loud rather than done quietly: files moved, and the copies in the user's project
 	// are still there for them to delete when they are satisfied.
 	'files.adopted_title.one':   'A diamond was brought back',
 	'files.adopted_title.other': '{n} diamonds were brought back',
-	'files.adopted_body':        'Daimond found its own files in this folder and copied them back into its own storage, where they sync: {names}. The copies were left where they are, under diamonds/; delete them once you are satisfied.',
-	'files.adopted_kept':        'These differed from what Daimond already held, so both copies were kept:\n{paths}',
 	// And what did not come back. The copy runs under a budget, and a file past it is
 	// left where it is — which the user has to be told, or a Diamond arrives missing a
 	// part of itself and looks whole.
-	'files.adopt_left_title':    'Some files stayed in the folder',
-	'files.adopted_skipped':     'These were not copied, being over 8 MiB or unreadable, so a diamond that needs one is here without it, or not here at all:\n{paths}',
 
 	// ── The file viewer ────────────────────────────────────────
 	// A file is shown as what it IS: decoded where the browser can decode it,

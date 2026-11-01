@@ -41,19 +41,17 @@
 	<h1>Dateien, E-Mail &amp; das Web</h1>
 
 	<h2 id="s1">Der Arbeitsbereich</h2>
-	<p>Die Schaltfläche <span class="ui">Workspace</span> -Panel zeigt Ihre Dateien als gewöhnlichen Baum. Drei Chips oben benennen, wo der Arbeitsbereich liegt.</p>
+	<p>Die Schaltfläche <span class="ui">Workspace</span> zeigt Ihre Dateien als gewöhnlichen Baum. Zwei Chips oben nennen die Orte, an denen ein Arbeitsbereich liegt.</p>
 	<ul>
-		<li><span class="ui">Browser</span> ist der eigene private Speicher dieses Browsers, für nichts außerhalb von Daimond erreichbar. Das ist der Standard, und er synchronisiert zu Ihren anderen Geräten.</li>
-		<li><span class="ui">Rechner</span> ist ein echter Ordner auf der Platte dieses Rechners. Daimond arbeitet direkt darin, dieselben Dateien liegen also in Ihrem Dateimanager. Er bleibt auf diesem Rechner und reist nur, wenn Sie ihn mit der <span class="ui">⇄</span> -Kontrolle teilen. Nur in Browsern auf Chromium-Basis.</li>
-		<li><span class="ui">Cloud</span> ist, wo die Bytes aufbewahrt werden — das lässt einen Arbeitsbereich größer sein als das Gerät, das ihn hält. Es ist kein dritter Ort zum Arbeiten. Dateien werden verschlüsselt, bevor sie hinausgehen.</li>
+		<li><span class="ui">Browser</span> ist der eigene private Speicher dieses Browsers, für nichts außerhalb von Daimond erreichbar. Dort liegt ein Arbeitsbereich, und er wird mit Ihren anderen Geräten synchronisiert.</li>
+		<li><span class="ui">Cloud</span> ist der Ort, an dem die Bytes aufbewahrt werden, und erlaubt einem Arbeitsbereich, größer zu sein als das Gerät, das ihn hält. Es ist kein zweiter Ort zum Arbeiten. Dateien werden verschlüsselt, bevor sie das Gerät verlassen.</li>
 	</ul>
-	<p>Der Ordner, den Sie öffnen als <span class="ui">Rechner</span> ist alles, was Daimond sehen kann, nichts darüber und nichts daneben.</p>
+	<p>Der Browser öffnet keinen Ordner auf der Festplatte Ihres Computers. Um an einem eigenen Ordner zu arbeiten, führen Sie Kimberlite auf diesem Computer aus. Ein Browser, der früher einen Ordner geöffnet hatte, sagt einmal, dass er das nicht mehr tut, und im Arbeitsbereich geht nichts verloren.</p>
 
 	<h3 id="s2">Eine Datei hineinbekommen</h3>
 	<ul>
 		<li><strong>Dateien hochladen</strong>, der Pfeil in die Ablage in der Kopfzeile, nimmt eine Datei oder eine Handvoll.</li>
 		<li><strong>Einen Ordner importieren&hellip;</strong> kopiert einen Ordner herein; danach synchronisiert er wie alles andere.</li>
-		<li><strong>Einen echten Ordner öffnen</strong> mit der <span class="ui">Rechner</span> -Chip. Es wird nichts kopiert, und es synchronisiert nur, wenn Sie ihn teilen.</li>
 	</ul>
 	<p>Mail kommt hier als gewöhnliche Dateien an, und ein Daimon schreibt hier, wo er darf.</p>
 
@@ -63,7 +61,7 @@
 	<p>Einem Daimon wird klar gesagt, wenn eine gewünschte Datei in der Cloud liegt, und er muss sie bewusst holen. Eine Grenze beschränkt, wie viel er von sich aus herunterholen darf.</p>
 
 	<h2 id="s4">Einen Ordner übergeben</h2>
-	<p>Jede Zeile im Baum hat ein <span class="ui">◈</span> und ein <span class="ui">⋯</span>. Das ◈ fügt die Datei oder den Ordner dem hinzu, was im Fokus ist, oder nimmt sie wieder heraus, und das ⋯ sagt dasselbe in Worten: <span class="ui">Zu</span> dem Diamond mit seinem Namen <span class="ui">hinzufügen</span> oder <span class="ui">Zu diesem Chat hinzufügen</span>, und <span class="ui">Entfernen</span>, sobald sie drin ist. Am Computer erscheinen beide, wenn der Zeiger über der Zeile ist; am Telefon ist das ◈ immer zu sehen, und langes Drücken öffnet das ⋯. Ein neuer Diamond beginnt leer, und seine Liste <span class="ui">Darf ändern</span> sagt, wo man hinzufügt.</p>
+	<p>Every row in the tree has a <span class="ui">◈</span> and a <span class="ui">⋯</span>. The ◈ adds the file or folder to what is in focus, or takes it out, and the ⋯ says the same in words: <span class="ui">Add to</span> the diamond by name, or <span class="ui">Add to this chat</span>, and <span class="ui">Remove from</span> once it is in. On a computer both appear when the pointer is over the row; on a phone the ◈ is always drawn and a long press opens the ⋯. A new diamond starts with nothing added, and its <span class="ui">Can change</span> list says where to add from.</p>
 	<ul>
 		<li><strong>Ein Diamond ist im Fokus.</strong> Die Datei oder der Ordner tritt dem Arbeitsbereich dieses Diamond bei und bleibt, bis Sie sie herausnehmen.</li>
 		<li><strong>Ein Chat ist im Fokus.</strong> Der Anhang gilt nur für den nächsten Zug.</li>
@@ -82,12 +80,10 @@
 	<p>Alles, was ein Daimon von sich aus angehängt hat, etwa der Ertrag eines Einklappens oder eine Datei, die ein Agent behalten hat, sitzt unter einer eingeklappten Überschrift, <span class="ui">Vom Daimon hinzugefügt</span>, mit einer Zählung und einem <span class="ui">Alle entfernen</span>. Ihre eigenen Anhänge bleiben, wo sie sind.</p>
 
 	<h3 id="s7">Hinzugefügte Ordner und Ihre anderen Geräte</h3>
-	<p>Wenn Sie einem Diamond einen Ordner oder eine Datei hinzufügen, oder dem Arbeitsbereich eines Chats einen Ordner, wird das mit Ihren anderen Geräten synchronisiert, wirkt dort aber erst, wenn Sie es auf dem jeweiligen Gerät noch einmal drücken. Öffnen Sie denselben Diamond auf einem zweiten Gerät, steht ein anderswo hinzugefügter Ordner dort als hier noch nicht in Gebrauch, mit <span class="ui">Hier verwenden</span> , um ihn dort zu verwenden, oder <span class="ui">Alle hier verwenden</span> für alles, was noch nicht in Gebrauch ist, auf einmal. Das Entfernen eines Ordners erreicht jedes Gerät von selbst; das Verwenden nicht, daher ist ein hinzugefügter Ordner nur auf einem Gerät in Gebrauch, auf dem er hinzugefügt oder noch einmal gedrückt wurde. Nach diesem Update kann ein von Ihnen hinzugefügter Ordner auf diesem Rechner noch einmal einen Druck verlangen: ein geteilter braucht <span class="ui">Hier verwenden</span> und danach noch einmal ⇄, und ein Ordner im Arbeitsbereich eines Chats oder einer, der mit <span class="ui">Lesen</span> angehängt wurde, muss ebenfalls noch einmal gedrückt werden. Der Ordner, den Neil für diese Anleitung hinzugefügt hat, kann einmal denselben Druck verlangen, wenn er zuerst mit einem geöffneten Ordner auf diesem Rechner eingerichtet wurde.</p>
+	<p>Wenn Sie einem Diamond einen Ordner oder eine Datei hinzufügen, oder dem Arbeitsbereich eines Chats einen Ordner, wird das mit Ihren anderen Geräten synchronisiert, wirkt dort aber erst, wenn Sie es auf dem jeweiligen Gerät noch einmal drücken. Öffnen Sie denselben Diamond auf einem zweiten Gerät, steht ein anderswo hinzugefügter Ordner dort als hier noch nicht in Gebrauch, mit <span class="ui">Hier verwenden</span> , um ihn dort zu verwenden, oder <span class="ui">Alle hier verwenden</span> für alles, was noch nicht in Gebrauch ist, auf einmal. Das Entfernen eines Ordners erreicht jedes Gerät von selbst; das Verwenden nicht, daher ist ein hinzugefügter Ordner nur auf einem Gerät in Gebrauch, auf dem er hinzugefügt oder noch einmal gedrückt wurde.</p>
 
 	<h3 id="s8">Einen Ordner mit Ihren anderen Geräten teilen</h3>
-	<p>Ein <span class="ui">Rechner</span> -Ordner liegt auf einem Rechner, und Ihr Telefon kann ihn nicht öffnen. Die <span class="ui">⇄</span> -Kontrolle in der Zeile ist, wie er ihn trotzdem erreicht, mit <span class="ui">Mit Geräten ohne nativen Zugriff teilen</span>.</p>
-	<p>Aus, sehen ihn nur Geräte, die den Ordner selbst öffnen können. An, wird er auf Ihre anderen Geräte kopiert, bis zu <strong>200&nbsp;MiB</strong> je Ordner. Die Einstellung gilt je Ordner, gleich von welchem Gerät Sie sie setzen, und nur ein Gerät, das den Ordner öffnen kann, kann sie setzen.</p>
-	<p>Ein Ordner über der Obergrenze wird ganz ausgelassen, und ein Banner sagt, welcher und wie viel er wog. Teilen Sie einen kleineren Ordner, oder nehmen Sie etwas daraus heraus.</p>
+	<p>Ein Ordner im eigenen Speicher des Browsers erreicht Ihre anderen Geräte von selbst, es gibt also nichts von Hand zu teilen. Ein Ordner auf der Festplatte Ihres Computers ist Sache von Kimberlite und bleibt auf diesem Computer.</p>
 
 	<h2 id="s9">Dokumente und Bücher</h2>
 	<p>Öffnen Sie eine <code>.typ</code> -Datei, und das Dok-Panel bekommt zwei Schaltflächen. <span class="ui">Kompilieren</span> setzt das Dokument in der Seite und schreibt ein Vorschau-PDF neben die Quelle; solange diese Seiten offen sind, baut jedes Speichern sie neu. Drücken Sie es bei einem Kapitel, kompiliert es das Dokument, das das Kapitel enthält, und bringt Sie dann zur Seite dieses Kapitels.</p>
@@ -98,6 +94,7 @@
 	<h2 id="s10">Jede Art von Datei</h2>
 	<p>Jede Datei wird gespeichert und reist mit, bis zu einem Gigabyte je Stück. Ein Dokument oder eine Tabelle öffnet sich als <strong>Leseansicht</strong>, die zeigt, was darin steht, nicht wie es gedruckt aussieht. Werte sind, wie gespeichert, Formeln werden nicht neu berechnet, und Makros werden weder ausgeführt noch gelesen. <span class="ui">Eine Kopie speichern</span> schreibt eine auf Ihr eigenes Gerät und lässt die Datei hier unberührt.</p>
 	<p>Erkennt nichts eine Datei, werden ihre Bytes gezeigt, und das Panel sagt das.</p>
+	<p>A scan or picture saved as BMP, TIFF, HEIC or ICO is turned into a PNG or JPEG as it is opened, so a daimon can look at it, read the text in it, or place it in a document, with nothing to convert first. The text is read from every page of a TIFF that has several; looking at one shows its first page.</p>
 
 	<h2 id="s11">E-Mail</h2>
 	<p>Ein Browser kann keine Mail-Verbindung öffnen, deshalb verbindet sich Daimond über das Gateway, das die rohe Nachricht zurückgibt und Ihre Zugangsdaten vergisst. Ihre Mail wird als gewöhnliche Dateien in den Arbeitsbereich geschrieben.</p>

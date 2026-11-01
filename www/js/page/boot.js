@@ -295,13 +295,6 @@ async function boot() {
 		// that it was never installed — rather than about the command. It is
 		// written for the model, and a person watching the panel is owed it too.
 		note:    function (msg) { runLive('\n' + msg + '\n'); },
-		// The folder the user opened, so the relay can settle whether it is the
-		// folder the hand was granted (`hand/REVIEW.md` §1.14). A handle and never
-		// a path: the File System Access API gives the page no path at all, which
-		// is the whole reason the two ends compare a token in a file instead.
-		// Null on the browser sandbox, and that is an ANSWER — there is no folder
-		// for a command to run against — not a missing one.
-		folder:  function () { return Files.folder(); },
 	});
 	Files.init();
 	Workers.render();
@@ -396,9 +389,8 @@ async function boot() {
 		// the module exists. Ask again now that it does, or the rail would report the
 		// tools bought and none of the tools built in.
 		if (window.DaimondTools) DaimondTools.reload();
-		// Reconnect a previously opened real folder (silent if still
-		// granted, else a one-click reconnect offer).  Best-effort.
-		try { await Files.tryReconnect(); } catch (e) { /* stay on OPFS */ }
+		// A Machine folder handle kept by an older build is cleared, with one line (R1).
+		try { await Files.retireMachineFolder(); } catch (e) { /* the next boot tries again */ }
 	} catch (e) {
 		// No-op once `readyResolve` has already settled it; a waiter on a boot that
 		// throws before the module is usable must not hang forever.

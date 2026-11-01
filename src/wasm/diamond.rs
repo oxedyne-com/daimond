@@ -11,7 +11,6 @@ use crate::wasm::{js_prop, js_str};
 
 use oxedyne_fe2o3_core::prelude::*;
 
-use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
 
 /// Lay down a Diamond export over the Diamond it names; see [`import_diamond_pack`].
@@ -130,13 +129,3 @@ fn pack_files(val: &JsValue) -> Outcome<Vec<(String, Vec<u8>)>> {
     Ok(writes)
 }
 
-/// Bring home every Diamond the open folder is holding, as the page calls it.
-///
-/// Called from `activateFolder` in `daimond.js`, which runs on every folder activation including
-/// the silent reconnect at boot -- so a user of yesterday's build gets their stranded Diamonds back
-/// on their next page load with no action at all.  See [`adopt_from_folder`] for what it does and
-/// what it refuses to do.
-#[wasm_bindgen]
-pub async fn adopt_folder_diamonds() -> Result<String, JsValue> {
-    adopt_from_folder().await.map_err(crate::wasm::to_js_err)
-}

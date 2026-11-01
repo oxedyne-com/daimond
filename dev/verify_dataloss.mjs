@@ -7,12 +7,8 @@
 //     things produce a parcel with no files in it -- a real folder open, tools
 //     not up, a directory that would not list, a file left out for budget -- and
 //     each of them read as "the user deleted everything", account-wide. A parcel
-//     now carries `filesComplete`, and NOTHING is deleted without it.
-//     AND, since the folder began to travel (2026-09-14), that rule is no longer the
-//     right one for a folder: a file on somebody's disk has a fifth innocent reason to
-//     be missing from a parcel -- the sender was never given it, for budget or for an
-//     ignore rule. A folder file goes only on an explicit TOMBSTONE from a device that
-//     held it, and only while the bytes on disk are still those bytes (check 1d).
+//     now carries `filesComplete`, and NOTHING is deleted without it. (Its folder-mode
+//     arms, 1c, 2b and 1d, went with the browser Machine folder: G5, D-20261031-11.)
 //  2. THE CLOUD CHUNKS SWEPT BY THE SAME PUSH. A device that refused to merge
 //     the other device's chunk index (same condition) still committed its own as
 //     the account's live set, and the gateway swept every chunk it did not name.
@@ -46,7 +42,7 @@ import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, errors, scratch, signInAs, storedChats, markHere, workMenu } from './harness.mjs';
+import { open, errors, scratch, signInAs, storedChats } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const ok = [], bad = [];
@@ -315,182 +311,6 @@ check('a census truncated by the byte budget says it is INCOMPLETE',
 	budget.complete === false, `${budget.n} files carried, complete=${budget.complete}`);
 check('while still carrying the files it did read — truncation is not silence',
 	budget.n > 0, `${budget.n} files`);
-
-// ── 1c + 2b. Folder mode: the census that started all this ───────────────
-
-const folder = await p.evaluate(async () => {
-	// Stand a real folder up out of OPFS and hand it to the picker, which is the
-	// only door into folder mode. Permission is granted the way a user grants it.
-	const root = await navigator.storage.getDirectory();
-	const dir  = await root.getDirectoryHandle('picked', { create: true });
-	dir.queryPermission   = async () => 'granted';
-	dir.requestPermission = async () => 'granted';
-	window.showDirectoryPicker = async () => dir;
-	return true;
-});
-check('a folder is ready to be picked', folder === true);
-
-// Open the Workspace panel and press the head ⋯'s Open a folder on this computer.
-await p.evaluate(() => window.DaimondPanels && window.DaimondPanels.open && window.DaimondPanels.open('work'));
-await p.waitForTimeout(600);
-await workMenu(p, 'head', 'machine');
-await p.waitForTimeout(1200);
-
-const mode = await p.evaluate(async () => {
-	const mod = await import('../pkg/oxedyne_daimond.js');
-	const st  = await window.DaimondCore.collectSync();
-	return {
-		mode:     mod.workspace_mode(),
-		files:    Object.keys(st.files || {}).length,
-		complete: st.filesComplete,
-	};
-});
-check('the app is really in real-folder mode', mode.mode === 'folder', mode.mode);
-check('a device in folder mode sends no files AND says so — the parcel cannot delete',
-	mode.files === 0 && mode.complete === false,
-	`${mode.files} files, complete=${mode.complete}`);
-
-// And the same device must not declare the account's live chunk set.
-const folderPush = await pushWithStubs();
-check('a device that did not merge the chunk index does not commit one',
-	folderPush.mayCommit === false && folderPush.commits === 0,
-	`mayCommit=${folderPush.mayCommit} commits=${folderPush.commits}`);
-
-// ── 1d. A SHARED FOLDER DELETES ONLY ON A TOMBSTONE ─────────────────────
-//
-// Since 2026-09-14 a folder-mounted device shares what the user marked into a Diamond,
-// so "sends no files" above is the state of a folder NOBODY MARKED IN and no longer the
-// end of the story. The moment a folder does travel, the absence rule checked at 1a is
-// the wrong rule for it: a file on somebody's disk has a fifth innocent reason to be
-// missing from a parcel -- the sending device was never given it, for budget or for an
-// ignore rule -- and none of the five is the user asking for a deletion. So a folder file
-// goes only on an explicit tombstone from a device that HELD it, and only while the bytes
-// on disk are still the bytes that tombstone was written about.
-//
-// Driven on ONE device, because what is under test is the receiving half: the parcels are
-// crafted here and merged by the real `applySync`.
-
-const WORK = 'work';
-const NOTE  = WORK + '/note.md';
-const OTHER = WORK + '/other.md';
-const ORIGINAL = 'the other file, as it stands\n';
-
-/// Whether a path is on the mounted folder's disk right now.
-const onDisk = (path_) => p.evaluate(async (q) => {
-	const f = await window.DaimondCloud.fileUnderRoot(window.DaimondFiles.folder(), q);
-	return f ? await f.text() : null;
-}, path_);
-
-const marked = await p.evaluate(async (a) => {
-	const mod = await import('../pkg/oxedyne_daimond.js');
-	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	await app.run_tool_outcome('dir_create', JSON.stringify({ path: a.work }));
-	await app.run_tool_outcome('file_write', JSON.stringify({ path: a.note, content: 'the note\n' }));
-	await app.run_tool_outcome('file_write', JSON.stringify({ path: a.other, content: a.original }));
-	const id = await app.create_diamond('Marked');
-	// MARKED AND FLAGGED. Since 2026-09-14 the mark is the daimon's grant to READ the
-	// folder and nothing more; what travels to devices that cannot open it is what
-	// carries `share` on its attachment. The reference names this device (owner ruling,
-	// 2026-09-23), but naming it is not itself the grant any more (R2, 2026-09-24): a
-	// row is only a claim until this device's own record says it was pressed, so the
-	// fixture presses and ⇄'s it (`markHere`, from the node side, straight after) rather
-	// than relying on the reference alone, even though it is driven on the one device
-	// that made the mark.
-	const ref = window.DaimondAttach.ref('dir', a.work);
-	const linkId = await app.add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
-	return { id, linkId, ref };
-}, { work: WORK, note: NOTE, other: OTHER, original: ORIGINAL });
-await markHere(s, marked.id, marked.ref, { linkId: marked.linkId, share: true });
-Object.assign(marked, await p.evaluate(async () => {
-	await window.DaimondCore.loadDiamonds();
-	window.DaimondCore.syncClearWalkCache();
-	const share = await window.DaimondCore.syncFolderShare();
-	await window.DaimondCore.syncCommitBaseline();
-	const st = await window.DaimondCore.collectSync();
-	return { share, paths: Object.keys(st.files || {}).sort(), complete: st.filesComplete };
-}));
-check('a folder FLAGGED on a Diamond does travel, and says its census is complete',
-	marked.share.folder === true && marked.share.roots.join() === WORK
-	&& marked.paths.includes(NOTE) && marked.paths.includes(OTHER)
-	&& marked.complete === true,
-	`${marked.paths.join(' ')}, complete=${marked.complete}`);
-
-const absent = await p.evaluate(async (a) => {
-	await window.DaimondCore.applySync({ v: 3, chats: [], files: { [a.note]: 'the note\n' },
-		filesComplete: true });
-	return true;
-}, { note: NOTE });
-check('a COMPLETE census that simply lacks a folder file deletes nothing — absence is not an instruction',
-	absent === true && (await onDisk(OTHER)) === ORIGINAL,
-	(await onDisk(OTHER)) === null ? 'the file was deleted off the disk' : 'still there');
-
-// THE TOMBSTONE IS MADE THE WAY ONE REALLY IS: by deleting the file and letting the
-// census notice. Crafting the hash here would be a second implementation of the rule
-// under test, and it would agree with itself whatever the app did.
-const tomb = await p.evaluate(async (a) => {
-	const mod = await import('../pkg/oxedyne_daimond.js');
-	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	await app.run_tool_outcome('file_delete', JSON.stringify({ path: a.other }));
-	await window.DaimondCore.collectSync();
-	const t = window.DaimondCore.syncFileTombs();
-	// Put it back, changed: the bytes on disk are no longer the bytes that went.
-	await app.run_tool_outcome('file_write',
-		JSON.stringify({ path: a.other, content: a.original + 'and then edited here\n' }));
-	await window.DaimondCore.applySync({ v: 3, chats: [], files: { [a.note]: 'the note\n' },
-		filesComplete: true, fileTombs: t });
-	return { tomb: t[a.other] || '', keys: Object.keys(t).length };
-}, { other: OTHER, original: ORIGINAL, note: NOTE });
-check('deleting a file the fork point held writes a tombstone carrying the hash it held',
-	!!tomb.tomb, `${tomb.keys} tombstone(s)`);
-check('and a tombstone for bytes the disk no longer holds is NOT honoured',
-	(await onDisk(OTHER)) !== null, 'the edit was deleted by a stale tombstone');
-
-// A RESTORE OF THIS DEVICE'S OWN DELETION IS A WRITE (the one tombstone law, fix/r53-faultb3):
-// the census that sees it back says so with a return stamped past the deletion, and an older
-// page's unstamped tombstone for those bytes cannot say it came later still, so it does not
-// delete it. The collect is made here rather than left to the timer, so the check does not
-// turn on whether one happened to land between the write and the pull (QFB3-10).
-const restored = await p.evaluate(async (a) => {
-	const mod = await import('../pkg/oxedyne_daimond.js');
-	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	await app.run_tool_outcome('file_write', JSON.stringify({ path: a.other, content: a.original }));
-	window.DaimondCore.syncClearWalkCache();
-	await window.DaimondCore.collectSync();
-	const rec = window.DaimondCloud.recordOf ? window.DaimondCloud.recordOf(a.other) : null;
-	await window.DaimondCore.applySync({ v: 3, chats: [], files: { [a.note]: 'the note\n' },
-		filesComplete: true, fileTombs: { [a.other]: a.tomb } });
-	return { rec };
-}, { other: OTHER, original: ORIGINAL, note: NOTE, tomb: tomb.tomb });
-check('a restore of this device\'s own deletion is a return, and an older page\'s tombstone for those bytes does not delete it',
-	!!restored.rec && restored.rec.d === 0 && (await onDisk(OTHER)) === ORIGINAL,
-	JSON.stringify({ rec: restored.rec, disk: (await onDisk(OTHER)) === null ? 'GONE' : 'stands' }));
-
-// WHILE A DELETION STILL TRAVELS: another device's tombstone for bytes this device holds as its
-// agreed copy, and never restored, deletes it. The same bytes at a path of their own, so the
-// fingerprint is the one the census above really made, not one computed here.
-const THIRD = WORK + '/third.md';
-await p.evaluate(async (a) => {
-	const mod = await import('../pkg/oxedyne_daimond.js');
-	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	await app.run_tool_outcome('file_write', JSON.stringify({ path: a.third, content: a.original }));
-	window.DaimondCore.syncClearWalkCache();
-	await window.DaimondCore.syncCommitBaseline();
-	await window.DaimondCore.applySync({ v: 3, chats: [], files: { [a.note]: 'the note\n' },
-		filesComplete: true, fileTombs: { [a.third]: a.tomb } });
-}, { third: THIRD, original: ORIGINAL, note: NOTE, tomb: tomb.tomb });
-check('while an older page\'s tombstone for bytes held here as agreed does delete — a deletion still travels',
-	(await onDisk(THIRD)) === null, 'the agreed copy survived the tombstone for its bytes');
-check('and the file nobody deleted is untouched throughout',
-	(await onDisk(NOTE)) !== null);
-
-// Prove the parcel a folder-mode device sends is harmless on the far side, by
-// feeding it to the merge on a device that holds files.
-// Back to the sandbox the way a user goes back: the head ⋯'s Use this browser.
-await workMenu(p, 'head', 'browser');
-await p.waitForTimeout(900);
-const afterFolderParcel = await applyAndList({ v: 2, chats: [], files: {}, filesComplete: mode.complete });
-check('and merging that very parcel leaves the other device\'s workspace intact',
-	afterFolderParcel.paths.includes('keep-a.md'), afterFolderParcel.paths.slice(0, 3).join(' '));
 
 // ── 4. Clearing one conversation must not shorten another ───────────────
 //

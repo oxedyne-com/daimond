@@ -46,7 +46,7 @@
 //   node dev/verify_engineworker.mjs --reanalyse <run dir>
 import fs from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
-import { open, newChat, chat, scratch, mockLog, clearMockLog, standInFolders } from './harness.mjs';
+import { open, newChat, chat, scratch, mockLog, clearMockLog } from './harness.mjs';
 import { FIXTURE, seedFixture } from './engineworker_fixture.mjs';
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : d; };
@@ -85,20 +85,18 @@ if (ENGINE) {
 	await page.waitForFunction(() => !!window.DaimondFiles, null, { timeout: 60000 });
 }
 
-// ── The folder ─────────────────────────────────────────────────────────────────
-const { pick } = await standInFolders(s, { tag: 'engwork', which: ['a'] });
-const shape = await seedFixture(page, { tag: 'engwork', name: 'usr' });
+// ── The folder, in his agreed tree (the store) ─────────────────────────────────
+const shape = await seedFixture(page, { dir: 'engwork' });
 console.log(`fixture: ${shape.files} files (${shape.needles} carry the needle), written in ${shape.ms} ms`);
-const picked = await pick('a');
 await newChat(s);
 // The fixture is checked before anything is concluded from it: the chat's own file_list has to
 // see the tree, or every number below is the cost of searching nothing.
 clearMockLog();
-await chat(s, '@tool file_list {"path":"."}', { timeout: 60000 });
+await chat(s, '@tool file_list {"path":"engwork"}', { timeout: 60000 });
 const sees = mockLog().some((m) => (m.messages || []).some((x) => x.role === 'tool'
 	&& typeof x.content === 'string' && x.content.includes('top-00')));
-check('F1 the chat sees the granted fixture folder', picked.landed && sees,
-	`picked=${picked.how}/${picked.landed}, file_list names top-00: ${sees}`);
+check('F1 the chat sees the fixture folder', sees,
+	`file_list names top-00: ${sees}`);
 if (!sees) {
 	console.error('the turn would search a folder without the fixture in it; this run proves nothing.');
 	await s.close();
@@ -173,7 +171,7 @@ if (PROFILE) {
 }
 
 // ── The turn ──────────────────────────────────────────────────────────────────
-const SEARCH = JSON.stringify({ query: FIXTURE.needle, path: '.', fixed: true, limit: 1000 });
+const SEARCH = JSON.stringify({ query: FIXTURE.needle, path: 'engwork', fixed: true, limit: 1000 });
 const task = `@grind 200/40/25 file_search ${SEARCH}`;
 const spawns = Array.from({ length: WORKERS }, (_, i) =>
 	`spawn_agent ${JSON.stringify({ name: 'grind' + (i + 1), task })}`);

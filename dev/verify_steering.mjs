@@ -10,7 +10,7 @@
 //   ST4  a retired note is gone at the next request (and stays in the file); with none left the prompt is the default's
 //   ST5  approval-seeking lines written by hand into the file are refused and never sent anywhere; the lines around them are   [J6]
 //   ST6  a Diamond note displaces the account note on the same tag (the Diamond's daimon; an ordinary chat has no Diamond)
-//   ST7  sync: Add on A (phone), and B (desktop, a folder mounted) sends the note on its next request                           [C1, C2]
+//   ST7  sync: Add on A (phone), and B (a second desktop) sends the note on its next request                           [C1, C2]
 //   ST8  a hand-off runner on 5.3.2 composes the same block from its own synced copy                                            [P12]
 //   MIX  a 5.3.1 page (the live build, served over this world) and a 5.3.2 page on one account: the 5.3.1 page keeps every
 //        steering.md byte for byte, sends no block, and what it changes in the Diamond comes back without losing a note        [plan s.10]
@@ -28,7 +28,7 @@
 // A break whose every anchor does not match exactly once exits 2. The engine's own lint and clause order are Rust and cannot be broken
 // from here (lane V runs no cargo): each break damages the PAGE side of the same guarantee, so the wire check goes red.
 import { readPage } from './pagesrc.mjs';
-import { open, scratch, signInAs, newChat, connectMock, chat, mockLog, clearMockLog, contentText, APP, workMenu } from './harness.mjs';
+import { open, scratch, signInAs, newChat, connectMock, chat, mockLog, clearMockLog, contentText, APP } from './harness.mjs';
 import { pair, settle, send, freshChat, storedMsgs, answersFor, placeholders, until } from './handoffpair.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
@@ -287,15 +287,6 @@ const ready = (s) => s.page.waitForFunction(() => !!(window.DaimondSync && windo
 const push = (s) => s.page.evaluate(async () => { try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older */ } return window.DaimondSync.flush ? await DaimondSync.flush() : await DaimondSync.push(); }).then(() => sleep(500)).catch(() => {});
 const pull = (s) => s.page.evaluate(async () => { try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older */ } return DaimondSync.pull(); }).then(() => sleep(500)).catch(() => {});
 async function rounds(X, Y, k) { for (let i = 0; i < k; i++) { await push(X); await pull(Y); await push(Y); await pull(X); } }
-async function mount(D) {
-	await D.page.evaluate(async () => { const root = await navigator.storage.getDirectory(); const dir = await root.getDirectoryHandle('mounted', { create: true });
-		dir.queryPermission = async () => 'granted'; dir.requestPermission = async () => 'granted'; window.showDirectoryPicker = async () => dir; });
-	await D.page.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
-	await D.page.waitForTimeout(700);
-	await workMenu(D.page, 'head', 'machine');
-	await D.page.waitForTimeout(2500);
-	return D.page.evaluate(async () => { const mod = await import('/pkg/oxedyne_daimond.js'); return { mode: mod.workspace_mode(), handle: !!(window.DaimondFiles && DaimondFiles.folder()) }; });
-}
 const reqs = (text) => mockLog().filter((r) => lastUser(r).includes(text));
 let PAIR = null, ST7_BLOCK = '';
 const NOTE7 = 'Reply in plain sentences, without a heading, unless a heading is asked for.', NOTE7B = 'Name the file you changed at the end of every change.';
@@ -308,8 +299,6 @@ async function ensurePair() {
 }
 SECTIONS.ST7 = async () => {
 	const { a, b } = await ensurePair();
-	const m = await mount(b);
-	check('ST7', m.mode === 'folder' && m.handle === true, 'B is a desktop with a folder mounted and nothing flagged (a store file would not travel from it)', J(m));
 	const before = await (async () => { await freshChat(b); clearMockLog(); await chat(b, '@text st7 before'); return sysOf(reqs('st7 before').pop()); })();
 	check('ST7', before !== '' && !before.includes(STEER_HEAD), 'control: before the Add, B sends no block');
 	await addNote(a.page, { level: 3, scope: '', cm: 'all', tag: 'long', line: NOTE7, at: { t: 7, n: 20 } });
@@ -318,7 +307,7 @@ SECTIONS.ST7 = async () => {
 	await chat(b, '@text st7 after');
 	const after = sysOf(reqs('st7 after').pop());
 	ST7_BLOCK = blockOf(after);
-	check('ST7', linesOf(ST7_BLOCK).includes(NOTE7), 'Add on A: the folder-mounted B sends the note on its next request', J(linesOf(ST7_BLOCK)));
+	check('ST7', linesOf(ST7_BLOCK).includes(NOTE7), 'Add on A: B sends the note on its next request', J(linesOf(ST7_BLOCK)));
 	check('ST7', (await rd(b.page, NOTE_FILE(OPT))) === (await rd(a.page, NOTE_FILE(OPT))), 'and the file on B is A\'s, byte for byte');
 	await addNote(b.page, { level: 3, scope: '', cm: 'all', tag: 'tool', line: NOTE7B, at: { t: 3, n: 9 } });
 	await rounds(a, b, 3);

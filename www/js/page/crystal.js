@@ -4447,9 +4447,6 @@ async function runSteerHeld(f, presetArg, depthArg, detached, how, held, models)
 			hold = turnHold({ diamondId: diamondId });
 		}
 		if (hold) throw DaimondModels.pauseError(hold);
-		// The folders this device knows, as its record stands at the turn's start: the
-		// daimon's `file_revert` asks the engine which rows are another folder's (HK1).
-		await Files.reknow();
 		// The conversation goes out and comes back. It is what makes the daimon
 		// persistent, which is the whole of notes2's "the daimon is meant to be
 		// persistant": it used to build a fresh session per instruction, so it could

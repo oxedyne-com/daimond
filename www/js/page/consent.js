@@ -3410,22 +3410,6 @@ export function install() { // page-split: install
 	} catch (e) { /* no window: attention stays false, so a runner parks (fail-safe) */ }
 	// page-split: install 95
 
-	// The one door another module in this file reaches the blocker through. The Files
-	// panel is its own closure and cannot see these functions, so the FSA loss it
-	// detects arrives here by name rather than by reaching across.
-	window.DaimondHandoffBlock = {
-		/// The folder grant went away under a handed-off turn: tell every device.
-		folderLost: function () {
-			try {
-				var rc = activeRunnerTurn();
-				if (!rc) return false;			// nothing handed off: the panel's notice is enough
-				raiseBlocker(rc.turnId, {
-					kind: 'fsa', detail: 'folder access', since: Date.now(),
-				});
-				return true;
-			} catch (e) { return false; }
-		},
-	};
 	// page-split: install 96
 
 	// The wasm tools call this by name, exactly as the cloud bridge is called: an

@@ -12,7 +12,7 @@
 // never commit one (`syncMayCommitChunks` is false: dev/verify_dataloss.mjs
 // proves that is correct), and a device that DOES commit. So:
 //
-//   A — folder-mounted. Offloads its chats and Diamonds; commits nothing, and
+//   A — tools absent. Offloads its chats and Diamonds; commits nothing, and
 //       its file census is empty, so it cannot put a file back either. It runs
 //       the RANDOM-IV seal (see `oldSeal`): a device not yet upgraded.
 //   B — the sandbox. Unions A's content, and commits the account's live set.
@@ -41,15 +41,8 @@
 //   (v)   NOTHING IS RE-OFFLOADED AND NOTHING IS MISSING. After the second round
 //         the feed says `refs_missing: 0` and no chunk is uploaded again. The
 //         desktops re-offloaded the same five items every round for hours.
-//   (vii) AND TWO MOUNTED DEVICES SHARING ONE FOLDER SETTLE. Since 2026-09-14 a device
-//         with a real folder open sends what the user FLAGGED for sharing on a Diamond
-//         -- a mark is the daimon's read grant, and the copy grant is its own flag on
-//         the attachment -- and the owner has TWO such devices, kept identical by
-//         Syncthing and therefore holding one file at two modification times.
-//         Anything time-keyed in what travels makes their parcels
-//         permanently different, and two devices that permanently differ push at each
-//         other for ever. Two rounds, then the same ten simulated minutes, and nobody
-//         pushes. `dev/verify_foldershare.mjs` is the rest of that feature.
+//   (vi), (vii) the folder-mounted device and two desktops sharing one folder: gone with the
+//         browser Machine folder (G5, D-20261031-11).
 //   (viii) AND A FILE HELD BY TWO DEVICES IS NAMED BY WHICHEVER COMMITS. Two devices
 //         holding one file at identical bytes held it at DIFFERENT ADDRESSES: an
 //         address is the hash of ciphertext and the seal took a fresh IV, so each
@@ -64,12 +57,6 @@
 //         its own copy of every workspace file, and its first commit swept the phone's
 //         611 chunks. A file has a `.peer.<device>` slot of its own now, as a chat and
 //         a Diamond already did.
-//   (vi)  AND A LOSS NOTHING CAN HEAL IS LET GO OF. A file manifest whose chunks
-//         the gateway no longer holds is kept once -- one sweep is not a verdict
-//         -- and dropped on the second answered sighting. It used to be either
-//         carried for ever (the drop waited for a peer to name the same
-//         addresses, which no file manifest can ever have) or forgotten at once
-//         on the promise of a re-offload the device could not make.
 //
 // The cloud is stood up in THIS PROCESS and shared by both contexts: a mailbox
 // with the gateway's version guard, a content-addressed chunk store, and the
@@ -89,9 +76,6 @@
 //   node dev/verify_syncfixedpoint.mjs --quiet 600      # the plan's ten real minutes
 //   node dev/verify_syncfixedpoint.mjs --break narrowpeer
 //   node dev/verify_syncfixedpoint.mjs --break selfmask
-//   node dev/verify_syncfixedpoint.mjs --break nodrop
-//   node dev/verify_syncfixedpoint.mjs --break forgetfiles
-//   node dev/verify_syncfixedpoint.mjs --break timekeyed
 //   node dev/verify_syncfixedpoint.mjs --break nopeerfile
 //   node dev/verify_syncfixedpoint.mjs --break nofix      # (ix): collect drops `burst` from a rating
 //   node dev/verify_syncfixedpoint.mjs --break novia      # (x): collect drops `via` from the records of a files_log and a file rating
@@ -100,7 +84,7 @@ import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, scratch, clearDiamonds, BROWSER, markHere, workMenu } from './harness.mjs';
+import { open, signInAs, scratch, clearDiamonds, BROWSER } from './harness.mjs';
 import { guardRan } from './verdict.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -158,23 +142,6 @@ const BREAKS = {
 			if (!line || typeof line !== 'object' || k !== self_) { devs[k] = line; return; }
 			var copy = {};`,
 	}],
-	// The drop waits for a PEER to name the same addresses, which is where it stood
-	// until 2026-09-14 -- and no file manifest can ever have a peer slot, because
-	// there is no peer mechanism for files. So a standing loss was carried in the
-	// parcel for ever and `dropped_refs` was 0 on every round. (vi) reddens.
-	nodrop: [{
-		file: 'js/daimond.js',
-		find: '			if (rounds > 1) {',
-		with: '			if (rounds > 1 && false) {		// the peer-named gate, which a file could never satisfy',
-	}],
-	// The shared folder's manifest carries the modification time again, which two
-	// desktops kept identical by Syncthing disagree about while agreeing about every
-	// byte. (vii) reddens: the parcels differ for ever and the pair never settles.
-	timekeyed: [{
-		file: 'js/cloud.js',
-		find: '			mtime:  o.timeless ? 0 : (f ? f.lastModified : 0),',
-		with: '			mtime:  f ? f.lastModified : 0,',
-	}],
 	// A file's peer slot is never written, so the merge keeps our manifest, drops
 	// theirs, and the next commit sweeps the other device's copy of the same bytes.
 	// (viii) reddens on the sweep.
@@ -182,14 +149,6 @@ const BREAKS = {
 		file: 'js/cloud.js',
 		find: '			if (!Object.prototype.hasOwnProperty.call(conflicts, e[0])) notePeerFile(out, e[0], e[1], e[2], fromDev, selfDev);',
 		with: '			if (0) notePeerFile(out, e[0], e[1], e[2], fromDev, selfDev);',
-	}],
-	// A file manifest whose file is in the mounted folder is classed `reoffload`
-	// and forgotten, on a device whose `collectFiles` returns nothing -- so it is
-	// named by nobody and never uploaded again. (vi) reddens on the drain.
-	forgetfiles: [{
-		file: 'js/daimond.js',
-		find: "				reason = (f && canReoffloadFiles) ? 'reoffload' : (f ? 'no-file-sync' : 'no-local-file');",
-		with: "				reason = f ? 'reoffload' : 'no-local-file';",
 	}],
 	// A version already fully merged is re-applied anyway, which is where `pullOnce`
 	// stood until 2026-09-14: every idle catch-up pull pays for a full files-section
@@ -276,16 +235,6 @@ if (BREAK && BROWSER !== 'chromium') {
 const SEAM = [
 	{ file: 'js/cloud.js', want: '[0-9a-f]{32}',
 	  why: 'PEER_RE does not admit a 32-hex device id, so no peer slot is recognised' },
-	{ file: 'js/daimond.js', want: 'canReoffloadFiles',
-	  why: 'a folder-mounted device still promises to re-offload files it cannot' },
-	{ file: 'js/daimond.js', want: 'if (rounds > 1) {',
-	  why: 'an unrestorable manifest is never dropped, so refs_missing can never reach 0' },
-	{ file: 'js/daimond.js', want: 'SYNC_FOLDER_SHARE_MAX',
-	  why: 'a folder-mounted device shares nothing, so (vii) would measure two empty censuses' },
-	{ file: 'js/daimond.js', want: 'if (!a.share) return;',
-	  why: 'a mark shares the folder again, so (vii) would pass without the flag it now needs' },
-	{ file: 'js/cloud.js', want: 'o.timeless ? 0 :',
-	  why: 'a shared folder\'s manifest still carries a clock, which is what (vii) is about' },
 	{ file: 'js/cloud.js', want: 'function notePeerFile',
 	  why: 'a file has no peer slot, so (viii) would measure a sweep nothing could stop' },
 	{ file: 'js/sync.js', want: "already adopted, no walk",
@@ -555,46 +504,21 @@ check('and two DEVICE ids, 32 hex each — the width a peer slot is keyed by',
 
 // ── A STOPS BEING A COMMITTER, which is the topology the fault needs ──
 //
-// The owner's desktops are FOLDER-MOUNTED: a real root is open, so `collectFiles`
-// returns nothing, the chunk index cannot be merged, and `syncMayCommitChunks` is
-// false (dev/verify_dataloss.mjs proves that refusal is correct). The recipe is
-// the one that file established -- a directory handle out of OPFS, handed to the
-// picker, granted the way a user grants it.
-//
-// AND PLAYWRIGHT'S WEBKIT HAS NO OPFS AT ALL. `navigator.storage` is undefined in
-// the Linux WPE build -- not the API missing, the whole object -- while real iOS
-// Safari has had it since 15.2. So on that engine the folder cannot be mounted,
-// and A is stood down the other way the app itself names: with the tools absent
-// (`offloadBlockedReason` -> `tools-missing`), which gives the same two
-// properties this fixture needs -- an empty file census and a device that may not
-// commit. What is NOT covered there is said in as many words at the end, rather
-// than passing quietly.
+// A device that may not commit: with the tools absent (`offloadBlockedReason` ->
+// `tools-missing`) its file census is empty and `syncMayCommitChunks` is false, the two
+// properties this fixture needs (dev/verify_dataloss.mjs proves that refusal is correct).
+// The owner's desktops once stood here folder-mounted; that mode went with G5
+// (D-20261031-11). OPFS is still asked after, for (viii)'s workspace file.
 OPFS = await A.page.evaluate(() => !!(navigator.storage && navigator.storage.getDirectory));
-if (OPFS) {
-	await A.page.evaluate(async () => {
-		const root = await navigator.storage.getDirectory();
-		const dir  = await root.getDirectoryHandle('mounted', { create: true });
-		dir.queryPermission   = async () => 'granted';
-		dir.requestPermission = async () => 'granted';
-		window.showDirectoryPicker = async () => dir;
-	});
-	await A.page.evaluate(() => window.DaimondPanels && window.DaimondPanels.open && window.DaimondPanels.open('work'));
-	await A.page.waitForTimeout(700);
-	await workMenu(A.page, 'head', 'machine');
-	await A.page.waitForTimeout(1500);
-} else {
-	skipped.push('the folder mount (A stands down as tools-missing instead)');
-	await A.page.evaluate(() => { delete window.DaimondTools; });
-}
+await A.page.evaluate(() => { delete window.DaimondTools; });
 
-const aMode = await A.page.evaluate(async (opfs) => {
-	const mode = opfs ? (await import('/pkg/oxedyne_daimond.js')).workspace_mode() : 'n/a';
-	return { mode, mayCommit: window.DaimondCore.syncMayCommitChunks(),
+const aMode = await A.page.evaluate(async () => {
+	return { mayCommit: window.DaimondCore.syncMayCommitChunks(),
 		why: window.DaimondCore.syncCommitBlockedReason() };
-}, OPFS);
+});
 check('A commits NOTHING — the reported topology, one device declaring for both',
-	aMode.mayCommit === false && (OPFS ? aMode.mode === 'folder' : aMode.why === 'tools-missing'),
-	`mode=${aMode.mode} mayCommit=${aMode.mayCommit} why=${aMode.why}`);
+	aMode.mayCommit === false && aMode.why === 'tools-missing',
+	`mayCommit=${aMode.mayCommit} why=${aMode.why}`);
 const bMay = await B.page.evaluate(() => window.DaimondCore.syncMayCommitChunks());
 check('B holds the sandbox and commits for the account',
 	bMay === true, `mayCommit=${bMay}`);
@@ -949,294 +873,8 @@ check('a further round uploads nothing at all — the pair is at rest',
 	cloud.puts.length === putsAfter,
 	`${cloud.puts.length - putsAfter} put batch(es)`);
 
-// ═══════════════════════════════════════════════════════════════════════
-// (vi) A DEVICE THAT CANNOT RE-OFFLOAD A FILE DOES NOT PROMISE TO
-// ═══════════════════════════════════════════════════════════════════════
-//
-// `verifyManifestPresence` asks the gateway whether the chunks a reused manifest
-// names are still held, and a file manifest whose file is still ON DISK was
-// classed `reoffload` and FORGOTTEN -- on the reasoning that the next collect
-// will upload it again. On a folder-mounted device it will not: `collectFiles`
-// returns nothing at all there, so the manifest went and the upload never came,
-// and the file was named by nobody. 417 of them drained off the owner's desktop
-// in one round on 2026-09-13, the index falling from 264 KB to 160 KB.
-//
-// `fileAt` reads the OPFS SANDBOX whatever mode the workspace is in, which is
-// why the two can disagree at all: the file really is there, and this device
-// really cannot send it.
-console.log('\n— (vi) a file manifest a folder-mounted device cannot heal —');
-
-if (!OPFS) {
-	skipped.push('(vi), which needs an OPFS file for `fileAt` to find');
-	console.log('        · not on this engine: there is no OPFS to hold the file');
-} else {
-
-const FPATH = 'notes/standing.md';
-const filed = await A.page.evaluate(async (path) => {
-	let body = '# standing\n';
-	while (body.length < 200 * 1024) body += 'a line of the file at ' + body.length + '\n';
-	await window.DaimondCloud.writeText(path, body);
-	const mani = await window.DaimondChunks.offloadFile
-		? await window.DaimondChunks.offloadFile(path, new Blob([new TextEncoder().encode(body)]))
-		: await window.DaimondChunks.offloadBytes(path, new TextEncoder().encode(body));
-	await window.DaimondCloud.put(path, mani, mani.key);
-	const f = await window.DaimondCloud.fileAt(path);
-	return { addrs: (mani.chunks || []).map(c => c.addr), onDisk: !!f,
-		syncable: (await window.DaimondCore.collectSync()).filesComplete };
-}, FPATH);
-check('A holds a file manifest for a file that is really on disk, and cannot send the file',
-	filed.addrs.length > 0 && filed.onDisk === true && filed.syncable === false,
-	`${filed.addrs.length} chunk(s), on disk ${filed.onDisk}, census complete ${filed.syncable}`);
-
-// The chunks go, which is what another device's commit does to them.
-for (const a of filed.addrs) cloud.chunks.delete(a);
-
-const first = await A.page.evaluate(async (path) => {
-	window.__ds = [];
-	await window.DaimondCore.collectSync();
-	const ev = (window.__ds.find(e => e.payload && e.payload.refs_missing) || { payload: {} }).payload;
-	return { held: !!window.DaimondCloud.index()[path], missing: ev.refs_missing | 0,
-		dropped: ev.dropped_refs | 0, kinds: ev.miss_kinds || null };
-}, FPATH);
-check('(vi) the FIRST sighting keeps the manifest — one sweep is not a verdict',
-	first.held === true && first.missing > 0,
-	`held=${first.held} refs_missing=${first.missing} dropped_refs=${first.dropped}`);
-
-const putsBeforeHeal = cloud.puts.length;
-const second = await A.page.evaluate(async (path) => {
-	window.__ds = [];
-	await window.DaimondCore.collectSync();
-	const ev = (window.__ds.find(e => e.payload && e.payload.refs_missing !== undefined) || { payload: {} }).payload;
-	return { held: !!window.DaimondCloud.index()[path], dropped: ev.dropped_refs | 0 };
-}, FPATH);
-check('(vi) the SECOND drops it, and says so — the parcel stops carrying dead addresses',
-	second.held === false && second.dropped > 0,
-	`held=${second.held} dropped_refs=${second.dropped}`);
-check('(vi) and nothing was uploaded in between — the "re-offload" it used to promise',
-	cloud.puts.length === putsBeforeHeal, `${cloud.puts.length - putsBeforeHeal} put batch(es)`);
-
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// (vii) TWO MOUNTED DESKTOPS AND A PHONE
-// ═══════════════════════════════════════════════════════════════════════
-//
-// The owner's fleet, exactly: argonaut and gilgamesh both hold the book in a real folder
-// and Syncthing keeps them byte-identical, which leaves the two files with DIFFERENT
-// modification times. A manifest carrying one of those times differs between two devices
-// that agree about every byte, and `push` skips the wire only when the parcel matches
-// what this device last sent -- so each side always has news, and the pair pushes at each
-// other for ever at the debounce. What travels is therefore keyed on content
-// (`put(..., { timeless: true })`, js/cloud.js) and the modification time stays on the
-// device that observed it.
-console.log('\n— (vii) two desktops sharing one folder, and the phone —');
-
-if (!OPFS) {
-	skipped.push('(vii), which needs two folder mounts and an OPFS to mount');
-	console.log('        · not on this engine: there is no OPFS to mount as a folder');
-} else {
-
-const SCOPE = 'book';
-// Two files over `SYNC_FILE_MAX` so they offload and there are manifests to compare, and
-// two under it so there is an inline section to compare byte for byte.
-const SEED = [
-	['book/chap_one.typ', '= One\n' + 'a line of the chapter\n'.repeat(400)],
-	['book/chap_two.typ', '= Two\n' + 'another line entirely\n'.repeat(500)],
-	['book/assets/big_a.dat', 'A'.repeat(300 * 1024)],
-	['book/assets/big_b.dat', 'B'.repeat(180 * 1024)],
-];
-
-/// Mount an OPFS subdirectory as the real folder, by the panel's own chip.
-async function mountFolder(s) {
-	await s.page.evaluate(async () => {
-		const root = await navigator.storage.getDirectory();
-		const dir  = await root.getDirectoryHandle('mounted', { create: true });
-		dir.queryPermission   = async () => 'granted';
-		dir.requestPermission = async () => 'granted';
-		window.showDirectoryPicker = async () => dir;
-	});
-	await s.page.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
-	await s.page.waitForTimeout(700);
-	await workMenu(s.page, 'head', 'machine');
-	await s.page.waitForTimeout(1500);
-}
-
-/// Write the seed into whatever folder this device has open.
-const seedFolder = (s) => s.page.evaluate(async (files) => {
-	const root = window.DaimondFiles.folder();
-	for (const [p, text] of files) {
-		const segs = p.split('/');
-		let d = root;
-		for (let i = 0; i < segs.length - 1; i++) d = await d.getDirectoryHandle(segs[i], { create: true });
-		const fh = await d.getFileHandle(segs[segs.length - 1], { create: true });
-		const w = await fh.createWritable();
-		await w.write(new TextEncoder().encode(text));
-		await w.close();
-	}
-	const st = [];
-	for (const [p] of files) {
-		const segs = p.split('/');
-		let d = root;
-		for (let i = 0; i < segs.length - 1; i++) d = await d.getDirectoryHandle(segs[i]);
-		const f = await (await d.getFileHandle(segs[segs.length - 1])).getFile();
-		st.push({ p, size: f.size, mtime: f.lastModified });
-	}
-	return st;
-}, files_(SEED));
-function files_(x) { return x; }
-
-// A1 IS THE DEVICE ALREADY MOUNTED. It has no Diamond holding the folder yet, which is
-// why everything above it saw an empty census; a mark AND the flag beside it are what
-// turn a folder into a share -- the mark alone is the daimon's grant to read it.
-const A2 = await open({ name: 'syncfp-a2', profile: scratch('pw', 'syncfp-a2-' + BROWSER),
-	signIn: false, connect: false, defaults: false, route: patchedSource });
-await ready(A2);
-await A2.page.evaluate((b) => window.DaimondIdentity.importBundle(b), bundle);
-await A2.page.reload({ waitUntil: 'domcontentloaded' });
-await ready(A2);
-await signInAs(A2, 'syncfp');
-await ready(A2);
-await clearDiamonds(A2);
-await ready(A2);
-await wireCloud(A2, 'A2');
-await mountFolder(A2);
-
-const st1 = await seedFolder(A);
-// A DELIBERATE GAP, so the two copies are written at genuinely different times. This is
-// what Syncthing leaves behind: identical bytes, and a modification time per machine.
-await A.page.waitForTimeout(1200);
-const st2 = await seedFolder(A2);
-check('(vii) the two desktops hold identical bytes at DIFFERENT times — the Syncthing case',
-	st1.length === st2.length
-	&& st1.every((f, i) => f.size === st2[i].size)
-	&& st1.some((f, i) => f.mtime !== st2[i].mtime),
-	`sizes ${st1.map(f => f.size).join(',')}; times differ on `
-	+ st1.filter((f, i) => f.mtime !== st2[i].mtime).length + ' of ' + st1.length);
-
-// The mark and the flag, made once on A and carried to the other mounted device by the
-// ordinary parcel: the Diamond travels, its links travel inside it -- the flag is a
-// field on the link. THE MARK ITSELF DOES NOT (owner ruling, 2026-09-23): a machine
-// reference now names the device it was made on, so A2 receives A's mark inactive --
-// exactly the state a mark synced from another desktop is in everywhere else -- and
-// brings it into force with the same one-press confirm the notice above the composer
-// offers. Only then do both devices compute the same shared roots.
-const book = await A.page.evaluate(async (scope) => {
-	const mod = await import('/pkg/oxedyne_daimond.js');
-	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	const id = await app.create_diamond('The Book');
-	const ref = window.DaimondAttach.ref('dir', scope);
-	const linkId = await app.add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
-	await window.DaimondCore.loadDiamonds();
-	return { id, linkId, ref };
-}, SCOPE);
-const bookId = book.id;
-// R2/O2: pressed AND ⇄'d here, on A -- the raw wasm `add_link` above does not
-// auto-press the way the paperclip's own door does, and a confirmation never
-// carries the share flag, so both writes are `markHere`'s.
-await markHere(A, bookId, book.ref, { linkId: book.linkId, share: true });
-await A.page.evaluate(() => window.DaimondCore.syncClearWalkCache());
-await push(A); await pull(A2); await pull(B);
-await A2.page.evaluate(() => window.DaimondCore.loadDiamonds());
-const confirmedOnA2 = await A2.page.evaluate(
-	({ id, scope }) => window.DaimondAttach.confirmHere(id, 'dir:' + scope),
-	{ id: bookId, scope: SCOPE });
-check('(vii) A2 confirms the mark A made, brought in by the ordinary parcel',
-	confirmedOnA2 === true, String(confirmedOnA2));
-// R2/O2: A2's OWN ⇄. The row already carries the flag -- confirming above never
-// inherits it, since sharing does not travel and is its own press per device.
-await markHere(A2, bookId, 'dir:' + SCOPE, { linkId: book.linkId, press: false, share: true });
-await A2.page.evaluate(() => window.DaimondCore.syncClearWalkCache());
-
-const shares = {
-	a1: await A.page.evaluate(() => window.DaimondCore.syncFolderShare()),
-	a2: await A2.page.evaluate(() => window.DaimondCore.syncFolderShare()),
-};
-check('(vii) both mounted devices share the same folder, from one flag neither was told about twice',
-	shares.a1.folder && shares.a2.folder
-	&& shares.a1.roots.join() === SCOPE && shares.a2.roots.join() === SCOPE
-	&& shares.a1.bytes === shares.a2.bytes,
-	`A1 ${shares.a1.files} files/${shares.a1.bytes} B, A2 ${shares.a2.files} files/${shares.a2.bytes} B`);
-
-/// One full round over all three.
-async function settle3(n) {
-	for (let i = 0; i < n; i++) {
-		await push(A);  await pull(A2); await pull(B);
-		await push(A2); await pull(A);  await pull(B);
-		await push(B);  await pull(A);  await pull(A2);
-	}
-}
-// FOUR ROUNDS, NOT TWO, and the extra two are what the peer slots cost. A slot is
-// derived from a PAIR of indices, so every device has to have seen every other before
-// the set of them stops moving -- and a device whose chunks the committer swept before
-// it had seen that device's index re-offloads under fresh addresses, which moves the
-// slot again. Both settle; neither settles in one exchange. Two rounds left the mesh
-// mid-convergence and the quiet window below then measured the tail of it as churn.
-await settle3(4);
-
-const sections = {
-	a1: await A.page.evaluate(async () => {
-		const c = await window.DaimondCore.collectSync();
-		return { files: JSON.stringify(c.files), complete: c.filesComplete };
-	}),
-	a2: await A2.page.evaluate(async () => {
-		const c = await window.DaimondCore.collectSync();
-		return { files: JSON.stringify(c.files), complete: c.filesComplete };
-	}),
-};
-check('(vii) the two desktops\' INLINE sections are byte-identical — content, not enumeration',
-	sections.a1.files === sections.a2.files && sections.a1.files.length > 100
-	&& sections.a1.complete === true && sections.a2.complete === true,
-	sections.a1.files === sections.a2.files
-		? `${sections.a1.files.length} bytes each`
-		: `A1 ${sections.a1.files.length} B, A2 ${sections.a2.files.length} B`);
-
-// AND THE MANIFESTS AGREE ABOUT THE CONTENT AND CARRY NO CLOCK. They cannot agree about
-// their ADDRESSES: an address is the hash of ciphertext and the seal takes a fresh IV per
-// device, so two devices sealing identical bytes land them in different places. That is
-// by design and is what the `.peer` slot exists for; what must agree is the identity of
-// the file, and what must be absent is any time at all.
-// A SIDECAR IS NOT A MANIFEST. `<path>.peer.<device>` is another device's addresses
-// for the same file and `<path>.synced` is the version a divergence preserved; neither
-// has a content key, because neither is this device's record of a file's identity.
-// Counting them here read the peer slots added on 2026-09-14 as two manifests that
-// disagreed about their key.
-const manis = async (s) => s.page.evaluate((scope) => {
-	const ix = window.DaimondCloud.index(), out = {};
-	Object.keys(ix).filter(k => k.indexOf(scope + '/') === 0)
-		.filter(k => !ix[k].peer && !/\.synced$/.test(k)).sort().forEach(k => {
-		out[k] = { key: ix[k].key, size: ix[k].size, bytes: ix[k].bytes,
-			mtime: ix[k].mtime | 0, at: ix[k].at | 0 };
-	});
-	return out;
-}, SCOPE);
-const m1 = await manis(A), m2 = await manis(A2);
-const paths1 = Object.keys(m1);
-check('(vii) every shared manifest agrees on its content key, and carries no time at all',
-	paths1.length > 0 && paths1.join() === Object.keys(m2).join()
-	&& paths1.every(p => m1[p].key && m1[p].key === m2[p].key && m1[p].size === m2[p].size)
-	&& paths1.every(p => !m1[p].mtime && !m1[p].at && !m2[p].mtime && !m2[p].at),
-	`${paths1.length} manifest(s); `
-	+ (paths1.filter(p => !m2[p] || m1[p].key !== m2[p].key).length || 'no') + ' key mismatch, '
-	+ (paths1.filter(p => m1[p].mtime || m1[p].at || (m2[p] && (m2[p].mtime || m2[p].at))).length || 'no')
-	+ ' stamped');
-
-// AND NOBODY PUSHES. The same ten simulated minutes as (iv), over three devices.
-const before3 = cloud.pushes.length;
-for (let tick = 0; tick < 2; tick++) {
-	await ageRoster(A, FIVE_MIN);
-	await ageRoster(A2, FIVE_MIN);
-	await ageRoster(B, FIVE_MIN);
-	await push(A);  await pull(A2); await pull(B);
-	await push(A2); await pull(A);  await pull(B);
-	await push(B);  await pull(A);  await pull(A2);
-}
-check('(vii) ten SIMULATED minutes over two mounted desktops and a phone move NOTHING',
-	cloud.pushes.length === before3,
-	`${cloud.pushes.length - before3} push(es), mailbox v${cloud.mailbox.version}`);
-
-await A2.close().catch(() => {});
-
-}
+// (vi) and (vii), the folder-mounted device's manifests and two desktops sharing one folder,
+// went with the browser Machine folder (G5, D-20261031-11).
 
 // ═══════════════════════════════════════════════════════════════════════
 // (viii) TWO COMMITTERS, ONE FILE, TWO SETS OF ADDRESSES

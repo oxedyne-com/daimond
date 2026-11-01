@@ -74,7 +74,6 @@ const note = (what, why) => known.push(`${what}\n        ${why}`);
 // Matched on the element's tag+id+class signature.
 const GHOSTS = new Set([
 	'div#astat-store.astat-row',
-	'div#astat-store-native.astat-row',
 	'span.astat-dot.off',
 	'span.astat-dot.ok',
 	'span.astat-dot.warn',

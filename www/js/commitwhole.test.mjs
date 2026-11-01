@@ -132,8 +132,7 @@ function device(opts = {}) {
 	const env = {
 		ls,
 		syncable: () => !folder,
-		Files: { remembersFolder: () => remembers || folder },
-		FsaDB: { load: async () => (remembers ? {} : null) },
+		Files: { machineFolderKept: async () => remembers || folder },
 	};
 	const gate = loadGate(win, env);
 	const d = {

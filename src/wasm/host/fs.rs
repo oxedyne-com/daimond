@@ -23,7 +23,7 @@ use std::future::Future;
 pub struct WasmFs;
 
 impl HostFs for WasmFs {
-    fn folder_open(&self) -> bool { opfs::folder_open() }
+    fn folder_open(&self) -> bool { false }	// the browser opens no real folder (R1)
     async fn exists(&self, root: FileRoot, path: &str) -> Outcome<bool> {
         opfs::exists(root, path).await
     }
@@ -80,7 +80,7 @@ impl HostFs for WasmFs {
     fn thrown(&self) -> String { opfs::thrown() }
     fn take_thrown(&self) -> String { opfs::take_thrown() }
     fn arm_folder_watch(&self) { opfs::arm_folder_watch() }
-    fn notify_folder_lost(&self) { opfs::notify_folder_lost() }
+    fn notify_folder_lost(&self) {}	// no folder, so none to lose (R1)
     fn children_of(&self, dir: &str) -> Vec<(String, bool, u64)> { cloud::children_of(dir) }
     async fn cloud_fetch(&self, path: &str) -> Outcome<String> { cloud::fetch(path).await }
     async fn cloud_forget_licensed(&self, lic: &Licence) -> Outcome<String> {

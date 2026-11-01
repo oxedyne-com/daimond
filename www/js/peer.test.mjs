@@ -6553,7 +6553,7 @@ async function runBlockerAcceptance(P, L, check) {
 			'argonaut');
 		check('B5b: an ask offers a button per option, carrying the LABELS',
 			ask.controls.join(',') === 'choose' && ask.options.join('|') === 'On the device|In the cloud');
-		for (const kind of ['fsa', 'lock', 'provider']) {
+		for (const kind of ['lock', 'provider']) {
 			const s = P.blockerTileSpec(P.makeBlocker({ kind: kind, detail: 'x' }), 'argonaut');
 			check('B5c: a ' + kind + ' blocker is REPORT-ONLY -- "Run here instead" and nothing that pretends to reach across',
 				s.controls.join(',') === 'runhere' && s.answerable === false);
@@ -6617,15 +6617,15 @@ async function runBlockerAcceptance(P, L, check) {
 		check('B7b: a 402 is a provider refusal', P.runnerErrorKind(new Error('HTTP 402 payment required')) === 'provider');
 		check('B7c: "insufficient credits" is a provider refusal',
 			P.runnerErrorKind(new Error('Insufficient credits on this account')) === 'provider');
-		check('B7d: a withdrawn folder grant is an FSA hand-back',
-			P.runnerErrorKind(new Error('Read/write permission was not granted.')) === 'fsa');
+		check('B7d: the browser opens no folder (R1), so a folder-grant message is no hand-back kind',
+			P.runnerErrorKind(new Error('Read/write permission was not granted.')) === null);
 		check('B7e: a lock under the turn is a hand-back',
 			P.runnerErrorKind(new Error('peer: Daimond is locked, so nothing can be sealed for a peer.')) === 'lock');
 		check('B7f: an ordinary crash is NOT classified, so the errand still waits on the relay',
 			P.runnerErrorKind(new Error('Cannot read properties of undefined')) === null);
 		check('B7g: the sentence names the machine and says the turn is theirs again',
 			P.runnerErrorWhy('provider', 'argonaut').indexOf('argonaut') >= 0
-			&& P.runnerErrorWhy('fsa', '').indexOf('the other device') >= 0);
+			&& P.runnerErrorWhy('lock', '').indexOf('the other device') >= 0);
 	}
 
 	// ── B8. runErrand HANDS BACK a classified failure: report + release, and the

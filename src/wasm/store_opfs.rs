@@ -127,9 +127,10 @@ impl StoreBackend for OpfsBackend {
 }
 
 impl StoreEnv for OpfsBackend {
-    fn folder_id() -> Option<String> { opfs::folder_id() }
-    fn folder_known(id: &str) -> bool { opfs::folder_known(id) }
-    fn folder_open() -> bool { opfs::folder_open() }
+    // The browser opens no real folder (R1, D-20261031-11).
+    fn folder_id() -> Option<String> { None }
+    fn folder_known(_id: &str) -> bool { false }
+    fn folder_open() -> bool { false }
     fn this_page() -> String { PAGE.with(|p| p.clone()) }
     fn page_is_live(page: &str) -> bool { PAGE.with(|p| p == page) }
     fn now_ms() -> f64 { oxedyne_fe2o3_core::wasm::now_ms() }

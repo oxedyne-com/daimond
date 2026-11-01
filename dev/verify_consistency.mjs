@@ -308,14 +308,6 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 			['title', ':scope > .chead-left, :scope > .ctitle, :scope > .web-mode'],
 			['tools', ':scope > .chead-right'],
 		]],
-		// The Workspace's mode row (V6): the Reconnect offer, then the status
-		// message, each its own row whatever the locale's strings measure. The
-		// place chips and the Forget button left it in Workspace round 2 P4
-		// (their doors are the head ⋯ now). Matched on each part's own leaf class.
-		['files-mode', '.files-mode', [
-			['acts', '.files-mode-btn'],
-			['msg', '.files-mode-msg'],
-		]],
 		// A device row (V10): name, copy and rename share the first line; the
 		// nominate/stay controls and the id/when/build meta each keep their own.
 		['device-row', '.device-row', [
@@ -1899,7 +1891,7 @@ const ROLES = [
 	// "Permissions: Guarded") -- whose casing was never copy's, as it was not when it stood in the rail as a status row.
 	['menu-item',       'none',     (it) => it.ctrl && has(it, 'sg-status')],
 	['disclosure',      'sentence', (it) => it.ctrl && (has(it, 'tagf-toggle') || has(it, 'models-route-head'))],
-	['toggle-option',   'sentence', (it) => it.ctrl && (has(it, 'dview-btn') || within(it, /\.seg\b|\.size-row|-toggle\b|\.files-scope|\.imp-chips|\.net-row|\.tile-dlg-seg|\.files-mode\b/) && !has(it, 'files-mode-btn') || has(it, 'grid-opt'))],
+	['toggle-option',   'sentence', (it) => it.ctrl && (has(it, 'dview-btn') || within(it, /\.seg\b|\.size-row|-toggle\b|\.files-scope|\.imp-chips|\.net-row|\.tile-dlg-seg/) || has(it, 'grid-opt'))],
 	// The walk-back pair is the composer's wherever it sits: in the bar on a computer, in the composer row on a phone (D-20261014-08).
 	['composer-button', 'none',     (it) => it.ctrl && ((within(it, /chat-input-bar|msheet-ask/) || /#chat-(jump|end)\b/.test(it.sig)) && !/^(input|textarea)$/.test(it.tag))],
 	// G16: the bar's own icon-only tools (hamburger, section fold) are a
@@ -2373,8 +2365,7 @@ function report() {
 	// status, since a diamond tile's whole box is itself a control and
 	// swallows its own children as items).
 	//
-	// `files-mode` never shares a line between two different parts, in a
-	// fixed order. `tile` never shares one either, any more (V6, D-20260929-03
+	// `tile` never shares a line between two different parts any more (V6, D-20260929-03
 	// r526 residual pass): `model` and `meter` were DELIBERATELY the same grid
 	// row through V1-V5 ("the model and the meter share the last line"), which
 	// is exactly how a long model name came to push the meter's own left edge
@@ -2385,7 +2376,7 @@ function report() {
 	// MUST share one line once the panel has room (>460px, safely past the
 	// 440px container-query breakpoint) -- the row splitting there with room
 	// to spare, keyed to how long the title happens to be, is V5's bug.
-	const ROWORDER = { tile: { title: 0, chips: 1, model: 2, meter: 3 }, 'files-mode': { chips: 0, acts: 1, msg: 2 },
+	const ROWORDER = { tile: { title: 0, chips: 1, model: 2, meter: 3 },
 		'device-row': { name: 0, copy: 0, rename: 0, ctl: 1, meta: 2 },
 		'files-view-head': { name: 0, acts: 1 }, 'turn-interrupted': { label: 0, go: 1 } };
 	const ROW0 = new Set(['name', 'copy', 'rename']);

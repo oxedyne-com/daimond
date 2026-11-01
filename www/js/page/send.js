@@ -30,7 +30,7 @@ import { PEER_HELD, _peerStopping, confirmDialog, keepFocusIn, noticeDialog, run
 import { hideSpinner, keepAsDiamond, newChat, pauseTree, setTilePref, showSpinner, startChat,
 	syncSendMode, tileConcise, turnHold } from './chats.js';
 import { chatDisplayName, chatSaid, dayBucket, noteAppProv, promptPrint, tileWhen } from './tilestyle.js';
-import { Instructions, Notes, SYSTEM_PROMPT, folderOpen } from './pending.js';
+import { Instructions, Notes, SYSTEM_PROMPT } from './pending.js';
 import { Triggers, _lastSteer, daimonApp, diamondApp, loadDiamonds, taintDaimon } from './diamonds.js';
 import { doSteer, syncFoldBusy } from './crystal.js';
 import { attachPrefixText, attachTile, chatAttachList, chatScratchDir, scrubAttachPrefixDup } from './marks.js';
@@ -1916,17 +1916,6 @@ async function listSkills() {
 		String(await Wasm.store_list(CONCISE_DIR) || '').split('\n')
 			.forEach(function (line) { if (line) take(line.split('\t')[0]); });
 	} catch (e) { /* nothing written yet */ }
-	if (folderOpen()) {
-		try {
-			var raw = await tools().run_tool_outcome('file_list', JSON.stringify({ path: CONCISE_DIR }));
-			if (raw && raw.outcome === 'done') {
-				raw.text.split('\n').forEach(function (line) {
-					var m = line.match(/^\s*(?:[-*]\s*)?(\S.*?)(?:\s+\(\d+.*\))?\s*$/);
-					if (m) take(m[1]);
-				});
-			}
-		} catch (e) { /* the folder carries none */ }
-	}
 	return Object.keys(names).sort();
 }
 

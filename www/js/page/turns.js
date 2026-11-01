@@ -4105,8 +4105,6 @@ function renderBlockerFooter(foot, m) {
 	} else if (spec.kind === 'ask') {
 		label.textContent = name ? t('turn.block_ask_named', { name: name, q: q })
 			: t('turn.block_ask', { q: q });
-	} else if (spec.kind === 'fsa') {
-		label.textContent = name ? t('turn.block_fsa_named', { name: name }) : t('turn.block_fsa');
 	} else if (spec.kind === 'lock') {
 		label.textContent = name ? t('turn.block_lock_named', { name: name }) : t('turn.block_lock');
 	} else if (spec.kind === 'provider') {

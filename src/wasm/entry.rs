@@ -53,7 +53,6 @@ use oxedyne_fe2o3_core::wasm::{console_log, now_ms};
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::FileSystemDirectoryHandle;
 
 
 /// Default per-turn token cap for the probe client.  The value is
@@ -661,43 +660,6 @@ pub async fn touch_diamond(id: String) -> Result<(), JsValue> {
 #[wasm_bindgen]
 pub async fn page_write(id: String, path: String, text: String, append: bool) -> Result<(), JsValue> {
     diamond::page_write(&id, &path, &text, append).await.map_err(to_js_err)
-}
-
-/// Point the file tools / Workspace at a real local folder (FSA mode).
-///
-/// `handle` is a `FileSystemDirectoryHandle` from `showDirectoryPicker()`
-/// in JS, already permission-granted for read/write.  Once set, every
-/// [`FileRoot::Workspace`] file tool (`file_read`/`write`/`list`/`edit`/
-/// `delete`/`search`) resolves against the real folder.  Daimond's own
-/// Diamond/crystal/`.daimond` storage is unaffected — it pins the OPFS sandbox.
-///
-/// # Arguments
-/// * `fid` - The id this device keeps for the folder (`FsaDB.folderId`), which a version row of a
-///   file in it records so that a restore puts it back into this folder and no other.  Absent or
-///   empty, it is `opfs::UNNAMED_FOLDER`, which names no folder: its rows are asked about.
-/// * `known` - JSON array of the ids of the folders this device knows (`FsaDB.known`): a row from
-///   one of them is another folder's file and is left, and one from any other folder is asked
-///   about ([`opfs::set_known`]).  Absent, the folders known stay as they were.
-#[wasm_bindgen]
-pub fn set_workspace_dir(handle: FileSystemDirectoryHandle, fid: Option<String>, known: Option<String>) {
-    if let Some(k) = known {
-        opfs::set_known(crate::llm::parse_json_string_array(&k));
-    }
-    opfs::set_override(handle, fid.as_deref().unwrap_or(""));
-}
-
-/// Clear any FSA override, returning the file tools / Workspace to the
-/// OPFS sandbox root.
-#[wasm_bindgen]
-pub fn use_opfs_workspace() {
-    opfs::clear_override();
-}
-
-/// The current Workspace file-tool root mode: `"folder"` when an FSA real
-/// folder is open, else `"opfs"`.
-#[wasm_bindgen]
-pub fn workspace_mode() -> String {
-    opfs::workspace_mode()
 }
 
 /// Encode `text` as a QR Code and return its module grid, row-major, one byte
