@@ -465,7 +465,8 @@ async function syncFrameChecks() {
 
 // ── daimond.js, the page half ───────────────────────────────────
 function pageChecks() {
-	const NAMES = ['electSources', 'seatReason', 'seatWhyKey', 'bookReportCost', 'handBackNote', 'wasmEngineAbi'];
+	const NAMES = ['electSources', 'seatReason', 'seatWhyKey', 'bookReportCost', 'reportOutcome', 'handBackNote',
+		'wasmEngineAbi'];
 	const L = lift(source('daimond.js'), NAMES, []);
 	check('K6 the page functions are there', L.missing.length === 0, L.missing.join());
 	if (L.missing.length) return;
@@ -559,6 +560,43 @@ function pageChecks() {
 	const fellHeld = lctx.DaimondLedger.entries().filter((e) => e.tid === 't5');
 	check('K8b a report with no cost.models falls back to the chat\'s model', fellHeld.length === 1
 		&& fellHeld[0].m === 'claude-next', JSON.stringify(fellHeld));
+	// UNBLOCK-68: a blocked turn settles `done`, but its ledger row is the run's own: the end_log's
+	// outcome and its tokens and cache, never a zero-token "done" (lens sweep 01 Nov, finding D).
+	const blocked = { t: 'report', status: 'done', turnId: 't6', chatId: 'c1', ts: 1760000970000,
+		cost: { usd: 0.42, by: { an: 0.42 }, models: { an: 'claude' }, p: 220659, c: 1800, ca: 217216,
+			end: { how: 'failed', why: 'blocked' } } };
+	api.bookReportCost(blocked);
+	const bHeld = lctx.DaimondLedger.entries().filter((e) => e.tid === 't6');
+	check('UNBLOCK-68 a blocked turn\'s ledger row carries its outcome, tokens and cache', bHeld.length === 1
+		&& bHeld[0].out === 'failed' && bHeld[0].p === 220659 && bHeld[0].c === 1800 && bHeld[0].ca === 217216
+		&& bHeld[0].u === 0.42, JSON.stringify(bHeld));
+	const failed = { t: 'report', status: 'error', turnId: 't7', chatId: 'c1', ts: 1760000980000,
+		cost: { usd: 0.1, by: { an: 0.1 }, p: 900, c: 0, ca: 0, end: { how: 'failed' } } };
+	api.bookReportCost(failed);
+	const fHeld = lctx.DaimondLedger.entries().filter((e) => e.tid === 't7');
+	check('UNBLOCK-68 a failed turn\'s ledger row says failed with its tokens', fHeld.length === 1
+		&& fHeld[0].out === 'failed' && fHeld[0].p === 900, JSON.stringify(fHeld));
+	const oc = (status, how) => api.reportOutcome({ status: status, cost: how ? { end: { how: how } } : undefined });
+	check('UNBLOCK-68 every ending has its outcome', oc('done', 'failed') === 'failed' && oc('done', 'stopped') === 'interrupted'
+		&& oc('done', 'paused') === 'interrupted' && oc('done', 'answered') === 'completed' && oc('done', 'capped') === 'completed'
+		&& oc('done') === 'completed' && oc('aborted') === 'interrupted' && oc('interrupted') === 'interrupted'
+		&& oc('error') === 'failed' && oc('refused-spend') === 'failed' && api.reportOutcome(null) === '',
+		[oc('done', 'failed'), oc('done', 'stopped'), oc('aborted'), oc('error')].join());
+	// UNBLOCK-68, an old runner (R12c and before): its report carries no tokens and no `cost.end`, so the
+	// row is booked as before, with no token counts invented and the report's own status for its outcome.
+	const old = { t: 'report', status: 'done', turnId: 't8', chatId: 'c1', ts: 1760000990000,
+		cost: { usd: 0.2, by: { an: 0.2 }, models: { an: 'claude' } } };
+	check('UNBLOCK-68 an old runner\'s report books its cost', api.bookReportCost(old) === 1, 'not booked');
+	const oHeld = lctx.DaimondLedger.entries().filter((e) => e.tid === 't8');
+	check('UNBLOCK-68 an old runner\'s row reads completed with no tokens', oHeld.length === 1
+		&& oHeld[0].u === 0.2 && oHeld[0].out === 'completed' && !(oHeld[0].p > 0) && !(oHeld[0].c > 0)
+		&& !(oHeld[0].ca > 0), JSON.stringify(oHeld));
+	const oldErr = { t: 'report', status: 'error', turnId: 't9', chatId: 'c1', ts: 1760000995000,
+		cost: { usd: 0.05, by: { an: 0.05 } } };
+	api.bookReportCost(oldErr);
+	const eHeld = lctx.DaimondLedger.entries().filter((e) => e.tid === 't9');
+	check('UNBLOCK-68 an old runner\'s failed report reads failed', eHeld.length === 1 && eHeld[0].out === 'failed',
+		JSON.stringify(eHeld));
 	check('K6 an oversize hand-back keeps the runner\'s own words', api.handBackNote('oversize', 'argonaut',
 		'The answer was too large to send back (3 MB, the most is 2 MB).').indexOf('too large') >= 0,
 		api.handBackNote('oversize', 'argonaut', 'x'));

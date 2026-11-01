@@ -3363,10 +3363,26 @@ function handBackNote(cause, name, why) {
 		: t('chat.handback_long', { name: n });
 }
 
+/// The ledger's outcome (`completed`, `failed`, `interrupted`, as `recordTurnOutcome` writes a Here
+/// turn's) of a runner's report: the run's own end (`cost.end.how`, the end_log's words, so a turn
+/// blocked or failed reads so though its errand settled `done`), else the report's status. UNBLOCK-68.
+export function reportOutcome(rep) {
+	var end = rep && rep.cost && rep.cost.end;
+	var how = end && typeof end.how === 'string' ? end.how : '';
+	if (how === 'failed') return 'failed';
+	if (how === 'stopped' || how === 'paused') return 'interrupted';
+	if (how) return 'completed';
+	var st = String((rep && rep.status) || '');
+	if (st === 'done') return 'completed';
+	if (st === 'aborted' || st === 'interrupted' || st === 'parked') return 'interrupted';
+	return st ? 'failed' : '';
+}
+
 /// Book a runner's report to each own-key source's pool (OWNKEY §5.4): one ledger entry per
 /// source in `cost.by` that is not credits (the gateway meters those), with the model of the
-/// half on that source. The ledger's key (`ts`, `turnId`, source) makes a repeat harmless.
-/// The count booked.
+/// half on that source, the run's tokens (`cost.p`, `cost.c`, `cost.ca`) and how it ended
+/// (`reportOutcome`), so the row is the turn's own and not a zero-token "done" (UNBLOCK-68).
+/// The ledger's key (`ts`, `turnId`, source) makes a repeat harmless. The count booked.
 function bookReportCost(rep) {
 	var by = rep && rep.cost && rep.cost.by;
 	var ran = (rep && rep.cost && rep.cost.models && typeof rep.cost.models === 'object') ? rep.cost.models : null;
@@ -3376,6 +3392,8 @@ function bookReportCost(rep) {
 	var m = null;
 	try { m = chat ? errandModelOf(chat) : null; } catch (e) { m = null; }
 	var credits = (window.DaimondModels && DaimondModels.CREDITS) || 'credits';
+	var tok = function (k) { var v = +rep.cost[k]; return v > 0 ? v : 0; };
+	var outcome = reportOutcome(rep);
 	var n = 0;
 	Object.keys(by).forEach(function (pid) {
 		var usd = +by[pid];
@@ -3385,8 +3403,11 @@ function bookReportCost(rep) {
 		var half = [m, m && m.workers, m && m.images].filter(function (h) { return h && h.provider === pid && h.model; })[0];
 		var model = (ran && typeof ran[pid] === 'string' && ran[pid]) ? ran[pid] : (half ? String(half.model) : '');
 		try {
-			DaimondLedger.record({ ts: +rep.ts || Date.now(), model: model, provider: pid,
-				costUsd: usd, turnId: String(rep.turnId || '') });
+			var turn = { ts: +rep.ts || Date.now(), model: model, provider: pid, costUsd: usd,
+				turnId: String(rep.turnId || ''), promptTokens: tok('p'), completionTokens: tok('c'),
+				cachedTokens: tok('ca') };
+			if (outcome) turn.outcome = outcome;
+			DaimondLedger.record(turn);
 			n++;
 		} catch (e) { /* the ledger is best-effort */ }
 	});
