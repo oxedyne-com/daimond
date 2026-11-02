@@ -244,7 +244,7 @@
 		};
 	}
 
-	/// The per-folder record for an account, made if this is the first time the
+	/// The record of one mail folder for an account, made if this is the first time the
 	/// folder has been looked at.
 	function fld(a, name) {
 		if (!a) return null;
@@ -1007,9 +1007,6 @@
 	/// landed inside whichever folder was open, disappeared when none was, and was written
 	/// somewhere else again after a switch. A real folder would not take the names either —
 	/// a Maildir file carries a colon, which nothing outside the sandbox accepts.
-	///
-	/// Messages an older build left in a folder are copied home on the next activation, and
-	/// the folder's copies are left where they are (`bring_mail_home`, src/wasm/diamond.rs).
 	function mailDir(address) {
 		return 'mail/' + String(address || '').replace(/[^A-Za-z0-9@._-]/g, '_');
 	}

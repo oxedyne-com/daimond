@@ -537,9 +537,9 @@ const OPS = {
 			OPCTX.push(pr.a, pr.b);
 			const A = pr.a, Bd = pr.b;
 			const sync = async (X, Y, k) => { for (let i = 0; i < k; i++) for (const [P, Q] of [[X, Y], [Y, X]]) {
-				await P.page.evaluate(async () => { try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older */ } return window.DaimondSync.flush ? DaimondSync.flush() : DaimondSync.push(); }).catch(() => {});
+				await P.page.evaluate(async () => { try { } catch (e) { /* older */ } return window.DaimondSync.flush ? DaimondSync.flush() : DaimondSync.push(); }).catch(() => {});
 				await opwait(500);
-				await Q.page.evaluate(async () => { try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older */ } return DaimondSync.pull(); }).catch(() => {});
+				await Q.page.evaluate(async () => { try { } catch (e) { /* older */ } return DaimondSync.pull(); }).catch(() => {});
 				await opwait(500); } };
 			for (const X of [A, Bd]) { await X.page.evaluate(() => DaimondDiamond.seedDefaults()); }
 			await standard(A.page);

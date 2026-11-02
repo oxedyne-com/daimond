@@ -8,7 +8,7 @@ import { DaimondPanels } from './layout.js';
 import { noticeDialog } from './consent.js';
 import { tOr } from './settingsui.js';
 // page-split: end imports
-export let DaimondTerm, FsaDB; // page-split: hoisted
+export let DaimondTerm; // page-split: hoisted
 // page-split: install 77
 
 /// The crystal ceiling: how large a Diamond's summary may grow before a write that grows it
@@ -227,7 +227,7 @@ export var TermRootRow = {
 		reset.type = 'button';
 		reset.id = 'termroot-reset';
 		reset.className = 'termroot-btn';
-		reset.textContent = tOr('termroot.reset', 'Granted folder');
+		reset.textContent = t('termroot.reset');
 		reset.addEventListener('click', function () {
 			var m = TermRootRow.machine;
 			setTerminalRootFor(m && m.ws, '');
@@ -972,22 +972,18 @@ export function install() { // page-split: install
 		/// The `open` request, composed on the Rust side.
 		///
 		/// **This is the whole of the fence question.** The page hands over what it
-		/// knows — which Diamond, its granted toolchains, how big the screen is —
+		/// knows — which Diamond, how big the screen is —
 		/// and Rust answers with the request the wire carries, fence included, by
 		/// the same `fence_spec` a `Tool::Run` goes through. Where that edge is
 		/// missing the answer is a refusal, never a request this page filled in.
 		async function request() {
-			var b = { own_dir: '', toolkits: [] };
+			var b = { own_dir: '' };
 			try { b = await Files.bounds(); } catch (e) { /* no Diamond open */ }
 			var ask = {
 				// THE DIAMOND, AND NOT ITS MARKS (HIST-SAFE U2): `pty_request` reads what it
 				// reaches itself, and refuses an ask that still carries the lists. None for
 				// no Diamond open, which is the user's own terminal at the granted root.
 				diamond:   (b.own_dir && pg.currentDiamond) ? String(pg.currentDiamond.id) : '',
-				// The toolchains the user granted this Diamond. Without them a session
-				// in a Diamond granted Rust met `cargo` as a refusal, because the fence
-				// never named the toolchain and the hand clamps to what it was told.
-				toolkits:  b.toolkits || [],
 				// The folder the user chose for a terminal on this computer, or '' for the
 				// granted root. Validated in `pty_request` against what the MACHINE offered,
 				// so a value this page invented is ignored rather than honoured.
@@ -1231,173 +1227,6 @@ export function install() { // page-split: install
 		};
 	})();
 	window.DaimondTerm = DaimondTerm;
-
-	// Persist an FSA FileSystemDirectoryHandle across reloads.  Handles are
-	// structured-cloneable, so IndexedDB can store them where localStorage
-	// cannot.  A single "workspace" slot is kept (MVP: one active root).
-	//
-	// FOLDER IDS (M2, 2026-09-24) live in their OWN database, `daimond-folders[-ns]`, and NOT
-	// in `daimond-fsa`. A version-2 `daimond-fsa` with a `folders` store was tried first and
-	// reverted (QA finding F1): a tab on the old bundle holds a v1 connection open for as long
-	// as it is open, the v1->v2 upgrade blocks behind it, and `tryReconnect` has nowhere to put
-	// an error the user would see -- so a NEW tab booting while the OLD one is still up landed
-	// in the browser sandbox, silently, with no Reconnect button. A tab can block an upgrade of
-	// a database it already has open; it can never block one it has never opened. Each machine
-	// folder this account has opened here gets a random id, minted the first time it is picked,
-	// kept beside its handle in `daimond-folders`. The record of the marks pressed on this
-	// device keys a machine workspace by that id (markshere.js `rootKey`), because by its name
-	// alone `/home/j/usr` and `/media/usb/usr` were one place, and a mark pressed in one was in
-	// force, shared, in the other. The id is kept HERE and not in the folder: a USB copy, a
-	// clone, a restore or a replica of the folder's bytes would carry it, and so could anything
-	// with write access to the folder, a daimon included.
-	/* var */ FsaDB = (function () {
-		// The stored real-folder handle, and the folder ids, are per account: a second person
-		// at this browser must not reconnect to the first person's folder. The primary account
-		// keeps the plain names.
-		var NS = window.DaimondAccounts ? (DaimondAccounts.opfsNs() ? '-' + DaimondAccounts.opfsNs() : '') : '';
-		var DB = 'daimond-fsa' + NS, FDB = 'daimond-folders' + NS;
-		var STORE = 'handles', KEY = 'workspace', FOLDERS = 'folders';
-		var ID_RE = /^[0-9a-f]{32}$/;
-		// Both databases are version 1 and stay that way: a second store never needs a schema
-		// bump here, only a database of its own.
-		function open(name, store) {
-			return new Promise(function (resolve, reject) {
-				var req = indexedDB.open(name, 1);
-				req.onupgradeneeded = function () {
-					var db = req.result;
-					if (!db.objectStoreNames.contains(store)) db.createObjectStore(store);
-				};
-				req.onsuccess = function () {
-					var db = req.result;
-					// The account's deletion must not wait on this tab.
-					db.onversionchange = function () { db.close(); };
-					resolve(db);
-				};
-				req.onerror = function () { reject(req.error); };
-			});
-		}
-		// One transaction, and the connection closed after it: a connection left open is
-		// one that blocks the account's deletion, silently.
-		function tx(name, store, mode, fn) {
-			return open(name, store).then(function (db) {
-				return new Promise(function (resolve, reject) {
-					var t;
-					try { t = db.transaction(store, mode); }
-					catch (e) { db.close(); reject(e); return; }
-					var out = fn(t.objectStore(store));
-					t.oncomplete = function () {
-						var v = out && out.result !== undefined ? out.result : undefined;
-						db.close();
-						resolve(v);
-					};
-					t.onerror = function () { db.close(); reject(t.error); };
-					t.onabort = function () { db.close(); reject(t.error); };
-				});
-			});
-		}
-		// ANOTHER TAB'S FOLDERS (HK1 of HR's QA round 3, 2026-09-27). Each tab hands its engine
-		// the ids of the folders this device knows, and an id minted or forgotten in one tab is
-		// news to every other: each hands its engine the list again (`Files` `reknow`). A tab
-		// does not hear its own post; its own mint is read by the activation that made it.
-		var chan = null;
-		try { if (typeof BroadcastChannel === 'function') chan = new BroadcastChannel(FDB); }
-		catch (e) { chan = null; }
-		function told() {
-			try { if (chan) chan.postMessage('folders'); }
-			catch (e) { /* no channel: each tab still reads the record before a restore */ }
-		}
-		function mint() {
-			var b = new Uint8Array(16);
-			crypto.getRandomValues(b);
-			return Array.prototype.map.call(b, function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join('');
-		}
-		async function resolveId(handle) {
-			var ids = [], known = [];
-			await tx(FDB, FOLDERS, 'readonly', function (s) {
-				var q = s.openCursor();
-				q.onsuccess = function () {
-					var c = q.result;
-					if (!c) return;
-					if (typeof c.key === 'string' && ID_RE.test(c.key)) { ids.push(c.key); known.push(c.value); }
-					c.continue();
-				};
-			});
-			// Awaited one by one outside the transaction, which would not outlive the wait.
-			for (var i = 0; i < ids.length; i++) {
-				var same = false;
-				try { same = !!known[i] && await known[i].isSameEntry(handle); } catch (e) { same = false; }
-				if (same) return ids[i];
-			}
-			var id = mint();
-			await tx(FDB, FOLDERS, 'readwrite', function (s) { s.put(handle, id); });
-			told();
-			return id;
-		}
-		// Has the folder `handle` names gone from where it was picked? Only a look inside it
-		// can say, and only with a grant; a refusal of the look says nothing.
-		async function gone(handle) {
-			try {
-				if (!handle || typeof handle.queryPermission !== 'function') return false;
-				if ((await handle.queryPermission({ mode: 'read' })) !== 'granted') return false;
-				await handle.values().next();
-				return false;
-			} catch (e) {
-				return !!(e && e.name === 'NotFoundError');
-			}
-		}
-		// One resolution at a time in this tab, so two activations of a new folder at once
-		// cannot mint it two ids.
-		var chain = Promise.resolve();
-		return {
-			save:  function (h) { return tx(DB, STORE, 'readwrite', function (s) { s.put(h, KEY); }); },
-			load:  function ()  { return tx(DB, STORE, 'readonly',  function (s) { return s.get(KEY); }); },
-			clear: function ()  { return tx(DB, STORE, 'readwrite', function (s) { s.delete(KEY); }); },
-			/// The id of the folder `handle` names on this device: the one it was given the
-			/// first time it was picked, found with `isSameEntry`, or a new one kept for it.
-			/// Asked once, when a folder becomes the workspace, so that every reader of a
-			/// grant compares a string and stays synchronous.
-			folderId: function (handle) {
-				var run = chain.then(function () { return resolveId(handle); });
-				chain = run.catch(function () { /* the caller hears it */ });
-				return run;
-			},
-			/// The ids of the folders this device knows, for the engine to tell another
-			/// folder's version row from one it cannot place (HX1 of HR's QA, 2026-09-25).
-			/// A folder whose kept handle says it is no longer there -- moved or renamed
-			/// while its grant held -- is not one: its rows are asked about, not left for
-			/// good. A handle the browser will not let Daimond look into is kept, since
-			/// nothing says it has gone.
-			known: async function () {
-				var ids = [], kept = [];
-				await tx(FDB, FOLDERS, 'readonly', function (s) {
-					var q = s.openCursor();
-					q.onsuccess = function () {
-						var c = q.result;
-						if (!c) return;
-						if (typeof c.key === 'string' && ID_RE.test(c.key)) { ids.push(c.key); kept.push(c.value); }
-						c.continue();
-					};
-				});
-				var out = [];
-				for (var i = 0; i < ids.length; i++) {
-					if (!(await gone(kept[i]))) out.push(ids[i]);
-				}
-				return out;
-			},
-			/// Forget `id`: "Forget" (`forgetRoot`) drops the folder's kept handle too, so
-			/// a folder picked again after it gets a fresh id and its marks wait for "Use here"
-			/// (M2-F4). A no-op where `id` is empty, which nothing was ever kept under.
-			forget: function (id) {
-				if (!id) return Promise.resolve();
-				return tx(FDB, FOLDERS, 'readwrite', function (s) { s.delete(id); })
-					.then(function (v) { told(); return v; });
-			},
-			/// Call `fn` whenever another tab of this account mints a folder's id or forgets one.
-			changed: function (fn) {
-				if (chan && typeof fn === 'function') chan.addEventListener('message', function () { fn(); });
-			},
-		};
-	})();
 } // page-split: end install
 
 export function install_2() { // page-split: install

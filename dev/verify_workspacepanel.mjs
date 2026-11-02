@@ -23,7 +23,10 @@
 //   P2  no scope/reach/kits/instructions chip in the DOM; the head holds the title, the ⋯ (toolchains, a
 //       Diamond's alone) and the ×; the focus section names the focus, draws Recent newest first and Can
 //       change; on a phone its rows and ◈ are 44px.
-//   N1  Can change rows = own folder ∪ marks in force ∪ waiting marks ∪ granted toolchains, set equality
+//   G2  (GRANT-G2, D-20261031-11) one "In focus" list: no "Can change" / "Read only" heading, toolchain
+//       row or toolchain offer anywhere in the panel. The N1 checks of the removed Can change list went
+//       with it:
+//   N1  (retired) Can change rows = own folder ∪ marks in force ∪ waiting marks ∪ granted toolchains, set equality
 //       both ways against the fence's own inputs (`DaimondDiamond.bounds`); every lit paperclip in the
 //       tree is in that set; a toolchain granted from the head ⋯ appears in it.
 //   P3  a tree row shows at most its ◈ at rest: no paperclip, pen or ×; the rest is in the row ⋯, which
@@ -32,11 +35,11 @@
 //       read only; on a phone the ◈ is 44px.
 //   N5  pressing a mark's ◈ takes it away at once, with no dialog: the row stays where it was, dimmed,
 //       with an Undo; the Undo puts it back in force; left alone, the Undo goes after five seconds and
-//       the mark stays away. Can change keeps N1 throughout (a taken row is not one of its rows).
+//       the mark stays away; its In focus row is dimmed with an Undo too.
 //   P4  the head holds exactly the title, the ⋯ and the ×: no new-file, new-folder, upload or refresh
 //       button, no mode chips or transfer buttons; the crumb starts at the store's name and its line holds
 //       + New (file, folder, upload, and import on Chromium); the head ⋯ holds the store's doors, refresh,
-//       Daimond's files, Show hidden files and, for a Diamond, Toolchains…; hidden files toggle the dot rows.
+//       Daimond's files and Show hidden files; hidden files toggle the dot rows.
 //   N4  File… or Folder… puts a name row at the top of the listing, focused; Enter makes it (a file opens),
 //       Escape makes nothing, and a relist keeps the name being typed.
 //   N7  the head and the crumb line hold names, never a sentence.
@@ -396,7 +399,7 @@ async function device(tag, s, size, stacked) {
 	}
 }
 
-// ── P2 and N1: the focus section ──────────────────────────────────────────────────
+// ── P2 and G2: the focus section ──────────────────────────────────────────────────
 const FOCUS = () => {
 	const vis = (el) => !!el && !el.hidden && el.offsetParent !== null && el.getBoundingClientRect().height > 0;
 	const head = document.querySelector('#panel-work .railhead');
@@ -407,12 +410,22 @@ const FOCUS = () => {
 		for (let el = gl && gl.nextElementSibling; el && el.classList.contains('r'); el = el.nextElementSibling) out.push(el);
 		return out;
 	};
-	const can = rows('can'), rec = rows('recent');
-	// A toolchain ghost (E3) is an offer, not part of the fence.
-	const keys = can.filter((r) => r.dataset.kind !== 'taken' && r.dataset.kind !== 'kitghost').map((r) => r.dataset.kind === 'kit' ? 'kit:' + r.dataset.kit
-		: r.dataset.kind + ':' + r.dataset.path + (r.querySelector('.place') ? ':ro' : '')).sort();
+	const can = rows('focus'), rec = rows('recent');
+	const keys = can.filter((r) => r.dataset.kind !== 'taken').map((r) => r.dataset.kind + ':' + r.dataset.path).sort();
+	// GRANT-G2 absence gate (D-20261031-11): the Workspace panel draws one "In focus" list, and no
+	// "Can change" / "Read only" heading, toolchain row or toolchain offer anywhere in it.
+	const T = (k) => (window.DaimondI18n && DaimondI18n.t(k)) || '';
+	const words = [T('dws.can_change'), T('dws.readonly'), 'Can change', 'Read only'].filter((w) => w && !/^dws\./.test(w));
+	const panel = document.querySelector('#panel-work');
+	const txt = panel ? panel.innerText : '';
+	const grantRows = [
+		...[...(panel ? panel.querySelectorAll('.gl[data-group="can"], [data-kind="kit"], [data-kind="kitghost"], [data-kit], [data-act="kits"], [data-act="readonly"], [data-act="share"]') : [])]
+			.map((e) => e.tagName.toLowerCase() + '[' + (e.dataset.group || e.dataset.kind || e.dataset.kit || e.dataset.act) + ']'),
+		...words.filter((w) => txt.includes(w)).map((w) => 'text:' + w),
+	];
+	// A lit row is one whose ◈ is on; the read-only ◈ (.ro) went with GRANT-G2 (eeb432c82), and its absence is gated above.
 	const lit = [...document.querySelectorAll('#panel-work .files-tree .files-row')]
-		.filter((r) => r.querySelector('.attach-btn.on, [data-act="mark"].on, [data-act="mark"].ro')).map((r) => (r.dataset.path || '').replace(/\/$/, ''));
+		.filter((r) => r.querySelector('.attach-btn.on, [data-act="mark"].on')).map((r) => (r.dataset.path || '').replace(/\/$/, ''));
 	const h = (el) => el ? Math.round(el.getBoundingClientRect().height) : 0;
 	return {
 		gone: ['.files-scope', '.files-reach', '.files-kits', '#instructions-chip', '.instructions-chip', '.files-mark-here', '.attached-group']
@@ -422,7 +435,8 @@ const FOCUS = () => {
 		close: vis(head && head.querySelector('.panel-close')),
 		shown: vis(sec),
 		sh: sec && sec.querySelector('.sh') ? sec.querySelector('.sh').textContent : null,
-		hasCan: !!(sec && sec.querySelector('.gl[data-group="can"]')),
+		hasCan: !!(sec && sec.querySelector('.gl[data-group="focus"]')),
+		grantRows,
 		rec: rec.map((r) => r.dataset.path),
 		keys, lit,
 		minRow: Math.min(...[...can, ...rec].map(h)),
@@ -437,52 +451,13 @@ async function focusSection(page, T2, id, phone) {
 	// On a phone the Workspace is a destination, left by the app's own way back (I7), so it draws no ×.
 	// Since P4 the ⋯ is always there: it holds the store's doors, refresh and the view's switches.
 	check(f.title && f.close === !phone && f.more, `${T2}: the head holds the title, the ⋯${phone ? '' : ' and the ×'}`, JSON.stringify({ title: f.title, more: f.more, close: f.close }));
-	check(f.shown && f.hasCan && !!f.sh, `${T2}: the focus section names the focus and draws Can change`, JSON.stringify({ shown: f.shown, sh: f.sh, can: f.hasCan }));
+	check(f.shown && f.hasCan && !!f.sh, `${T2}: the focus section names the focus and draws In focus`, JSON.stringify({ shown: f.shown, sh: f.sh, focus: f.hasCan }));
+	check(f.grantRows.length === 0, `${T2}: no "Can change" / "Read only" / toolchain row in the Workspace panel`, f.grantRows.join(' '));
 	if (phone) check(f.minRow >= 44 && f.minDm >= 44, `${T2}: its rows and ◈ are 44px on a phone`, `row ${f.minRow}px, ◈ ${f.minDm}px`);
 	if (!id) return;
 	check(f.sh === 'Kitchen renovation', `${T2}: the section head is the Diamond's name`, `"${f.sh}"`);
 	check(f.rec.length === 2 && /zz_saved_by_the_daimon\.md$/.test(f.rec[0]) && /saved_01\.md$/.test(f.rec[1]),
 		`${T2}: Recent draws the daimon's writes, newest first`, JSON.stringify(f.rec));
-	const n1 = async () => {
-		const want = await page.evaluate(async (id) => DaimondRecent.boundsKeys(await DaimondDiamond.bounds(id)), id);
-		f = await page.evaluate(FOCUS);
-		const a = want.filter((k) => !f.keys.includes(k)), b = f.keys.filter((k) => !want.includes(k));
-		return { want, a, b };
-	};
-	let r = await n1();
-	const kinds = new Set(r.want.map((k) => k.split(':')[0]));
-	check(kinds.has('own') && kinds.has('mark') && kinds.has('ghost'), `${T2}: the fixture has its own folder, a mark in force and a waiting one`, r.want.join(' '));
-	check(r.a.length === 0 && r.b.length === 0, `${T2}: N1 Can change rows = the fence's inputs, both ways`, `missing ${r.a.join(' ') || '-'}; extra ${r.b.join(' ') || '-'}`);
-	const marks = r.want.filter((k) => /^mark:/.test(k)).map((k) => k.replace(/^mark:/, '').replace(/:ro$/, ''));
-	const stray = f.lit.filter((p) => !marks.some((m) => m === p || m.endsWith(']' + p)));
-	check(stray.length === 0, `${T2}: N1 every lit paperclip in the tree is in Can change`, `lit ${f.lit.join(' ') || '-'}; stray ${stray.join(' ') || '-'}`);
-	// A toolchain, from the head ⋯.
-	const menu = await page.evaluate(async () => {
-		document.querySelector('#panel-work [data-act="ws-more"]').click();
-		await new Promise((r) => setTimeout(r, 300));
-		// Since P4 the toolchains are one item further in: Toolchains… opens them.
-		const k = document.querySelector('.railhead-menu [data-act="kits"]');
-		if (k) { k.click(); await new Promise((r) => setTimeout(r, 300)); }
-		const m = document.querySelector('.railhead-menu');
-		const out = { head: m && m.querySelector('.railhead-menu-head') ? m.querySelector('.railhead-menu-head').textContent : null, kits: m ? m.querySelectorAll('[data-kit]').length : 0 };
-		const py = m && m.querySelector('[data-kit="python"]');
-		if (py) py.click();
-		return out;
-	});
-	check(!!menu.head && menu.kits === 5, `${T2}: the head ⋯ holds the toolchains under a label`, JSON.stringify(menu));
-	for (let i = 0; i < 20; i++) { await wait(150); if ((await page.evaluate(FOCUS)).keys.includes('kit:python')) break; }
-	r = await n1();
-	check(r.want.includes('kit:python') && r.a.length === 0 && r.b.length === 0, `${T2}: a toolchain granted from the ⋯ is a Can change row, and N1 holds`, `missing ${r.a.join(' ') || '-'}; extra ${r.b.join(' ') || '-'}`);
-	// Leave it as it was, so the next size starts from the same Diamond.
-	await page.evaluate(async () => {
-		document.querySelector('#panel-work [data-act="ws-more"]').click();
-		await new Promise((r) => setTimeout(r, 300));
-		const k = document.querySelector('.railhead-menu [data-act="kits"]');
-		if (k) { k.click(); await new Promise((r) => setTimeout(r, 300)); }
-		const py = document.querySelector('.railhead-menu [data-kit="python"]');
-		if (py) py.click();
-	});
-	await wait(600);
 }
 
 // ── P3 and N5: the row's ◈, its ⋯, and the inline Undo ───────────────────────────
@@ -561,10 +536,10 @@ async function rowControls(page, T2, id, phone) {
 		await closeMenu(page);
 	}
 	if (!id) return;
-	// The user's own mark in force: share and read only in its ⋯; then N5 on its ◈.
+	// The user's own mark in focus: rename and delete in its ⋯, no share or read only; then N5 on its ◈.
 	const dir = 'papers';
-	const inForce = async () => page.evaluate(async (id) => DaimondRecent.boundsKeys(await DaimondDiamond.bounds(id))
-		.some((k) => /^mark:.*papers$/.test(k)), id);
+	const inForce = async () => page.evaluate(async (id) => JSON.parse(await DaimondCore.diamondApp().links_touching('diamond:' + id) || '[]')
+		.some((l) => l.owner === id && l.rel === 'holds' && /papers$/.test(String(l.to || ''))), id);
 	const st = () => page.evaluate((sel) => {
 		const r = document.querySelector(sel), b = r && r.querySelector('[data-act="mark"]');
 		const can = [...document.querySelectorAll('#panel-work .files-focus .r')].find((e) => /papers$/.test(e.dataset.path || ''));
@@ -576,8 +551,8 @@ async function rowControls(page, T2, id, phone) {
 	await page.evaluate((sel) => document.querySelector(sel + ' [data-act="row-more"]').click(), rowSel(dir));
 	await wait(200);
 	m = await page.evaluate(MENU);
-	check(!!m && ['share', 'readonly', 'rename', 'delete'].every((a) => m.acts.includes(a)) && !m.acts.includes('download'),
-		`${T2}: P3 the ⋯ on the user's own mark holds share and read only, and a folder no download`, JSON.stringify(m));
+	check(!!m && ['rename', 'delete'].every((a) => m.acts.includes(a)) && !['share', 'readonly', 'download'].some((a) => m.acts.includes(a)),
+		`${T2}: P3 the ⋯ on the user's own mark holds rename and delete, no share or read only, and a folder no download`, JSON.stringify(m));
 	await closeMenu(page);
 	const s0 = await st();
 	check(await inForce() && /\bon\b/.test(s0.mark || ''), `${T2}: N5 the fixture's mark is in force and its ◈ is the accent`, JSON.stringify(s0));
@@ -587,10 +562,7 @@ async function rowControls(page, T2, id, phone) {
 	check(!(await inForce()) && !s1.dialog, `${T2}: N5 the ◈ takes the mark away at once, with no dialog`, JSON.stringify(s1));
 	check(s1.taken && s1.undo && !!(await page.evaluate((sel) => document.querySelector(sel), rowSel(dir))),
 		`${T2}: N5 the row stays where it was, dimmed, with an Undo`, JSON.stringify(s1));
-	check(!!s1.can && s1.can.taken && s1.can.undo, `${T2}: N5 its Can change row stays too, dimmed, with an Undo`, JSON.stringify(s1.can));
-	let f = await page.evaluate(FOCUS);
-	const want = await page.evaluate(async (id) => DaimondRecent.boundsKeys(await DaimondDiamond.bounds(id)), id);
-	check(want.every((k) => f.keys.includes(k)) && f.keys.every((k) => want.includes(k)), `${T2}: N5 N1 holds while the Undo stands`, `rows ${f.keys.join(' ')}; fence ${want.join(' ')}`);
+	check(!!s1.can && s1.can.taken && s1.can.undo, `${T2}: N5 its In focus row stays too, dimmed, with an Undo`, JSON.stringify(s1.can));
 	await page.click(rowSel(dir) + ' [data-act="undo"]', { force: true });
 	await wait(1200);
 	const s2 = await st();
@@ -603,7 +575,6 @@ async function rowControls(page, T2, id, phone) {
 	await page.evaluate(async (id) => {
 		const app = DaimondCore.diamondApp();
 		await app.add_link(id, 'diamond:' + id, 'dir:[browser]papers', 'holds', '', 'user');
-		await DaimondAttach.confirmHere(id, 'dir:[browser]papers');
 		document.dispatchEvent(new CustomEvent('daimond-links-changed'));
 	}, id);
 	await wait(900);
@@ -663,7 +634,7 @@ async function headAndNew(page, T2, id, phone, tag) {
 	check(h.chips === 0, `${T2}: P4 no mode chips or transfer buttons`, `${h.chips}`);
 	check(h.root === h.store && h.newIn, `${T2}: P4 the crumb starts at the store's name and its line holds + New`, JSON.stringify({ root: h.root, store: h.store, newIn: h.newIn }));
 	check(h.said.length === 0, `${T2}: N7 no sentence in the head or the crumb line`, h.said.slice(0, 3).join(' | '));
-	// The head ⋯: the store's doors, refresh and the view's switches; Toolchains… for a Diamond alone.
+	// The head ⋯: the store's doors, refresh and the view's switches; no Toolchains… (GRANT-G2).
 	const head = await page.evaluate(() => {
 		const more = document.querySelector('#panel-work [data-act="ws-more"]');
 		if (!more) return null;
@@ -673,8 +644,8 @@ async function headAndNew(page, T2, id, phone, tag) {
 		if (m) more.click();
 		return { acts, pick: typeof window.showDirectoryPicker === 'function', cloud: !!window.DaimondCloud };
 	});
-	const hw = head ? [...(head.pick ? ['machine', 'import', 'savecopy'] : []), ...(head.cloud ? ['cloud'] : []), 'refresh', 'system', 'hidden', ...(id ? ['kits'] : [])] : [];
-	check(!!head && !!head.acts && head.acts.join(' ') === hw.join(' '), `${T2}: P4 the head ⋯ holds the browser store's doors, refresh, Daimond's files, hidden files${id ? ' and Toolchains…' : ''}`,
+	const hw = head ? [...(head.pick ? ['machine', 'import', 'savecopy'] : []), ...(head.cloud ? ['cloud'] : []), 'refresh', 'system', 'hidden'] : [];
+	check(!!head && !!head.acts && head.acts.join(' ') === hw.join(' '), `${T2}: P4 the head ⋯ holds the browser store's doors, refresh, Daimond's files, and hidden files (no Toolchains…)`,
 		JSON.stringify({ got: head && head.acts, want: hw }));
 	// + New: a file, a folder, an upload, and on Chromium in the browser store an imported folder.
 	const nw = await page.evaluate(() => {

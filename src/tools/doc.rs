@@ -893,6 +893,11 @@ pub fn recall_query(args: &str) -> Outcome<RecallQuery> {
 	Ok(RecallQuery { re: opts.re, before: opts.before, after: opts.after, limit: opts.limit })
 }
 
+/// The turn a `turn_get` call asks for (`n`), 0 where it names none.
+pub fn turn_get_n(args: &str) -> u32 {
+	u32::try_from(uint_arg(args, "n", 0, u32::MAX as usize)).unwrap_or(0)
+}
+
 /// The activity record's part of `recall` (UNBLOCK-11): every device's file merged and searched
 /// as one text under [`crate::activity::ACTIVITY_DIR`], with `file_search`'s own matcher. The
 /// prompt carries only the newest [`crate::activity::PROMPT_CAP`] bytes of it, and says that
@@ -1319,10 +1324,6 @@ pub(crate) fn is_skills_disclosure(path: &str) -> bool {
 /// inside Daimond's own directory.  [`compose`] is where that happens and it is the only correct
 /// way to put a second bound on a turn -- assigning one over another deletes the other in silence,
 /// which is what `hand/REVIEW.md` §1.12 was.
-///
-/// [`Bound::Toolkit`] is a third thing again -- a grant of a toolchain ON THE MACHINE, which no
-/// file tool can address -- and it is here because it is one more thing the user decided about this
-/// turn, not because it is a prefix rule.
 #[derive(Clone, Debug, Eq, PartialEq, ToDat, FromDat)]
 pub enum Bound {
     /// Nothing under this workspace-relative prefix may be written, moved onto, or deleted.
@@ -1406,18 +1407,6 @@ pub enum Bound {
     /// learn that a name exists and its size and times, though never its contents or a directory's
     /// entries.
     OnlyWriteUnder(String),
-    /// A toolchain the user granted this Diamond (see [`Toolkit`]).
-    ///
-    /// The odd one out, and deliberately so.  Every other rule here is a workspace-relative prefix
-    /// the file tools test a path against; this one names paths ON THE MACHINE, which no file tool
-    /// can address -- `file_read` is jailed to the workspace and a compiler is not in it.  So
-    /// [`ToolContext::may_read`] and [`ToolContext::may_write`] ignore it, and it reaches only
-    /// [`fence_spec`], where a command's fence is built.
-    ///
-    /// It rides here rather than in a field of [`ToolContext`] because it is the same kind of thing
-    /// as its neighbours -- something the user decided about this turn -- and because a rule the
-    /// caller must remember to copy into a second place is a rule that gets dropped.
-    Toolkit(Toolkit),
     /// Nothing at all: no path may be read or written, and no command may run.
     ///
     /// The answer to a scope that was asked for and could not be expressed -- a Diamond whose
@@ -1433,6 +1422,22 @@ pub enum Bound {
     // it existed when the bounds were drawn (see [`secret_path`]).  A deny, composed as one.
     // Kimberlite's whole-home bounds carry it; the command fence gets the names from a walk.
     NoSecretNames,
+    // R8 (UNBLOCK-82 TREE-1f): held only while the turn is tainted, by both doors, and nothing
+    // while it is clean, so a clean chat writes his shell, his tools and his `.git` as he does,
+    // and one that has read outside content cannot change what runs as him.  See [`in_force`].
+    NoWriteTainted(String), // then a `NoWrite`: a row that exists
+    NoReadTainted(String),  // then a `NoRead` too: a row that does not, so it cannot be made
+}
+
+/// The rules of `bounds` that hold now: a [`Bound::NoWriteTainted`] and a [`Bound::NoReadTainted`]
+/// become their plain rule while the turn is `tainted`, and drop out while it is clean.  The one
+/// place the taint split is read, by the command fence and the file tools alike.
+pub fn in_force(bounds: &[Bound], tainted: bool) -> Vec<Bound> {
+    bounds.iter().filter_map(|b| match b {
+        Bound::NoWriteTainted(p) => if tainted { Some(Bound::NoWrite(p.clone())) } else { None },
+        Bound::NoReadTainted(p)  => if tainted { Some(Bound::NoRead(p.clone())) } else { None },
+        other                    => Some(other.clone()),
+    }).collect()
 }
 
 /// The bounds a turn running under a skill's declaration runs with.
@@ -1471,137 +1476,82 @@ pub fn skill_bounds(skill_dirs: &[String]) -> Vec<Bound> {
 }
 
 /// The bounds a chat runs with -- its own turn and every worker it dispatches: **writing and
-/// running confined to the chat's workspace, reading free**.
+/// running confined to the chat's own folder, reading free**.
 ///
-/// **The same shape as [`diamond_bounds`], because a chat has a workspace the way a Diamond has
-/// one.**  It delegates rather than restating, so the two cannot drift: a chat fenced by a second
-/// copy of this reasoning would be fenced by whichever copy someone last remembered to edit, and
-/// the only difference between the surfaces is what fills the arguments.
+/// The same shape as [`diamond_bounds`], to which it delegates so the two cannot drift.  `scratch`
+/// is the chat's own working folder under [`CHAT_ROOT`]: always writable, so an agent has
+/// somewhere to put what it produces without the user answering a question first.  **By the FILE
+/// TOOLS, which is where that promise is kept**: it is browser storage, so it is not a directory a
+/// command can run in and it is not in the fence [`fence_spec`] builds (granting it there named a
+/// path no browser makes on disk, and the hand then refused every root beside it).
 ///
-/// The delegation is also where the reading went, once.  A chat used to be unfenced and its WORKERS
-/// fenced on the write verb alone; on 2026-08-12 this function was made to delegate, and since
-/// [`diamond_bounds`] fenced both verbs the whole surface silently lost free reading -- a decision
-/// nobody made.  Both halves are now true at once: the conversation is fenced as its workers are
-/// (2026-08-11, when a chat's own turn edited two files of the user's book uninvited), and the
-/// fence is on the verb (see [`Bound::OnlyWriteUnder`]).  The remedy the user asked for is a
-/// WORKING DIRECTORY and not a permission dialog: mark a folder into the workspace, and inside it
-/// nothing interrupts you.  The mark IS the permission, and this is where that sentence is
-/// enforced.
-///
-/// **What the workspace is NOT is everything the paperclip attached.**  An attachment carries two
-/// independent things and only one of them reaches here.  Note and Read are a COST decision about
-/// what goes into the prompt -- Note names a path so the user need not type it, Read pulls the
-/// contents in -- they are mutually exclusive, they are both reading, and neither grants any reach.
-/// The workspace mark is separate and orthogonal: a path can be in the workspace *and* Read.  A
-/// caller that passed its whole attachment list here would have made Note into a grant of WRITING
-/// and RUNNING, which is what `dev/ATTACH_CONTRACT.md` §6 has always said it must not be -- and is
-/// the whole of what the mark grants now that reading was never the paperclip's to give.
-///
-/// `scratch` is the chat's own working folder under [`CHAT_ROOT`] -- always in the workspace and
-/// always writable, so an agent has somewhere to put what it produces without the user answering a
-/// question first, exactly as a Diamond's own directory is.  **By the FILE TOOLS, which is where
-/// that promise is kept**: it is browser storage, so it is not a directory a command can run in and
-/// it is not in the fence [`fence_spec`] builds.  Granting it there named a path no browser makes
-/// on disk, and the hand -- rightly refusing a grant it cannot resolve -- then refused every root
-/// beside it, so every `run` in every chat failed.  `workspace` are the paths the user
-/// marked into this chat's workspace.  `read_only` are those of them to be consulted rather than
-/// edited; there is no control for that on the chat surface yet, and the argument is here so that
-/// when one arrives it plugs into the rule [`diamond_bounds`] already enforces instead of inventing
-/// a second idea.
-///
-/// A scope with no places at all is [`Bound::Nowhere`], for the reason [`diamond_bounds`] gives:
-/// the empty prefix is not a folder but every folder.
-///
-/// # Arguments
-/// * `scratch` - The chat's own working directory, workspace-relative.
-/// * `workspace` - The paths the user marked into this chat's workspace.
-/// * `read_only` - Which of them may be read but not written.
-pub fn chat_bounds(scratch: &str, workspace: &[String], read_only: &[String]) -> Vec<Bound> {
-    diamond_bounds(scratch, workspace, read_only)
+/// No folder is granted beside it (D-20261031-11): attaching points the model at a file, and on
+/// Kimberlite the agreed tree is the fence's, not this list's.
+pub fn chat_bounds(scratch: &str) -> Vec<Bound> {
+    diamond_bounds(scratch)
 }
 
-/// The bounds a Diamond's daimon runs with: **it may write and run in its own workspace and
-/// nowhere else, and it may read anywhere the user already opened.**
+/// The bounds a Diamond's daimon runs with: **it may write and run in its own directory, and it
+/// may read anywhere the user already opened.**
 ///
 /// The verb decides, and [`Bound::OnlyWriteUnder`] is where that decision is written out in full --
 /// including why the fence a COMMAND runs inside does not split the verb, and why an unattended
 /// worker reads freely too.  Read it before changing anything here.
 ///
-/// `own_dir` is the Diamond's own directory (`diamonds/<id>`), which is always in scope and always
-/// writable -- a daimon that could reach nothing until the user attached something could not even
-/// keep its own crystal, and "somewhere to work" must never be a question the user has to answer
-/// before starting.
-///
-/// `attached` are the workspace-relative files and directories the user has put in this Diamond's
-/// workspace.  `read_only` are those of them the user attached to be consulted rather than edited;
-/// they are expressed as a write allow plus a write fence, because that is exactly what they are and
-/// it needs no third kind of rule.  They stay in the write allow-list rather than being dropped from
-/// it, and that is load-bearing in one place: [`start_dir`] picks a turn's starting directory out of
-/// that list, so a Diamond whose only attachment is read-only still has somewhere on the machine to
-/// run -- which `dev/verify_diamondcwd.mjs` asserts.
+/// `own_dir` is the Diamond's own directory (`diamonds/<id>`), always writable -- a daimon that
+/// could reach nothing could not even keep its own crystal.  No folder is granted beside it
+/// (D-20261031-11): attaching is focus, never reach.
 ///
 /// An EMPTY result would mean an unbounded turn -- [`ToolContext::may_write`] treats no bounds as no
-/// restriction -- so this never returns empty: `own_dir` is always present.
-///
-/// A path that normalises away is DROPPED rather than kept, and a scope left with no places at all
-/// becomes [`Bound::Nowhere`].  This is the whole of the guard, and it is worth saying why it is
-/// needed: the empty string is not a folder but every folder.  `under(p, "")` is true for every
-/// path, and [`fence_spec`] resolves an empty prefix to the granted root itself, so a Diamond whose
-/// directory arrived empty -- an id read before it was known, a caller that passed the wrong
-/// variable -- was fenced to the whole grant.  That is the failure this function exists to prevent,
-/// arriving through the function itself.
-///
-/// # Arguments
-/// * `own_dir` - The Diamond's own directory, workspace-relative.
-/// * `attached` - Paths in this Diamond's workspace.
-/// * `read_only` - Which of `attached` may be read but not written.
-pub fn diamond_bounds(own_dir: &str, attached: &[String], read_only: &[String]) -> Vec<Bound> {
-    let mut out: Vec<Bound> = Vec::new();
-    // How many real places the scope names.  Counted rather than inferred from `out.len()`, which
-    // the deny rules below would make non-zero whatever the caller passed.
-    let mut places = 0usize;
+/// restriction -- so a directory that normalises away becomes [`Bound::Nowhere`].  The empty string
+/// is not a folder but every folder: `under(p, "")` is true for every path, and [`fence_spec`]
+/// resolves an empty prefix to the granted root itself, so a Diamond whose directory arrived empty
+/// -- an id read before it was known, a caller that passed the wrong variable -- would be fenced to
+/// the whole grant.
+pub fn diamond_bounds(own_dir: &str) -> Vec<Bound> {
     let own = normalise(own_dir);
-    if !own.is_empty() {
-        out.push(Bound::OnlyWriteUnder(own.clone()));
-        places += 1;
-    }
-    for path in attached {
-        let p = normalise(path);
-        if p.is_empty() {
-            continue;
-        }
-        out.push(Bound::OnlyWriteUnder(p));
-        places += 1;
-    }
-    for path in read_only {
-        // In the scope, and fenced against writing. A path in `read_only` that is not also in
-        // `attached` is still in the scope by this, which is deliberate: the caller should not have
-        // to list a thing twice to say "consult this, do not edit it".
-        let p = normalise(path);
-        if p.is_empty() {
-            continue;
-        }
-        out.push(Bound::OnlyWriteUnder(p.clone()));
-        out.push(Bound::NoWrite(p));
-        places += 1;
-    }
-    if places == 0 {
-        // A scope was asked for and none could be expressed.  The deny rules alone would leave a
-        // turn with no write allow-list, which means NO restriction on writing -- the opposite of
-        // what was asked.
+    if own.is_empty() {
         return vec![Bound::Nowhere];
     }
+    let mut out = vec![Bound::OnlyWriteUnder(own)];
     // Daimond's own directory is out of bounds inside a Diamond too, and this is the ONLY rule here
-    // that fences a read: attaching `.daimond` would otherwise hand a daimon the rules about what
-    // agents may do, and now that reading is free everywhere else, the deny is the whole of what
-    // stops it. It is a deny rather than a hole in an allow-list precisely so that it does not
-    // depend on the scope naming anything.
+    // that fences a read: the deny is the whole of what stops a daimon reading the rules about
+    // what agents may do, and a deny rather than a hole in an allow-list so that it does not depend
+    // on the scope naming anything.
     out.push(Bound::NoWrite(DAIMOND_DIR.to_string()));
     out.push(Bound::NoRead(DAIMOND_DIR.to_string()));
-    // THE RECORD IS NOT THE TURN'S TO WRITE -- this Diamond's, or any other's, or any chat's,
-    // whatever a mark covers.  That is not a bound in this list: it is [`is_keeper_record`],
+    // THE RECORD IS NOT THE TURN'S TO WRITE -- this Diamond's, or any other's, or any chat's.
+    // That is not a bound in this list: it is [`is_keeper_record`],
     // which `ToolContext::may_write` asks of every bounded turn.
     out
+}
+
+/// The bounds of one act at the restore door (`run_diamond_tool`): **the store's own folder, and
+/// the one path its open restore handed out, and nothing else** (D-20261031-11, lead ruling 1 Nov
+/// 2026).  Marks were what reached a place outside the folder until then; the restore's own
+/// hand-out is now the capability, scoped to that restore and ending with it.  `handed` is whether
+/// the open restore handed out `raw` ([`crate::store::diamond::restore_handed`]).  A path outside
+/// both is refused in a sentence naming why.  His files outside the folder are put back by
+/// Kimberlite's keeper, not here.
+pub fn restore_door_bounds(own_dir: &str, raw: &str, handed: bool, acts: bool)
+    -> std::result::Result<Vec<Bound>, String>
+{
+    let own = normalise(own_dir);
+    let p = normalise(raw);
+    let mine = !own.is_empty() && !p.is_empty() && (p == own || p.starts_with(&fmt!("{}/", own)));
+    if !mine && !(handed && !p.is_empty()) {
+        return Err(fmt!(
+            "'{}' is not in this store's own folder nor among the files its open restore handed \
+            out, so this door does not {} it. Nothing was done.", raw,
+            if acts { "write" } else { "read" }));
+    }
+    let mut out = diamond_bounds(&own);
+    // The one handed-out path beside the folder: the write allow-lists are a union, so this opens
+    // that file and no neighbour of it.
+    if !mine {
+        out.push(Bound::OnlyWriteUnder(p));
+    }
+    Ok(out)
 }
 
 /// The folders inside a keeper's home (`diamonds/<id>/`, `chats/<id>/`) that are Daimond's record

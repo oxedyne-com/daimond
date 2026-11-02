@@ -77,7 +77,8 @@ fn the_port_through_a_pipe_answers_as_the_port_directly() {
     let files = differ(&here.1, &there.1);
     assert!(lines.is_empty(), "the answers differ:\n{}", lines.join("\n"));
     assert!(files.is_empty(), "the stores differ:\n{}", files.join("\n"));
-    assert!(here.0.len() >= 82, "the script logged {} lines", here.0.len());
+    // 82 until the two marks calls (live_bounds, reach) went with D-20261031-11.
+    assert!(here.0.len() >= 81, "the script logged {} lines", here.0.len());
     let errs = |l: &[String]| l.iter().filter(|x| x.starts_with("refuse ") && x.contains("Err⟨")).count();
     let refused = errs(&there.0);
     assert!(refused > 0 && refused == errs(&here.0), "{} refusal case(s) answered Err through the \
@@ -375,8 +376,7 @@ fn child_ctx(pipe: PipeLink, name: &str) -> ToolContext<NativeHost> {
         daimon_of:   s(D),
         turn:        String::new(),
         keeper:      String::new(),
-        unconfirmed: Vec::new(),
-        live:        None,
+        scope:       None,
         by_model:    false,
         restoring:   0,
         by:          None,

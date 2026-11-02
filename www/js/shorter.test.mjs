@@ -51,7 +51,6 @@ function world() {
 		ChatStore,
 		notePeerRef: () => {},
 		onChatsChangedElsewhere: () => {},
-		DaimondMarksHere: { chatSettle: () => false, chatDropAll: () => {} },
 		dropChatApp: () => {},
 		trail: (k, d) => { rec.trail.push(k + ' | ' + d); },
 		diag: () => {},

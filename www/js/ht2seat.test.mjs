@@ -3,7 +3,7 @@
    read, withdraw on loss, and the folder rule (HT2 part b; design
    daimond_handoff_truth_design_20261023 §2.5, §2.6; F4c, UNBLOCK-32).
    ------------------------------------------------------------
-   The REAL peer.js and markshere.js in one simulated tab, and the REAL
+   The REAL peer.js in one simulated tab, and the REAL
    `maybeAutoDispatch`, `sendPresenceRead` and `chatNeedsFolder` lifted out
    of daimond.js, on a fixed clock.
 
@@ -18,8 +18,6 @@
          one whose read lands decides on what it read, presuming nothing;
      A6  a withdrawal racing a claim: the turn runs exactly once, both orders;
      A7  an old gateway's map: today's verdicts on every reader;
-     A8  a Diamond folder rooted on the asker only: Here, and the turn runs
-         here; rooted on both: offered.
      A9  the map unknown (a re-read did not land, HT2 c4): the switch's
          options carry it and the switch reads Here.
 
@@ -41,8 +39,6 @@ const BREAKS = {
 	sendread: ['d', 'if (!read) {', 'if (false) {'],																	// A5
 	withdraw: ['p', "if (!recDerived(rec) || rec.listening !== false) return false;", 'return false;'],					// A6
 	olddrv:   ['p', "return !!rec && typeof rec.listening === 'boolean';", 'return !!rec;'],							// A7
-	folder:   ['d', "try { return DaimondMarksHere.rootedHere(chat.diamondId || '', chat.id || '', rootHere()); }",
-		'try { return false; }'],																						// A8
 	seatunk:  ['d', 'presenceUnknown: !!(window.DaimondPresence && DaimondPresence.unknown && DaimondPresence.unknown()),', ''],	// A9
 };
 
@@ -55,7 +51,6 @@ function check(name, cond, detail) {
 
 let PEER = source('peer.js');
 let DMND = source('daimond.js');
-const MARKS = source('markshere.js');
 const STAMP = source('stamp.js');
 if (BREAK) {
 	const b = BREAKS[BREAK];
@@ -90,7 +85,7 @@ function makeTab() {
 	};
 	function CustomEventShim(t, o) { this.type = t; this.detail = o && o.detail; }
 	const quiet = { debug: () => {}, log: () => {}, warn: () => {}, error: console.error };
-	for (const body of [STAMP, PEER, MARKS]) {
+	for (const body of [STAMP, PEER]) {
 		const fn = new Function(
 			'window', 'document', 'crypto', 'localStorage',
 			'TextEncoder', 'TextDecoder', 'CustomEvent', 'Blob',
@@ -111,13 +106,11 @@ const SELF = 's0000000000000000000000000000000';
 const RUN  = 'a0000000000000000000000000000000';		// the nominated runner (argonaut)
 const GIL  = 'g0000000000000000000000000000000';		// a desktop no tab has stated for (gilgamesh)
 const PHN  = 'p0000000000000000000000000000000';		// the phone the person is at
-const FID  = '0123456789abcdef0123456789abcdef';		// the asker's folder id
 const DIA  = '18f0a0b0c0d0e0f';						// the chat's Diamond
 const CHAT = { id: 'c1', diamondId: DIA, messages: [] };
 
 const tab = makeTab();
 const P = tab.DaimondPeer;
-const M = tab.DaimondMarksHere;
 const W = P.DISPATCH_FRESH_MS;
 
 // A row from a deriving gateway: the posture stated 5 min ago, the doors held now.
@@ -203,11 +196,11 @@ function liftSend(refresh) {
 	const make = new Function('window', 'DaimondSync', 'DaimondPeer', 'DaimondPresence', 'setTimeout', 'navigator',
 		'turnHold', 'selfDeviceId', 'nominatedDeviceId', 'diag', 'reconcileRoster', 'presenceWithLeaseBusy',
 		'turnPresence', 'isPhoneViewport', 'chatToolsEnabled', 'preferredWorkerLabel', 'fleetCurrentBuild',
-		'handoffWhenAway', 'chatRunningOn', 'chatSeatHere', 'chatNeedsFolder', 'electProvider', 'electSources', body);
+		'handoffWhenAway', 'chatRunningOn', 'chatSeatHere', 'electProvider', 'electSources', body);	// chatNeedsFolder went with marks (UNBLOCK-82)
 	const fn = make(win, DaimondSync, DaimondPeer, DaimondPresence, fakeTimeout, { onLine: true },
 		() => false, () => SELF, () => RUN, () => {}, () => {}, (p) => p,
 		(p) => p, () => false, () => true, () => '', () => '',
-		() => false, () => '', () => false, () => false, () => '', () => []);
+		() => false, () => '', () => false, () => '', () => []);
 	return { fn, delays, decided, presence };
 }
 {
@@ -291,37 +284,15 @@ console.log('\nA7. an old gateway\'s map: today\'s verdicts');
 		P.attendedPeer({ [PHN]: Object.assign({}, ph, { attendedAt: NOW - 5 * MIN }) }, RUN, NOW, W) === null);
 }
 
-// ── A8 ── the folder rule, the asker's half lifted from daimond.js
-console.log('\nA8. a Diamond folder rooted on the asker');
-{
-	const root = 'machine:usr#' + FID;
-	tab.localStorage.setItem(M.KEY, JSON.stringify({ v: 1, d: { [DIA]: [{ id: 'l1', to: 'dir:[machine:usr]books/x',
-		rel: 'holds', share: false, root }] }, c: {} }));
-	const lifted = liftFn(DMND, 'chatNeedsFolder');
-	const needs = lifted ? new Function('window', 'DaimondMarksHere', 'selfHoldsFolder', 'rootHere', 'diamondFolder',
-		lifted + '\nreturn chatNeedsFolder;')(tab, M, () => true, () => root, () => '') : () => undefined;
-	const nf = needs(CHAT);
-	check('A8a. the asker reads the chat as rooted here', nf === true, 'needFolder=' + nf);
-	const s = sw({ [RUN]: derived({ folder: false, lastSeen: NOW - 1000 }) }, { needFolder: nf });
-	const d = ad({ [RUN]: derived({ folder: false, lastSeen: NOW - 1000 }) }, { needFolder: nf });
-	check('A8. rooted on the asker only: the switch reads Here, and the turn runs here',
-		s.choice === 'here' && d.dispatch === false, 'choice=' + s.choice + ' dispatch=' + d.dispatch);
-	const s2 = sw({ [RUN]: derived({ folder: true, lastSeen: NOW - 1000 }) }, { needFolder: nf });
-	check('A8b. rooted on both: offered', s2.choice === 'runner', 'choice=' + s2.choice);
-	const browser = lifted ? new Function('window', 'DaimondMarksHere', 'selfHoldsFolder', 'rootHere', 'diamondFolder',
-		lifted + '\nreturn chatNeedsFolder;')(tab, M, () => false, () => 'browser', () => '')(CHAT) : false;
-	check('A8c. no folder open here: nothing required', browser === false);
-}
-
 // ── A9 ── the switch's options, lifted from daimond.js, over an unknown map
 console.log('\nA9. the map unknown');
 {
 	const lifted = liftFn(DMND, 'seatOpts');
 	const mk = (unknown) => lifted ? new Function('window', 'DaimondPresence', 'DaimondPeer', 'current', 'selfDeviceId',
 		'isPhoneViewport', 'isMobileDeviceSelf', 'preferredWorkerLabel', 'fleetCurrentBuild', 'nominatedDeviceId',
-		'handoffWhenAway', 'chatSeatHere', 'chatNeedsFolder', 'electProvider', 'electSources', lifted + '\nreturn seatOpts;')(
+		'handoffWhenAway', 'chatSeatHere', 'electProvider', 'electSources', lifted + '\nreturn seatOpts;')(
 		{ DaimondPresence: { unknown: () => unknown } }, { unknown: () => unknown }, P, CHAT, () => SELF,
-		() => true, () => true, () => '', () => '', () => RUN, () => true, () => false, () => false, () => '', () => [])(CHAT) : {};
+		() => true, () => true, () => '', () => '', () => RUN, () => true, () => false, () => '', () => [])(CHAT) : {};
 	const o = mk(true);
 	check('A9a. the switch\'s options carry the unknown map', o.presenceUnknown === true, 'presenceUnknown=' + o.presenceUnknown);
 	const s = P.seatSwitch(CHAT, { [RUN]: derived() }, o, NOW);

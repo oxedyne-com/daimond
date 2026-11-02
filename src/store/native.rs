@@ -223,8 +223,8 @@ pub const FILE_WAIT_MS: u64 = 60_000;
 /// The lock a mutation of `key` takes (HL5b): a store-owned key's file lock, named as the tab names
 /// it ([`crate::fsname::file_lock_name`]), or `None` for a key no Diamond owns.
 pub fn file_lock(key: &str) -> Option<String> {
-    crate::tools::store_owned(FileRoot::Opfs, key)
-        .map(|_| crate::fsname::file_lock_name(false, key))
+    crate::tools::store_owned(key)
+        .map(|_| crate::fsname::file_lock_name(key))
 }
 
 impl NativeBackend {
@@ -496,8 +496,6 @@ impl StoreEnv for NativeBackend {
     /// no trace at all).
     fn trail(what: &str, detail: &str) { eprintln!("TRAIL {}: {}", what, detail); }
     fn heap_mb() -> u32 { 0 }
-    /// No device presses are kept natively, so there is none to drop.
-    fn forget_press(_owner: &str, _id: &str) -> Outcome<()> { Ok(()) }
     /// By each sidecar's own stamp, so a write by any other process or handle is seen.
     fn links_check() -> crate::store::LinksCheck { crate::store::LinksCheck::Stamp }
     /// No mark: the stamp is the check.
@@ -594,7 +592,7 @@ fn route(root: FileRoot, path: &str) -> Route {
     match crate::tools::storage_for(root, path, Some(RUNNER_FOLDER), "") {
         // The path as given, so the backend's own check refuses an escape as OPFS does.
         Storage::Sandbox(_) => Route::Own(path.to_string()),
-        Storage::Folder(_) | Storage::Machine(_) | Storage::Nowhere => Route::User,
+        Storage::Folder(_) | Storage::Machine(_) => Route::User,
     }
 }
 

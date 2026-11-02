@@ -11,7 +11,7 @@ import { DaimondPanels } from './layout.js';
 import { artefactsIn, harvestArtefacts, signalLinksChanged } from './links.js';
 import { toast } from './passkey_phrase.js';
 import { renderHistory } from './turns.js';
-import { chatHoldsJson, confirmDialog, dialog, noticeDialog } from './consent.js';
+import { confirmDialog, dialog, noticeDialog } from './consent.js';
 import { selectChat } from './chats.js';
 import { carriedProdBase } from './tilestyle.js';
 import { diamondApp, dropTagFilter, loadDiamonds, relTime, tagChip, tagsOf } from './diamonds.js';
@@ -1088,14 +1088,10 @@ export async function renderArtefacts() {
 // is broken". `dev/ROOT_SEPARATION.md` §2.1 says a single tree spanning two
 // roots is the confusion to prevent; this is that confusion in the links.
 
-/// Which workspace is open, as an attachment records it. `fid` is a machine folder's
-/// id on this device, which only the record of marks reads (`rootHere`); a reference
-/// syncs to other devices, where it would mean nothing, so `rootedRef` leaves it out.
+/// Which workspace is open, as an attachment records it: the browser's, the page's only
+/// one since the machine folder left it (D-20261031-11).
 function currentRoot() {
-	var h = null, fid = '';
-	try { h = Files.folder(); fid = Files.folderId(); } catch (e) { /* the panel has not started yet */ }
-	return h ? { kind: 'machine', name: String(h.name || ''), fid: String(fid || '') }
-		: { kind: 'browser', name: '' };
+	return { kind: 'browser', name: '' };
 }
 
 /// A reference carrying the workspace it belongs to:
@@ -1109,19 +1105,36 @@ function currentRoot() {
 /// 2026-09-23). A folder called `usr` on one machine and a folder called `usr`
 /// on another are two places, and a mark made on argonaut was matched by name
 /// and applied to gilgamesh's disk -- where a daimon then removed four of its
-/// top-level folders. The device list after `@` is where the mark is in force;
-/// see `refReachable` and `confirmMarkHere`.
+/// top-level folders. The device list after `@` records where it was attached;
+/// see `refReachable`.
 export function rootedRef(kind, path) {
 	var r = currentRoot();
 	return kind + ':[' + (r.kind === 'machine' ? 'machine:' + r.name + '@' + deviceId() : 'browser')
 		+ ']' + path;
 }
 
+/// The devices a machine reference was made on, after the folder's name:
+/// `usr@<id>` or `usr@<id>,<id>`. Hex ids only, so a folder whose own name
+/// has an `@` in it keeps it. A runner's gateway-minted id is one too (STARFIX).
+var REF_DEVICES_RE = /@((?:[0-9a-f]{32}|[0-9a-ikmnp-z]{16})(?:,(?:[0-9a-f]{32}|[0-9a-ikmnp-z]{16}))*)$/;
+
 /// Split a reference into its kind, its workspace, and its path -- and, for a
-/// machine reference, the folder's name and the devices it was made on. The
-/// parse lives in markshere.js, which needs it for the same grant.
+/// machine reference, the folder's name and the devices it was made on. A
+/// reference written before roots were recorded comes back with `root: null`.
 export function parseRef(ref) {
-	return DaimondMarksHere.parseRef(ref);
+	var s = String(ref || '');
+	var i = s.indexOf(':');
+	if (i <= 0) return { kind: '', root: null, name: '', devices: [], path: '' };
+	var kind = s.slice(0, i), rest = s.slice(i + 1);
+	var m = /^\[(browser|machine)(?::([^\]]*))?\]/.exec(rest);
+	if (!m) return { kind: kind, root: null, name: '', devices: [], path: rest.trim() };
+	var name = m[2] || '', devices = [];
+	var d = REF_DEVICES_RE.exec(name);
+	if (d) {
+		devices = d[1].split(',');
+		name = name.slice(0, d.index);
+	}
+	return { kind: kind, root: m[1], name: name, devices: devices, path: rest.slice(m[0].length).trim() };
 }
 
 /// Two references name the same thing when their kind and path agree.
@@ -1155,8 +1168,8 @@ function sameThing(a, b) {
 /// one folder -- this device's, in force, and another device's, waiting, BOTH
 /// spelt identically -- used to have the paperclip DRAW the row in force
 /// (`attachedOf`, which reads the already force-ranked `attached`) while a PRESS,
-/// unranked, took the first row in sidecar order: "Use here" then granted a twin
-/// nobody meant to touch, and a read-only mark became read-and-change. Ranking is
+/// unranked, took the first row in sidecar order and acted on a twin nobody
+/// meant to touch. Ranking is
 /// the one resolver both paint (`attachedOf`) and press (`linkTo`) call now, so
 /// they can no longer disagree -- and it is what breaks the tie BETWEEN two exact
 /// spellings, never what excludes the only one there is: the M4 seed's browser
@@ -1188,24 +1201,21 @@ export function samePlace(list, ref, refOf, rankOf) {
 	return exact !== null ? exact : near;
 }
 
-// ── A mark counts only on a device where it was pressed (R2) ─────────
+// ── Focus links: what the user attached, as "look here" ─────────────
 //
-// Until the re-check of 2026-09-23 a row that said `by:"user"` and carried this
-// device's id in its reference was in force here -- and a row is bytes in a
-// sidecar that syncs whole, so anything that could write those bytes could
-// write a grant. The device list in a machine reference stays, as a record of
-// where the mark was made, and grants nothing. The grant is the intersection
-// of the row and this device's own record of what was pressed on it
-// (markshere.js), and `markForce` below is the only test of it.
+// An attachment is a `by:user` row in a Diamond's link sidecar, or a holding
+// on a chat record. Since D-20261031-11 (1 Nov 2026) it grants nothing: the
+// reach is the agreed tree on Kimberlite, or the diamond's own files in the
+// browser, and an attachment only says where to look.
 
-/// The workspace that is open, as the record names it: `browser`, or
-/// `machine:<name>#<folder id>`, so two folders of one name are two places (M2).
-export function rootHere() {
-	return DaimondMarksHere.rootKey(currentRoot());
+/// The workspace that is open, as a Recent row records where it was written: `browser`,
+/// or `machine:<name>#<folder id>`, so two folders of one name are two places (M2).
+export function placeHere() {
+	var r = currentRoot();
+	return r.kind === 'machine' ? 'machine:' + String(r.name || '') + '#' + String(r.fid || '') : 'browser';
 }
 
-/// Can this reference be opened from the workspace that is open? Reachability
-/// only -- whether a mark is IN FORCE here is `markForce`'s question. The same
+/// Can this reference be opened from the workspace that is open? The same
 /// root, and for a machine folder the same name where the reference carries
 /// one; a reference written before roots were recorded fits either, and so
 /// does one naming a store path (`diamonds/`, `mail/`, `chats/`), whatever
@@ -1213,101 +1223,15 @@ export function rootHere() {
 /// written `file:[machine:…]diamonds/<id>/transcript.md` before this build
 /// named store paths as such, read as living on another workspace, and one
 /// press from here added a second row rather than finding the one already
-/// held). Mirrors `DaimondMarksHere.fits`, which asks the same question of
-/// `markshere.js`'s own callers.
+/// held).
 export function refReachable(ref) {
 	var p = parseRef(ref);
 	var r = currentRoot();
-	if (!p.root || DaimondMarksHere.isStorePath(p.path)) return true;
+	if (!p.root || DaimondAppPaths.isStorePath(p.path)) return true;
 	if (p.root !== r.kind) return false;
 	// A different folder on the same machine is a different place, and a reference
-	// carries only the folder's name, so two folders of one name both fit. That is
-	// reachability only: the record binds a grant to the folder's id on this device
-	// (`rootHere`), so a mark pressed in one of them waits in the other (M2).
+	// carries only the folder's name, so two folders of one name both fit.
 	return p.root !== 'machine' || !p.name || p.name === r.name;
-}
-
-/// Is this stored link a mark at all -- the user's `holds` or `consulted` on a
-/// file or folder, or one from before rows said who wrote them? The only kind a
-/// share flag may stand on.
-export function isUsersMark(link) {
-	return DaimondMarksHere.isMark(link);
-}
-
-/// THE ONE TEST OF A DIAMOND'S GRANT ON THIS DEVICE: `{ rel, share }` where
-/// `link` is `owner`'s mark in force here, null where it is not. Every reader
-/// of a grant -- the fence, the share roots, the panel, the notice, the prefix
-/// -- asks this and nothing else. A trashed Diamond grants nothing.
-export function markForce(owner, link) {
-	if (!owner || !link || trashed(owner)) return null;
-	return DaimondMarksHere.force(owner, link, rootHere());
-}
-
-/// Is this stored link a mark in force on this device, for the Diamond whose
-/// sidecar holds it?
-export function markInForce(link) {
-	return !!link && !!markForce(link.owner, link);
-}
-
-/// Is this stored link a mark NOT in force on this device, that the user can
-/// bring into force here with one press? Its Diamond's own, on a root that fits
-/// the one open, and with no entry here: made on another device, before R2, or
-/// arriving in a copy nobody pressed on this device. A row a model or a fold
-/// wrote is never offered: confirming it would be the user rubber-stamping an
-/// agent's grant, and it was never a mark to begin with.
-export function markWaiting(link) {
-	if (!link) return false;
-	var rel = link.rel || '';
-	if (rel !== 'holds' && rel !== 'consulted') return false;
-	if (trashed(link.owner)) return false;
-	return DaimondMarksHere.waiting(link.owner, link, rootHere());
-}
-
-/// A press here whose record did not land: the mark stays waiting, and says so.
-export function marksNotSaved() {
-	toast(t('marks.not_saved'), true);
-}
-
-/// Bring a mark that is not in force here into force on this device: the user's
-/// own act, from the notice above the composer or the paperclip.
-///
-/// THIS DEVICE'S RECORD ONLY. It used to write the row again with this device
-/// added and remove the old one, which moved the Diamond's stamp, cost a sync
-/// round, and left two rows where two devices confirmed one between syncs --
-/// after which a removal on one of them took one row and the other came back as
-/// waiting. The row is left exactly as it is, and the entry is written with the
-/// share off whatever the row says: sharing is its own press (`toggleAttachShare`),
-/// the grant that lets other devices change and delete files on this disk, and a
-/// confirmation, one at a time or all at once, must not give it as a side effect.
-export async function confirmMarkHere(diamondId, link) {
-	if (!diamondId || !link || link.owner !== diamondId || !markWaiting(link)) return false;
-	if (!DaimondMarksHere.grant(diamondId, link, rootHere(), { share: false })) {
-		marksNotSaved();
-		return false;
-	}
-	signalLinksChanged();
-	return true;
-}
-
-/// Ask before a paperclip brings a waiting mark into force: the notice's own "Use here",
-/// naming the mark, where it was made, and -- where `ro` is given -- whether the press
-/// grants read only or read and change. Resolves true where it is pressed.
-///
-/// ONE TAP NEVER GRANTS (R2 QA, 2026-09-24). The paperclip is a toggle, drawn pressed
-/// on a waiting mark, and it confirmed that mark on one press -- which a touch screen
-/// gives no title to warn of, so a tap meant to take a folder off granted it instead.
-/// Now the press opens the question and the grant is a second, labelled press. Taking
-/// a mark off is the ◈ or the ×, as it is for every mark.
-///
-/// GUARDED (F1, QA 2026-09-25). One held Enter used to open this question AND answer
-/// it: focus landed on "Use here" and the OS's own key-repeat pressed it before the
-/// person could read the question. It takes R6's guard now -- focus on Cancel, and the
-/// yes disabled for its first second -- exactly as the held delete does, through the
-/// one door `dialog` owns rather than a copy of its own.
-export function askUseHere(path, where, ro) {
-	var kind = ro === undefined ? '' : ('\n' + t(ro ? 'dws.readonly' : 'dws.readwrite'));
-	return confirmDialog('\u25c8 ' + path + (where ? '\n' + where : '') + kind + '\n\n' + t('marks.waiting_why'),
-		t('marks.use_here'), { title: t('marks.use_ask'), danger: false, guard: true, ask: 'mark-use-here' });
 }
 
 /// One of this Diamond's own rows, as the store holds it, by id.
@@ -1323,47 +1247,12 @@ export async function ownLinkById(diamondId, id) {
 	return null;
 }
 
-/// Record a mark just written here, from the row as the store holds it, read
-/// back by the id the add returned -- never from the reference the page passed
-/// in, which the store may have spelt otherwise.
-export async function markHere(diamondId, id) {
-	var row = await ownLinkById(diamondId, id);
-	// A row that is not a mark has no grant to record: one on a file in the Diamond's
-	// own directory lists it and nothing more (M1).
-	if (row && !DaimondMarksHere.isMark(row)) return true;
-	if (!row || !DaimondMarksHere.grant(diamondId, row, rootHere(), { share: false })) {
-		marksNotSaved();
-		return false;
-	}
-	return true;
-}
-
-/// Give `diamondId` a place on this device: the ◈'s add, and a yes to the write question
-/// (E2). A row already in force is left; otherwise a `holds` row is written and the press
-/// recorded here. With the ◈, the row ⋯ and confirmMarkHere, the only writers (N3).
-export async function grantHoldHere(diamondId, path, dir) {
+/// Attach `path` to `diamondId`'s focus: the ◈'s add and the Doc's Attach. A row already
+/// there is left; otherwise one `by:user` row is written. Attaching grants nothing.
+export async function focusAdd(diamondId, path, dir) {
 	var ref = rootedRef(dir ? 'dir' : 'file', path);
-	var link = await linkTo(diamondId, ref);
-	if (link && markForce(diamondId, link)) return true;
-	return await markHere(diamondId,
-		await diamondApp().add_link(diamondId, 'diamond:' + diamondId, ref, 'holds', '', 'user'));
-}
-
-/// The mark at `path` of `diamondId`'s that waits on this device, or null.
-export async function waitingMarkAt(diamondId, path) {
-	var ks = ['dir', 'file'];
-	for (var i = 0; i < ks.length; i++) {
-		var l = await linkTo(diamondId, rootedRef(ks[i], path));
-		if (l && markWaiting(l)) return l;
-	}
-	return null;
-}
-
-/// The device a waiting mark was made on, as the user calls it.
-export function markDevice(link) {
-	var p = parseRef(link.other || '');
-	var dev = (p.devices || []).filter(function (d) { return d !== deviceId(); })[0];
-	return dev ? deviceLabelFor(dev) : t('dws.another_device');
+	if (await linkTo(diamondId, ref)) return true;
+	return !!(await diamondApp().add_link(diamondId, 'diamond:' + diamondId, ref, 'holds', '', 'user'));
 }
 
 /// Take a link off, made here: the row, and this device's entry for it. The one
@@ -1380,7 +1269,6 @@ export async function removeLinkHere(link) {
 	var gone = id
 		? await diamondApp().remove_link(link.owner, id)
 		: await diamondApp().remove_bare_link(link.owner, link.from || '', to, link.rel || '');
-	DaimondMarksHere.drop(link.owner, id, to);
 	return gone;
 }
 
@@ -1388,11 +1276,6 @@ export async function removeLinkHere(link) {
 /// hand-written row the store cannot single out used to go quietly.
 export function dropRefused(e) {
 	noticeDialog(t('link.drop_failed'), friendlyError(e));
-}
-
-/// Say a share toggle the store refused, as `dropRefused` says a removal.
-export function shareRefused(e) {
-	noticeDialog(t('link.share_failed'), friendlyError(e));
 }
 
 /// How to say where an unreachable attachment actually lives -- and, for a
@@ -1442,12 +1325,11 @@ export async function ownLinks(diamondId) {
 		// daimon group's Drop to remove now, never a paperclip meant for a
 		// person's mark.
 		//
-		// BY `by`, NOT `isUsersMark`. A row in the Diamond's own directory --
-		// Keep's transcript among them -- is `by:"user"` and is not a mark
+		// BY `by` ALONE. A row in the Diamond's own directory -- Keep's
+		// transcript among them -- is `by:"user"` and is not an attachment
 		// either (M1), but `linkTo` must still find it, to draw it held and to
-		// let the paperclip toggle it off: `isUsersMark` folds both exclusions
-		// into one test, and filtering by it here took M1's own rows out of
-		// reach along with fold's.
+		// let the paperclip toggle it off: a test that also left out the own
+		// directory took M1's own rows out of reach along with fold's.
 		return links.filter(function (l) {
 			return l.owner === diamondId && l.from === 'diamond:' + diamondId && (l.by === 'user' || !l.by);
 		});
@@ -1460,16 +1342,9 @@ export function linkAmong(diamondId, own, ref) {
 	try {
 		// Matched on what it names, not on the string, so an attachment made before
 		// roots were recorded is still found by a button that now writes one -- but
-		// only in a reference this workspace can open (M3), and ranked exactly as
-		// the paint does (F2, `attachedOf`): in force here, then waiting, then
-		// merely reachable, so a press can never land on a twin the paperclip drew
-		// as something else.
+		// only in a reference this workspace can open (M3).
 		return samePlace(own, ref, function (l) { return l.other; },
-			function (l) {
-				if (markForce(diamondId, l)) return 2;
-				if (markWaiting(l)) return 1;
-				return refReachable(l.other) ? 0 : -1;
-			});
+			function (l) { return refReachable(l.other) ? 0 : -1; });
 	} catch (e) { /* unreadable: treat as not held */ }
 	return null;
 }
@@ -1588,41 +1463,7 @@ export function chatAttachFind(chatId, ref) {
 	return samePlace(chatAttachList(chatId), ref, function (a) { return a.ref; });
 }
 
-/// A chat's holdings that claim a workspace mark or a Read NOT in force on this
-/// device, and that one press here brings into force: pressed on another device,
-/// before R2, or arriving in a record nobody pressed here. The chat record rides
-/// the sync parcel, so what it claims is only a claim (R2).
-export function chatWaiting(chatId) {
-	if (!chatId || trashed(chatId)) return [];
-	var root = rootHere();
-	return chatAttachList(chatId).filter(function (a) {
-		return DaimondMarksHere.chatWaiting(chatId, a, root) && !underTrashedDiamond(a.path);
-	});
-}
-
-/// Record a press here on one of a chat's holdings (`opts.ws`, `opts.read`).
-function chatGrantHere(chatId, a, opts) {
-	if (DaimondMarksHere.chatGrant(chatId, a, rootHere(), opts)) return true;
-	marksNotSaved();
-	return false;
-}
-
-/// Bring one of a chat's holdings into force on this device: the user's own press.
-/// This device's record only -- the reference is not rewritten and `metaAt` does
-/// not move, so a confirmation is not a change that travels.
-export function chatConfirmHere(chatId, ref) {
-	var rec = chatAttachFind(chatId, ref);
-	if (!rec || !DaimondMarksHere.chatWaiting(chatId, rec, rootHere())) return false;
-	if (!chatGrantHere(chatId, rec, { ws: !!rec.ws, read: rec.state === 'read' })) return false;
-	attachChanged();
-	dropChatApp(chatId);
-	return true;
-}
-
-/// Take one holding off a chat: the record's claim and this device's entry.
-/// Never a confirmation, whatever it waits for here: the × means remove, and a
-/// person taking off a folder they do not recognise must not grant it instead
-/// (QA 2026-09-24, F7). The Diamond's × has the same door, `removeLinkHere`.
+/// Take one holding off a chat. The Diamond's × has the same door, `removeLinkHere`.
 function chatAttachRemove(chatId, ref) {
 	var list = chatAttachList(chatId);
 	// The chat's `holds` are a METADATA scalar (S-SYNC #5): stamp `metaAt` so a
@@ -1633,7 +1474,6 @@ function chatAttachRemove(chatId, ref) {
 	// The holding the press names, by the same rule as every other door (M3).
 	var i = list.indexOf(chatAttachFind(chatId, ref));
 	if (i < 0) return false;
-	DaimondMarksHere.chatDrop(chatId, list[i]);
 	list.splice(i, 1);
 	touchChatMeta(_hc);
 	persistChats(); attachChanged();
@@ -1649,49 +1489,20 @@ export function chatAttachToggle(chatId, ref, dir, path) {
 	var _hc = pg.chats.find(function (x) { return x.id === chatId; });
 	var had = chatAttachFind(chatId, ref);
 	if (had) {
-		// A holding not in force here is never dropped by the paperclip: it asks to
-		// confirm it on this device, the same question as a Diamond's paperclip
-		// (`askUseHere`), and the answer writes this device's record only. The
-		// paperclip alone: a × never gets here.
-		if (DaimondMarksHere.chatWaiting(chatId, had, rootHere())) {
-			var heldRef = had.ref;
-			askUseHere(had.path, refWhere(heldRef)).then(function (yes) {
-				if (yes) chatConfirmHere(chatId, heldRef);
-			});
-			return;
-		}
 		chatAttachRemove(chatId, ref);
 		return;
 	}
 	// Note is the default — ATTACH_CONTRACT.md §6: the cheaper of the two by
 	// a wide margin, and a default that spends the user's money unasked is
 	// the wrong default. It is a READING state, here as there: neither Note
-	// nor Read grants a worker permission to change anything, which is why
-	// the write fence is drawn from the LIST and not from the state.
+	// nor Read grants anything (D-20261031-11).
 	list.push({ ref: ref, dir: !!dir, path: path, state: 'note' });
-	// ── `ws`: is this in the chat's WORKSPACE? ──────────────────────
-	//
-	// The second, INDEPENDENT thing an attachment carries, and the only one that
-	// reaches the fence. `state` is a cost decision about the prompt and grants
-	// nothing; `ws` is the blast radius. A path can be in the workspace and Read
-	// at once, so they are two fields and never one with three values.
-	//
-	// Written here rather than in the object literal above so that
-	// `verify_attachfocus --break notedefault`, which anchors on that line
-	// verbatim, still finds it.
-	//
-	// FALSE, always, whatever was attached. Attaching a folder used to grant
-	// write reach to it by the mere fact of the attachment, and inheriting that
-	// as a default would carry the old meaning through the change under a new
-	// name. Marking in is its own press.
-	list[list.length - 1].ws = false;
 	touchChatMeta(_hc);
 	persistChats(); attachChanged();
 	dropChatApp(chatId);
 }
 
-/// Note or Read. A Read quotes the file into the message, which is a grant, so
-/// the press is recorded here as well as on the record that travels.
+/// Note or Read. A Read quotes the file into the message; neither grants anything.
 function chatAttachSetState(chatId, ref, state) {
 	var rec = chatAttachFind(chatId, ref);
 	if (!rec) return;
@@ -1700,32 +1511,7 @@ function chatAttachSetState(chatId, ref, state) {
 		touchChatMeta(pg.chats.find(function (x) { return x.id === chatId; }));   // holds is metadata (S-SYNC #5)
 		persistChats();
 	}
-	chatGrantHere(chatId, rec, { read: state === 'read' });
 	attachChanged();
-}
-
-/// Mark this folder into the chat's workspace, or take it back out.
-///
-/// THE PRESS THAT IS THE PERMISSION. Nothing is asked here and nothing is asked
-/// later: the fence is geography, and this is where the geography is drawn.
-///
-/// The app is dropped because `compose` in src/tools.rs INTERSECTS — which is
-/// what makes it safe to call from anywhere — so re-scoping the app a live chat
-/// already holds can only ever narrow it. A folder marked in while an app exists
-/// would then be a control that visibly did something and reached nothing, which
-/// is the defect class this whole surface was rebuilt to end.
-function chatAttachSetWorkspace(chatId, ref, on) {
-	var rec = chatAttachFind(chatId, ref);
-	if (!rec) return;
-	if (!!rec.ws !== !!on) {
-		rec.ws = !!on;
-		touchChatMeta(pg.chats.find(function (x) { return x.id === chatId; }));   // holds is metadata (S-SYNC #5)
-		persistChats();
-	}
-	// The press is the grant on THIS device; the record carries only the claim.
-	chatGrantHere(chatId, rec, { ws: !!on });
-	attachChanged();
-	dropChatApp(chatId);
 }
 
 /// Throw away the engine instance a chat holds, so the next turn builds one with
@@ -1748,44 +1534,6 @@ export function dropChatApp(chatId) {
 export function rebuildChatApp(c) {
 	if (c._generating) { c._scopeStale = true; return; }
 	c.app = null;
-}
-
-/// The folders this chat's workspace is MADE OF, as workspace-relative paths.
-///
-/// The INPUT to a fence and not a fence: the bounds are composed in Rust, by
-/// `chat_bounds`, and a page that built its own would be a second opinion
-/// about what a worker may touch, free to drift from the one enforced.
-///
-/// **Marked only.** Note and Read are a cost decision about what is quoted into
-/// the prompt, and neither grants any reach — so a path attached as Read and not
-/// marked in is not here, and the engine will refuse to open it. Handing over the
-/// whole attachment list is exactly the mistake that would make Note a grant.
-///
-/// Unreachable holdings are left out for the reason `Files.bounds` leaves
-/// them out of a Diamond's: a path that is allowed and absent reads to the
-/// model as an empty folder rather than as a folder that is somewhere else.
-export async function chatScopePaths(chatId) {
-	// A trashed chat has no scope. Asked HERE, where the list is BUILT, which is
-	// the rule stated at `function trashed`: a chat in the trash is gone from the
-	// rail and from every scope, and a worker still holding its folders would be
-	// the half-alive state the trash exists to refuse. It does not come free from
-	// the record being intact — the record is intact precisely so a restore works.
-	if (trashed(chatId)) return [];
-	var root = rootHere();
-	return chatAttachList(chatId)
-		// The MARK, and nothing else, is what widens the fence -- and only a mark
-		// pressed on this device (R2): the record is in the sync parcel, so a mark
-		// it claims is a claim until it is pressed here.
-		.filter(function (a) {
-			var f = DaimondMarksHere.chatForce(chatId, a, root);
-			return !!(f && f.ws);
-		})
-		// A door onto a Diamond the user deleted, closed for the same reason
-		// `attachmentsOf` closes it: the path resolves, and reads as an empty
-		// folder rather than as a Diamond that is gone.
-		.filter(function (a) { return !underTrashedDiamond(a.path); })
-		.map(function (a) { return a.path; })
-		.filter(function (p) { return !!p; });
 }
 
 /// Drop everything a destroyed chat leaves behind: its holdings, and its
@@ -1812,8 +1560,6 @@ export function dropChatScope(chatId) {
 	if (!chatId) return;
 	var c = pg.chats.find(function (x) { return x.id === chatId; });
 	if (c) c.holds = [];
-	// And what was pressed on it here: a chat id is reused from a counter.
-	DaimondMarksHere.chatDropAll(chatId);
 	// Under `chats/<id>/`, which is store state and therefore always in the
 	// browser's own sandbox whatever workspace is open — so this can never
 	// reach into the user's real folder, whichever one they have open.
@@ -1848,14 +1594,10 @@ export function chatScratchDir(chatId) {
 /// claim until it is pressed on this device. Without, it is a Diamond's list of
 /// marks already in force here.
 export function attachPrefixText(list, chatId) {
-	var notes = [], reads = [], root = rootHere();
+	var notes = [], reads = [];
 	(list || []).forEach(function (a) {
 		if (!refReachable(a.ref)) return;
 		if (a.state !== 'read') { notes.push(a.path); return; }
-		if (chatId) {
-			var f = DaimondMarksHere.chatForce(chatId, a, root);
-			if (!f || !f.read) return;
-		}
 		reads.push(a.path);
 	});
 	var out = [];
@@ -1903,11 +1645,8 @@ var ATTACH_READ_MAX = 40000;
 /// * `list` - A chat's holdings.
 /// * `chatId` - The chat they are held by; without it nothing is quoted.
 async function attachReadBodies(list, chatId) {
-	var root = rootHere();
 	var want = (list || []).filter(function (a) {
-		if (!chatId || a.state !== 'read' || !a.path) return false;
-		var f = DaimondMarksHere.chatForce(chatId, a, root);
-		return !!(f && f.read);
+		return !!chatId && a.state === 'read' && !!a.path;
 	});
 	var out = '';
 	for (var i = 0; i < want.length; i++) {
@@ -2003,9 +1742,8 @@ export async function syncAttachPrefix() {
 		pruneAttachState(links.map(function (l) { return l.id; }));
 		list = [];
 		links.forEach(function (l) {
-			// A mark in force here, `holds` once the record has had its say (R2).
-			var fz = markForce(f.id, l);
-			if (!fz || fz.rel !== 'holds') return;
+			// The user's own attachment, as the engine's `attached_focus` reads it.
+			if (l.by !== 'user') return;
 			var p = parseRef(l.other);
 			if ((p.kind !== 'file' && p.kind !== 'dir') || !p.path) return;
 			list.push({ ref: l.other, path: p.path, state: readAttachState(l.id) });
@@ -2015,7 +1753,7 @@ export async function syncAttachPrefix() {
 	// A CHAT quotes what it marked Read; a Diamond does not. A daimon may open
 	// everything its Diamond holds, so the instruction there is one it can carry
 	// out, and quoting the same file into a seeded composer would pay for it
-	// twice. Two surfaces, one control, and the difference is the fence.
+	// twice.
 	if (text && f.kind === 'chat') text += await attachReadBodies(list, f.id);
 	if (mine !== attachPrefixSeq || threadStarted(thread)) return;
 	if (text) thread._attachPre = text;
@@ -2313,56 +2051,21 @@ function attachFooterHead(o) {
 	}
 
 	if (o.add !== false) {
-		// A CONTROL MEANS WHAT ITS POSITION SAYS, this used to argue, and it was
-		// true of whoever laid the panel out and false of everybody else. Two `+`
-		// buttons a few pixels apart read the same, one of them granting a daimon
-		// the run of a folder and the other putting a file in front of a model,
-		// and the only difference on screen was a tooltip. On 2026-08-23 the owner
-		// could not find the control that marks a folder in; neither could the
-		// agent sent to read the source.
-		//
-		// Worse, the position was not even the whole answer. The crystal footer's
-		// `+` passes no `mark` and was labelled "Attach", while on a Diamond every
-		// folder it adds becomes a mark anyway -- `Files.attachAdd` writes a
-		// `holds` link and `Files.bounds` turns each of those into an
-		// `OnlyWriteUnder`. So the word is asked of the FOCUS as well as the group,
-		// through one function the picker reads too, and a `+` that widens a fence
-		// wears the accent that every other granting control in the app wears.
-		var grants = attachAddGrants(o);
 		var add = document.createElement('button');
 		add.type = 'button';
-		add.className = 'attach-add' + (grants ? ' grants' : '') + (o.icon ? ' icon' : '');
+		add.className = 'attach-add' + (o.icon ? ' icon' : '');
 		add.dataset.act = 'attach-add';
-		add.dataset.grants = grants ? '1' : '';
-		if (o.icon) {
-			add.textContent = '+';
-		} else {
-			add.textContent = '+ ' + t(grants ? 'attach.add_mark' : 'attach.add');
-		}
-		add.title = grants ? t('attach.ws_add') : t('attach.add');
+		add.textContent = o.icon ? '+' : '+ ' + t('attach.add');
+		add.title = t('attach.add');
 		add.setAttribute('aria-label', add.title);
 		add.addEventListener('click', function (ev) {
 			ev.stopPropagation();
-			attachPicker({ mark: !!o.mark });
+			attachPicker();
 		});
 		head.appendChild(add);
 	}
 
 	return head;
-}
-
-/// Does pressing this `+` widen what the thing in focus may reach?
-///
-/// The group is half the answer and the FOCUS is the other half. A chat's
-/// workspace group marks what it adds and its prompt group does not; a Diamond
-/// marks whatever is added from anywhere, because there is only one mechanism
-/// on that surface and attaching IS marking. One function, so the word the
-/// button wears and the words the picker says cannot come apart.
-function attachAddGrants(o) {
-	var f = attachFocus();
-	if (!f) return false;
-	if (f.kind === 'diamond') return true;
-	return !!(o && o.mark);
 }
 
 /// A scrolling region is a keyboard stop while it scrolls, and not otherwise.
@@ -2428,14 +2131,6 @@ function renderAttachFooter(box, items, head) {
 	return body;
 }
 
-/// Which workspace is open, in the app's own words — the ones the account strip
-/// and the guide already use for it, so the footer is not a second vocabulary
-/// for one idea.
-function workspaceTitle() {
-	return t(currentRoot().kind === 'machine'
-		? 'astat.workspace_native' : 'astat.workspace_browser');
-}
-
 /// The chat footer: `#chat-attachments`, above the composer. TWO GROUPS,
 /// workspace first, because they are two different kinds of claim:
 ///
@@ -2455,26 +2150,19 @@ function workspaceTitle() {
 /// until 4216383 and took the `+` inside it out of reach in exactly the state it
 /// exists for; this is that lesson, not a second discovery of it.
 export function renderChatAttachments() {
-	// The notice over the composer is about the same holdings, on either surface, and
-	// is redrawn wherever they are: every focus change, root switch and language change
-	// comes through here. The Workspace focus section is about the same focus.
-	renderMarkNotice();
+	// Every focus change, root switch and language change comes through here, and the
+	// Workspace focus section is about the same focus.
 	try { Files.renderFocus(); } catch (e) { /* the panel is not built yet */ }
 	var box = document.getElementById('chat-attachments');
 	if (!box) return;
 	var f = attachFocus();
 	if (!f || f.kind !== 'chat') { box.innerHTML = ''; box.style.display = 'none'; return; }
 	var held = chatAttachList(f.id);
-	var marked = [], noted = [];
-	held.forEach(function (a) { (a.ws ? marked : noted).push(a); });
 
 	/// One holding as a tile, whichever group it is in. The SAME component the
 	/// crystal footer and the Trash panel draw, so the three cannot drift.
 	var toTile = function (a) {
 		var away = !refReachable(a.ref);
-		// Claiming a mark or a Read nobody pressed here (R2): it opens, and says
-		// why it grants nothing yet. The notice above the composer offers the press.
-		var wait = !away && DaimondMarksHere.chatWaiting(f.id, a, rootHere());
 		return {
 			kind:   a.dir ? 'dir' : 'file',
 			path:   a.path,
@@ -2484,20 +2172,14 @@ export function renderChatAttachments() {
 			// daimon", which named the wrong thing entirely on a surface where
 			// there is no Diamond and no daimon.
 			shut:   away,
-			reason: away ? t('attach.not_here', { where: refWhere(a.ref) }) : (wait ? t('marks.waiting_why') : ''),
+			reason: away ? t('attach.not_here', { where: refWhere(a.ref) }) : '',
 			state:  a.state,
 			// Folders take the chosen view like files do: the icon toggle above
 			// governs the whole list, so a folder gets an icon cell in icon view
 			// rather than being pinned to a row of its own.
-			// A folder in the workspace list is obviously in the workspace, so it
-			// wears no redundant "Workspace" chip -- the row is the claim, and the
-			// × takes it back out. Reach is untouched: the a.ws flag still drives
-			// `scopeChatTo`; only the pointless toggle is gone from the row.
 			actions: [],
 			onState: function () { chatAttachSetState(f.id, a.ref, a.state === 'read' ? 'note' : 'read'); },
-			// The × TAKES IT OFF, and only that. Through the paperclip's toggle it
-			// confirmed a holding waiting here, so a person removing a mark they did
-			// not recognise granted it write reach and a Read instead (QA 2026-09-24, F7).
+			// The × takes it off, and only that.
 			onDrop:  function () { chatAttachRemove(f.id, a.ref); },
 		};
 	};
@@ -2525,13 +2207,6 @@ export function renderChatAttachments() {
 	// lesson of 4216383 is that the control which ends the empty state must be
 	// reachable FROM the empty state.
 	//
-	// The view toggle KEEPS its place on that band. It governed the lower group
-	// alone before, and it governs the one list now -- with marked folders
-	// staying full-width rows either way, through the per-tile `view` that
-	// `attachTile` already reads. An 88px icon cell has no room for the
-	// `Workspace` pill, and the pill is the whole of what tells the fence from
-	// the prompt now that the headings are gone.
-	//
 	// D-20261008-04: the band is also the COLLAPSED footer. The list sits behind the
 	// toggle at its left and starts shut; the `+` stays on the band in both states, which
 	// is the 4216383 lesson kept (the control that ends the empty state is reachable
@@ -2541,17 +2216,13 @@ export function renderChatAttachments() {
 	var ws = document.createElement('section');
 	ws.className = 'attach-group ws-group' + (wsOpen ? '' : ' folded');
 	ws.appendChild(attachFooterHead({
-		help:  t('attach.ws_help'),
-		mark:  true,
-		// A `+` here reads as a `+` and nothing else. The two buttons that
-		// could be confused are in different places, and it is the crystal
-		// footer's that grants -- see `attachFooterHead`.
+		help:  t('attach.group_prompt'),
 		icon:  true,
 		view:  wsOpen,
 		fold:  {
 			open:    wsOpen,
 			text:    held.length ? tn('dws.count', held.length) : t('dws.none_yet'),
-			help:    t('attach.ws_help'),
+			help:    t('attach.group_prompt'),
 			onClick: function () {
 				setFootOpen('ws', !wsOpen);
 				renderChatAttachments();
@@ -2560,168 +2231,12 @@ export function renderChatAttachments() {
 		},
 	}));
 	if (!wsOpen) { box.appendChild(ws); return; }
-	// Marked first, because the fence is the more consequential claim and a
-	// reader scanning for "what can this chat reach" should not have to sort.
-	var body = attachBody(marked.concat(noted).map(toTile),
-		{ cls: 'ws-body', label: workspaceTitle() });
-	if (!marked.length) {
-		// The sentence the empty state exists to say, and it is said whenever
-		// NOTHING IS MARKED IN -- not merely when the list is empty. A footer
-		// holding three attached files and no mark is exactly the state that
-		// reads as "the chat has my files" and is not.
-		var none = document.createElement('div');
-		none.className = 'rail-note ws-empty';
-		none.textContent = t('attach.ws_empty');
-		body.appendChild(none);
-	}
+	var body = attachBody(held.map(toTile), { cls: 'ws-body', label: t('attach.list') });
 	ws.appendChild(body);
 	box.appendChild(ws);
 }
 
-// ── Marks not in force on this device ──────────────────────────────
-//
-// A mark applies only on the device it was made or confirmed on (owner decision,
-// 2026-09-23), so at that deploy every mark on every desktop went inactive at once --
-// and the only sign was the paperclip's tooltip, which a touch screen never shows,
-// while the daimon met a plain refusal and reported the folder as out of bounds
-// (audit finding 6). This says it where nobody can miss it: over the composer, on
-// both faces of a Diamond and on a chat, naming each mark and where it was made,
-// with the one press that brings it into force here.
-
-var _markNoticeSeq = 0;
-
-/// What the notice lists: the marks in focus that are not in force here, with the
-/// press that confirms each. Empty with nothing in focus.
-async function markNoticeItems() {
-	var f = attachFocus();
-	if (!f) return { focus: null, items: [] };
-	if (f.kind === 'diamond') {
-		var list = [];
-		try { list = await Files.waiting(f.id); } catch (e) { list = []; }
-		return { focus: f, items: list.map(function (a) {
-			return { path: a.path, ref: a.ref, old: (a.link && !a.link.by) || false,
-				confirm: function () { return confirmMarkHere(f.id, a.link); } };
-		}) };
-	}
-	return { focus: f, items: chatWaiting(f.id).map(function (a) {
-		return { path: a.path, ref: a.ref, old: false,
-			confirm: function () { return Promise.resolve(chatConfirmHere(f.id, a.ref)); } };
-	}) };
-}
-
-/// Draw the notice, or hide it where there is nothing to confirm. Called without an
-/// await from every redraw, so it never rejects: a notice that cannot be drawn is hidden.
-async function renderMarkNotice() {
-	try { await drawMarkNotice(); }
-	catch (e) {
-		var box = document.getElementById('mark-notice');
-		if (box) { box.innerHTML = ''; box.hidden = true; }
-	}
-}
-
-async function drawMarkNotice() {
-	var box = document.getElementById('mark-notice');
-	if (!box) return;
-	var seq = ++_markNoticeSeq;
-	var got = await markNoticeItems();
-	// The store was read across an await, and the user may have moved on.
-	if (seq !== _markNoticeSeq) return;
-	var items = got.items;
-	box.innerHTML = '';
-	// A record that is there but is not a record refuses every press (QA A F5), so
-	// it is said instead of the list, with the one press that replaces it.
-	if (DaimondMarksHere.damaged()) { drawMarksDamaged(box); return; }
-	if (!items.length) { box.hidden = true; return; }
-	box.hidden = false;
-	box.dataset.count = String(items.length);
-
-	var head = document.createElement('p');
-	head.className = 'mark-notice-head';
-	head.textContent = tn('marks.waiting', items.length);
-	box.appendChild(head);
-	var why = document.createElement('p');
-	why.className = 'mark-notice-why';
-	// With no record on this device at all -- the first start after R2, or
-	// cleared site data -- that is the reason, and it is said instead.
-	why.textContent = DaimondMarksHere.absent() ? t('marks.no_record') : t('marks.waiting_why');
-	box.appendChild(why);
-
-	// One press at a time: a second press while the first is still writing would
-	// confirm a row the store has already rewritten.
-	var busy = false;
-	var press = async function (list) {
-		if (busy) return;
-		busy = true;
-		box.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
-		try {
-			for (var i = 0; i < list.length; i++) {
-				try { await list[i].confirm(); } catch (e) { /* the redraw says what took */ }
-			}
-		} finally {
-			// Redrawn from the store, never from what was pressed. A Diamond's
-			// confirmation also signals the links changed, which repaints the panel
-			// and the fence row; a chat's repaints through `attachChanged`. A press
-			// whose record did not land has said so (`marksNotSaved`) and still waits.
-			busy = false;
-			renderMarkNotice();
-		}
-	};
-
-	items.forEach(function (it) {
-		var row = document.createElement('div');
-		row.className = 'mark-notice-row';
-		row.dataset.path = it.path;
-		var name = document.createElement('span');
-		name.className = 'mark-notice-path';
-		markName(name, it.path);
-		name.title = it.path;
-		row.appendChild(name);
-		var where = document.createElement('span');
-		where.className = 'mark-notice-where';
-		where.textContent = it.old ? t('marks.made_before') : refWhere(it.ref);
-		row.appendChild(where);
-		var b = document.createElement('button');
-		b.type = 'button';
-		b.className = 'chip-btn accent';
-		b.dataset.act = 'mark-use-here';
-		b.textContent = t('marks.use_here');
-		b.title = t('marks.use_help');
-		b.setAttribute('aria-label', t('marks.use_here') + ': ' + it.path);
-		b.addEventListener('click', function () { press([it]); });
-		row.appendChild(b);
-		box.appendChild(row);
-	});
-	if (items.length > 1) {
-		var all = document.createElement('button');
-		all.type = 'button';
-		all.className = 'chip-btn accent mark-notice-all';
-		all.dataset.act = 'mark-use-all';
-		all.textContent = t('marks.use_all');
-		all.addEventListener('click', function () { press(items); });
-		box.appendChild(all);
-	}
-}
-
-/// This device's marks record is damaged: say so, and offer the reset, asked first.
-function drawMarksDamaged(box) {
-	box.hidden = false;
-	box.dataset.count = '0';
-	var head = document.createElement('p');
-	head.className = 'mark-notice-head';
-	head.textContent = t('marks.damaged');
-	box.appendChild(head);
-	var b = document.createElement('button');
-	b.type = 'button';
-	b.className = 'chip-btn accent';
-	b.dataset.act = 'mark-reset';
-	b.textContent = t('marks.reset');
-	b.addEventListener('click', async function () {
-		if (!(await confirmDialog(t('marks.reset_ask'), t('marks.reset'), { title: t('marks.reset') }))) return;
-		DaimondMarksHere.resetDamaged();
-		renderMarkNotice();
-	});
-	box.appendChild(b);
-}
+// ── The attach picker, and opening an artefact ─────────────────────
 
 /// The `+`: attach files and folders without leaving what you are reading.
 ///
@@ -2736,33 +2251,15 @@ function drawMarksDamaged(box) {
 async function attachPicker(opts) {
 	var f0 = attachFocus();
 	if (!f0) return;			// no focus, nothing to attach to
-	// TWO NAMES BECAUSE THEY ARE TWO QUESTIONS, and one name doing both was how a
-	// picker came to say "Attach files and folders" while widening a write fence.
-	// `wsMark` is the chat's own flag and is the one thing here a Diamond must not
-	// have; `grants` is whether a folder ticked in this picker ends up inside a
-	// fence at all, which on a Diamond is true however it was opened. The heading,
-	// the legend and the button's word are read off `grants`, so the picker says
-	// what will happen; only `chatAttachSetWorkspace` below reads `wsMark`.
-	var wsMark = !!(opts && opts.mark) && f0.kind === 'chat';
-	var grants = attachAddGrants(opts);
 	var dir = '';
 	var ticked = {};				// path -> { dir }
 	var relist = null;				// the open picker's re-read of the folder it shows
 	var picked;
 	try { picked = await dialog({
 		kind:  'pick',
-		title: grants ? t('attach.pick_mark_title') : t('attach.pick_title'),
-		okLabel: t(grants ? 'attach.select' : 'attach.add'),
+		title: t('attach.pick_title'),
+		okLabel: t('attach.add'),
 		build: function (card, ctl) {
-			if (grants) {
-				// What a tick will DO, at the top of the thing doing it. A folder and
-				// a file are ticked with the same box here and mean two different
-				// things, and the row cannot say so without a legend per row.
-				var note = document.createElement('div');
-				note.className = 'attach-pick-note';
-				note.textContent = t('attach.mark_note');
-				card.appendChild(note);
-			}
 			var crumbs = document.createElement('div');
 			crumbs.className = 'files-path attach-pick-path';
 			card.appendChild(crumbs);
@@ -2878,11 +2375,6 @@ async function attachPicker(opts) {
 	var paths = Object.keys(picked);
 	for (var i = 0; i < paths.length; i++) {
 		await Files.attachAdd(paths[i], picked[paths[i]].dir);
-		// A file cannot be marked in -- the workspace is a union of folders --
-		// so it is attached and nothing more, whichever `+` was pressed.
-		if (wsMark && picked[paths[i]].dir) {
-			chatAttachSetWorkspace(f0.id, rootedRef('dir', paths[i]), true);
-		}
 	}
 	// A Diamond's attachments are links, and everything that draws links
 	// redraws off that one signal; a chat's are not, so it is told directly.
@@ -2907,7 +2399,7 @@ export function attachChanged() {
 /// travels.
 function artefactMissing(r, path) {
 	if (r && r.outcome === 'refused') {
-		noticeDialog(t('arte.file_fenced'), t('arte.file_fenced_body'));
+		noticeDialog(t('arte.file_refused'), t('arte.file_refused_body'));
 	} else {
 		noticeDialog(t('arte.file_gone'), t('arte.file_gone_body', { path: path }));
 	}
@@ -2966,18 +2458,6 @@ export function install() { // page-split: install
 	// would be seeded with.
 	document.addEventListener('daimond-links-changed', function () {
 		syncAttachPrefix();
-		renderMarkNotice();
-	});
-
-	// ANOTHER TAB OF THIS ACCOUNT PRESSED A MARK, or took one off (markshere.js hears
-	// the `storage` event). Every grant reads the record afresh, so what is left is
-	// what a press here does: redraw everything that draws marks, and let each chat's
-	// engine go, since an app holds the scope it was built with. A chat mid-turn keeps
-	// its app and is re-scoped at its next turn (`dropChatApp`).
-	window.addEventListener('daimond:markshere', function () {
-		signalLinksChanged();
-		pg.chats.forEach(function (c) { if (c && c.id) dropChatApp(c.id); });
-		renderChatAttachments();
 	});
 
 	// A small surface for tests, and for anything that later wants to inspect or
@@ -2992,39 +2472,12 @@ export function install() { // page-split: install
 		chatToggle:   chatAttachToggle,
 		chatRemove:   chatAttachRemove,
 		chatState:    chatAttachSetState,
-		// The workspace mark: the one thing on a holding that widens the fence.
-		// Published beside `chatState` so a verifier can prove the two are
-		// INDEPENDENT -- that setting either leaves the other where it was.
-		chatWs:       chatAttachSetWorkspace,
-		// What a chat's worker may write in, and where it always may. Published
-		// because it is exactly what `scopeChatTo` hands the engine, so a verifier
-		// can ask what the fence was built from without dispatching anything.
-		chatScope:    chatScopePaths,
 		chatScratch:  chatScratchDir,
-		// A chat's holdings as JSON, for an engine door that reads the marks itself.
-		chatHolds:    chatHoldsJson,
-		// Where a mark is in force, and the user's confirmation of another device's
-		// mark on this one (2026-09-23): what the paperclip writes, whether a stored
-		// reference is in force here, what the page says about where it lives, and
-		// the press that brings it into force.
+		// What the paperclip writes, whether a stored reference can be opened here,
+		// and what the page says about where it lives.
 		ref:          rootedRef,
 		reachable:    refReachable,
 		where:        refWhere,
-		// The workspace as this device's record of marks names it, id and all.
-		root:         rootHere,
-		confirmHere:  async function (diamondId, ref) {
-			return confirmMarkHere(diamondId, await linkTo(diamondId, ref));
-		},
-		// THE ONE TEST, for a verifier: the grant this device holds on a Diamond's mark
-		// on this reference, `{ rel, share }`, or null (R2).
-		inForce:      async function (diamondId, ref) {
-			return markForce(diamondId, await linkTo(diamondId, ref));
-		},
-		chatInForce:  function (chatId, ref) {
-			var rec = chatAttachFind(chatId, ref);
-			return rec ? DaimondMarksHere.chatForce(chatId, rec, rootHere()) : null;
-		},
-		chatConfirm:  chatConfirmHere,
 		prefixText:   attachPrefixText,
 		readBodies:   attachReadBodies,
 		syncPrefix:   syncAttachPrefix,

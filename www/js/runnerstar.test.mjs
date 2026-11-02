@@ -156,10 +156,6 @@ console.log('\n(e) the other files that key by device id agree');
 	const m = PEER_RE.exec('chat-abc.peer.' + RUNNER);
 	check('cloud.js PEER_RE reads a runner peer slot', !!m && m[1] === RUNNER, String(m && m[1]));
 	check('cloud.js PEER_RE still reads a 32-hex slot', (PEER_RE.exec('x.peer.' + HEX32) || [])[1] === HEX32);
-	const MARKS = readPage(join(HERE, 'markshere.js'), 'utf8');
-	const REF = new Function(v('REF_DEVICES_RE', MARKS) + '; return REF_DEVICES_RE;')();
-	const r = REF.exec('usr@' + HEX32 + ',' + RUNNER);
-	check('markshere.js reads a reference made on a runner', !!r && r[1] === HEX32 + ',' + RUNNER, String(r && r[1]));
 }
 
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall ok');

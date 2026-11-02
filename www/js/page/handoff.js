@@ -372,8 +372,6 @@ async function graftSeed(errand, opts) {
 		if (chatTaintOf(seed)) chat.taintedAt = chatTaintOf(seed);
 		chat._loaded = true;					// its transcript is what we are about to write
 		pg.chats.push(chat);
-		// Its holdings arrive whole, so what was pressed on it here narrows to them.
-		DaimondMarksHere.chatSettle(chat.id, chat.holds);
 		diag('seed chat', 'chat=' + chat.id + ' from the errand (never synced here)');
 	}
 	if (!chat._loaded) {

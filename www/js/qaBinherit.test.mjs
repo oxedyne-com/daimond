@@ -61,7 +61,6 @@ function world(def) {
 		selfDeviceId: () => 'me', isPhoneViewport: () => true, isMobileDeviceSelf: () => false,
 		preferredWorkerLabel: () => '', fleetCurrentBuild: () => '', nominatedDeviceId: () => 'rn',
 		handoffWhenAway: () => false, chatSeatHere: () => false, chatRunningOn: () => '',
-		chatNeedsFolder: () => false,	// HT's F4c: no folder rooted here
 		turnPresence: (p) => p, presenceWithLeaseBusy: (p) => p,
 		chatWorkerModel: () => ({ provider: '', model: '', chosen: false }),
 		DaimondPeer: P, DaimondPresence: win.DaimondPresence,

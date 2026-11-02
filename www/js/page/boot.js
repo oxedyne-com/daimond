@@ -3,7 +3,7 @@ import { Wasm, builtin_tools, init, install_panic_hook, readBytes, readRawBytes,
 import { appEl, chatInput, chatInputBar, pg, sessionNameEl } from './state.js';
 import { cfgReady, getSecret, installSecretMask, secretEye, setSecret, syncCfgFromModels, t } from './util.js';
 import { chatsWithTranscripts, ensureDispatchedResident, loadChatsHeld, nudgeSync, storedChats } from './chatstore.js';
-import { applyHandHostname, loadDevices, nominatedDeviceId, noteHandStale, sharedFolderHandle } from './parcel_collect.js';
+import { applyHandHostname, loadDevices, nominatedDeviceId, noteHandStale } from './parcel_collect.js';
 import { rebuildDispatchedIndex, selfDeviceId } from './handoff.js';
 import { fitComposer, runnerReadyReject, runnerReadyResolve } from './send.js';
 import { updateSpend } from './steer.js';
@@ -30,12 +30,6 @@ import { fillSettings, logRowText, openCredits, openSettings, tOr } from './sett
 
 // ── Boot ───────────────────────────────────────────────────
 async function boot() {
-	// WHICH ROOT THE FILE TOOLS ARE READING, said once, so the derived "in cloud
-	// storage and not on this device" list is computed against the same filesystem
-	// `file_list` answers from. Registered rather than reached for: cloud.js is
-	// loaded before this file and must not go looking upward for a handle this
-	// closure owns.
-	if (window.DaimondCloud && DaimondCloud.useRoot) DaimondCloud.useRoot(sharedFolderHandle);
 	initTheme();
 	initSkin();
 	// After the skin: the view inherits from it on a first run.

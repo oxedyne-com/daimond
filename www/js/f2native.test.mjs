@@ -69,41 +69,32 @@ check('scopeHolds reads the array and the { root, holds } scope',
 	JSON.stringify(P.scopeHolds(['a'])) === '["a"]'
 	&& JSON.stringify(P.scopeHolds({ root: 'usr', holds: ['b'] })) === '["b"]'
 	&& JSON.stringify(P.scopeHolds(null)) === '[]');
-check("makeReport keeps the 'place' cause",
-	P.makeReport({ eid: 'e', turnId: 't', status: 'undeliverable', cause: 'place' }).cause === 'place');
+check("makeReport drops the retired 'place' cause (no runner sends it since ENGINE_ABI 4)",
+	P.makeReport({ eid: 'e', turnId: 't', status: 'undeliverable', cause: 'place' }).cause === '');
 
-// ── F2-FIX M1: errandScope sends the folder exactly where chatNeedsFolder needs one ──
-// Lifted from daimond.js with the switch's own predicate: a plain chat (no diamondId) whose
-// workspace holding is opened in the folder carries `scope.root` as a Diamond's turn does.
+// ── F2-FIX M1, after GRANT-G2: errandScope sends only a Diamond's own folder ──
+// Lifted from the page. The workspace no longer roots a chat in a folder (no marks), so a
+// plain chat sends its plain holds and a Diamond's chat carries `scope.root` only when the
+// Diamond names its own folder (HATE-7).
 const DSRC = readPage(join(HERE, 'daimond.js'), 'utf8');
 function lift(name) {
 	let a = DSRC.indexOf('\n\tfunction ' + name + '(');
 	if (a < 0) throw new Error('not found: ' + name);
 	return DSRC.slice(a, DSRC.indexOf('\n\t}\n', a) + 3);
 }
-const rooted = { 'plain-ws': 1, 'dia-chat': 1 };
-const dwin = {
-	DaimondMarksHere: {
-		rootedHere: (dia, chatId, root) => root === 'fid-usr' && !!rooted[chatId],
-		_core: { rootOf: (root) => root === 'fid-usr' ? { kind: 'machine', fid: 'fid-usr', name: 'usr' } : { kind: 'store' } },
-	},
-};
-const scopeOf = new Function('window', 'with (window) {\n'
-	+ 'var DaimondMarksHere = window.DaimondMarksHere;\n'
-	+ 'function rootHere() { return "fid-usr"; }\n'
-	+ 'function selfHoldsFolder() { return true; }\n'
-	+ 'function diag() {}\n'
-	+ 'function diamondFolder() { return ""; }\n'		// no Diamond names its own (HATE-7)
-	+ lift('chatNeedsFolder') + lift('errandScope')
-	+ '\nreturn errandScope;\n}')(dwin);
+const scopeOf = new Function(
+	'function diag() {}\n'
+	+ 'function diamondFolder(id) { return id === "d1" ? "/home/u/proj" : ""; }\n'
+	+ lift('errandScope')
+	+ '\nreturn errandScope;')();
 const plain = scopeOf({ id: 'plain-ws' }, ['a']);
-check('M1 a plain chat whose workspace is rooted in the folder sends scope.root',
-	!!plain && plain.root === 'usr' && JSON.stringify(plain.holds) === '["a"]', JSON.stringify(plain));
+check('M1 a plain chat sends the plain holds',
+	Array.isArray(plain) && plain[0] === 'a', JSON.stringify(plain));
 const dia = scopeOf({ id: 'dia-chat', diamondId: 'd1' }, ['b']);
-check("M1 a Diamond's rooted chat still sends scope.root",
-	!!dia && dia.root === 'usr', JSON.stringify(dia));
-const loose = scopeOf({ id: 'elsewhere' }, ['c']);
-check('M1 a chat not rooted here sends the plain holds',
+check("M1 a Diamond's chat sends its own folder as scope.root",
+	!!dia && dia.root === '/home/u/proj' && JSON.stringify(dia.holds) === '["b"]', JSON.stringify(dia));
+const loose = scopeOf({ id: 'other', diamondId: 'd2' }, ['c']);
+check('M1 a Diamond with no folder of its own sends the plain holds',
 	Array.isArray(loose) && loose[0] === 'c', JSON.stringify(loose));
 
 console.log((failures ? 'FAIL' : 'PASS') + ' f2native: ' + (checks - failures) + '/' + checks);

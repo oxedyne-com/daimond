@@ -528,6 +528,9 @@ pub struct Limits {
 	// `crate::tools::ToolRegistry::offered` and `crate::agent::Agent::run_turn`, which hands it
 	// to the turn's context. Off by the shipped default, which is what makes `cur` a control.
 	pub compound: bool,
+	// The engines, models and figures a PDF or picture is read on (P2.5d): the gateway's
+	// `/api/policy` figures as the page or the errand carries them, else the engine's own.
+	pub ocr: crate::tools::OcrConf,
 
 	// The never-forget file set (`dev/CRYSTAL_CONTRACT.md` §5, §12-13), each switch off by
 	// itself so `dev/verify_neverforget.mjs` can turn off ONE mechanism at a time and prove
@@ -590,6 +593,7 @@ impl Default for Limits {
 			gather_timeout_s:     GATHER_TIMEOUT_S,
 			batch_line:           true,
 			compound:             false,
+			ocr:                  crate::tools::OcrConf::default(),
 			standing_files:       true,
 			briefing_top3:        true,
 			task_log:             true,
@@ -3563,8 +3567,16 @@ fn hot_of_count(text: &str) -> usize {
 pub(crate) fn json_cfg()
 	-> DecoderConfig<BTreeMap<UsrKindCode, UsrKind>, BTreeMap<String, UsrKindId>>
 {
+	json_cfg_within(CRYSTAL_MAX_BYTES)
+}
+
+/// [`json_cfg`]'s rules at the crystal's depth, up to `max` bytes rather than a crystal's: for a
+/// text, such as a runner's turn request (UNBLOCK-83), whose size its own door bounds.
+pub(crate) fn json_cfg_within(max: usize)
+	-> DecoderConfig<BTreeMap<UsrKindCode, UsrKind>, BTreeMap<String, UsrKindId>>
+{
 	DecoderConfig::json(None)
-		.with_limits(DecodeLimits::new(CRYSTAL_MAX_DEPTH, CRYSTAL_MAX_BYTES))
+		.with_limits(DecodeLimits::new(CRYSTAL_MAX_DEPTH, max))
 }
 
 /// Top-level keys that carried something in `old` and are simply not in `new`.

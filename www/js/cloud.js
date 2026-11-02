@@ -859,8 +859,8 @@
 	/// compare-and-swap in the wasm cannot land over a write it never saw (OPFS-LOCK).
 	function fileLock() {
 		return window.DaimondFileLock || {
-			hold: async function (root, path, fn) { return await fn(); },
-			writable: async function (root, path, open) {
+			hold: async function (path, fn) { return await fn(); },
+			writable: async function (path, open) {
 				var w = await open();
 				return {
 					write: function (x) { return w.write(x); },
@@ -1077,109 +1077,6 @@
 		try { await w.discard(remove || null); } catch (e) { /* already gone */ }
 	}
 
-	/// Open a writable stream at a path under `root`, creating the folders on the way.
-	/// `seen`, when given, is told whether a file stood there before (`seen.existed`) and,
-	/// when none did, the placeholder this write made (`seen.made`), so a failure removes only
-	/// that placeholder (`placeholderRemover`). Both are taken inside the file's lock.
-	async function openWriteUnderRoot(root, path, seen) {
-		var p = parts(path);
-		var dir = await dirUnderRoot(root, path, true);
-		if (!dir) throw new Error('Cannot create directory for: ' + path);
-		return await fileLock().writable('folder', path, async function () {
-			var name = await diskNameIn(dir, p[p.length - 1]);
-			if (seen) seen.existed = await existedIn(dir, name);
-			var fh = await dir.getFileHandle(name, { create: true });
-			await judgeAtOpen(fh, path, seen);
-			return await fh.createWritable();
-		});
-	}
-
-	/// Remove a file under `root`. Used to clear a half-written one, never as a
-	/// deletion the user asked for, and only from inside its write's lock (`dropWrite`).
-	async function removeUnderRoot(root, path) {
-		var p = parts(path);
-		var dir = await dirUnderRoot(root, path, false);
-		if (!dir) return false;
-		try { await dir.removeEntry(await diskNameIn(dir, p[p.length - 1])); return true; }
-		catch (e) { return false; }
-	}
-
-	/// Write what cloud storage holds for `path` onto a path under `root` -- the real
-	/// folder the user has open -- streaming, and over whatever is there.
-	///
-	/// NOT `fetchDown` WITH A ROOT. That door answers "already on this device" and
-	/// stops, which is right for a person clicking a cloud row and wrong here: this is
-	/// the merge putting another device's version of a shared file where the user can
-	/// see it, and whether it should has already been decided (`materialiseShared`,
-	/// js/daimond.js). It also spends no agent allowance, because no agent asked.
-	///
-	/// `dest` is where the bytes land, which is `path` itself except for a conflict
-	/// copy. A failure leaves nothing behind: a truncated file standing in for a whole
-	/// one, in a folder under version control, would be committed by somebody. And a
-	/// failure over a file the user already has leaves HIS bytes: the writable is
-	/// aborted, never closed, and only a file this call created is removed.
-	///
-	/// `judged` is the File the caller decided to write over, or `JUDGED_ABSENT` where it found
-	/// the path empty; given none, what stands at `dest` on entry is the judgement. Bytes that
-	/// differ from it at the open, or that move while the download streams, are a save nobody
-	/// judged: the write is aborted and the answer is "kept", so the next collect meets them as
-	/// a local edit (FIRE SYNC-ABORT3).
-	async function materialiseTo(root, path, dest, folder, judged) {
-		var m = manifest(path);
-		if (!m) return 'Error: ' + path + ' is not in cloud storage.';
-		if (!window.DaimondChunks) return 'Error: the chunk transport is not loaded.';
-		var to = dest || path, w, written = 0, okAll = false, moved = false, seen = { existed: true };
-		if (judged === undefined) {
-			try { judged = (await fileUnderRoot(root, to)) || JUDGED_ABSENT; }
-			catch (e) { judged = JUDGED_ABSENT; }
-		}
-		seen.judged = judged || JUDGED_ABSENT;
-		var keptAnswer = 'kept: ' + to + ' changed in the open folder after the merge judged it; the version there stands.';
-		try { w = await openWriteUnderRoot(root, to, seen); }
-		catch (e) {
-			if (judgedMoved(e)) return keptAnswer;
-			return 'Error: could not write ' + to + ' into the open folder: ' + (e && e.message ? e.message : e);
-		}
-		var made = placeholderRemover(seen, function () { return removeUnderRoot(root, to); },
-			function () { return fileUnderRoot(root, to); });
-		if ((m.v | 0) >= 2) {
-			try {
-				okAll = await DaimondChunks.materialiseStream(m, async function (bytes) {
-					await w.write(bytes);
-					written += bytes.length;
-				});
-				if (okAll) await closeIfUnmoved(w, to, seen);
-				else await dropWrite(w, made);
-			} catch (e) { await dropWrite(w, made); okAll = false; moved = judgedMoved(e); }
-		} else {
-			// An older whole-file manifest, from before the streaming pipeline.
-			var content = null;
-			try { content = await DaimondChunks.materialiseV1(m); } catch (e) { content = null; }
-			if (content == null) await dropWrite(w, made);
-			else {
-				try {
-					var bytes = new TextEncoder().encode(content);
-					await w.write(bytes);
-					await closeIfUnmoved(w, to, seen);
-					written = bytes.length;
-					okAll = true;
-				} catch (e) { await dropWrite(w, made); okAll = false; moved = judgedMoved(e); }
-			}
-		}
-		if (!okAll) {
-			var lookTo = function () { return fileUnderRoot(root, to); };
-			if (moved && await bytesStand(seen, lookTo)) return keptAnswer;
-			return 'Error: ' + to + ' could not be written; cloud storage no longer holds all of its parts.';
-		}
-		touch(path);
-		if (to === path) {
-			try { noteHeld(path, m.key, await fileUnderRoot(root, path), folder || true, m); }
-			catch (e) { /* hashed on the next look */ }
-		}
-		log('materialised', to, written);
-		return 'OK: wrote ' + to + ' (' + written + ' bytes) into the open folder.';
-	}
-
 	/// Move an index entry to another path, keeping its chunks named.
 	///
 	/// For the one case that needs it: a conflict copy on a real folder's disk, whose
@@ -1197,7 +1094,10 @@
 	}
 
 	/// Open a writable stream at a path, so a large file lands on disk piece by
-	/// piece instead of being assembled in memory first. `seen` as `openWriteUnderRoot`; and
+	/// piece instead of being assembled in memory first. `seen`, when given, is told whether a
+	/// file stood there before (`seen.existed`) and, when none did, the placeholder this write
+	/// made (`seen.made`), so a failure removes only that placeholder (`placeholderRemover`),
+	/// both taken inside the file's lock; and
 	/// `seen.judged`, when set, is the File the caller decided to write over: where the path
 	/// now holds another (its size or modification time moved), the open throws
 	/// (`judgedMoved`) under the lock rather than write over a save it never judged. Where it is
@@ -1206,7 +1106,7 @@
 		var p = parts(path);
 		var dir = await dirFor(path, true);
 		if (!dir) throw new Error('Cannot create directory for: ' + path);
-		return await fileLock().writable('sandbox', path, async function () {
+		return await fileLock().writable(path, async function () {
 			var name = await diskNameIn(dir, p[p.length - 1]);
 			if (seen) seen.existed = await existedIn(dir, name);
 			var fh = await dir.getFileHandle(name, { create: true });
@@ -1268,13 +1168,13 @@
 	/// judged the bytes before asking (OPFS-LOCK check, D6): unlocked, a removal between a
 	/// restore's re-check and its close undid it.
 	async function removeLocal(path, judged) {
-		return await fileLock().hold('sandbox', path, async function () {
+		return await fileLock().hold(path, async function () {
 			return await removeLocalNow(path, judged);
 		});
 	}
 
 	/// [`removeLocal`] with the lock already held, or for a file this write made. By the name
-	/// the file is STORED under (`diskNameIn`), as `openWrite` made it and `removeUnderRoot`
+	/// the file is STORED under (`diskNameIn`), as `openWrite` made it and a removal
 	/// removes it: by the raw name, a failed fetch of a new path with a reserved character in it
 	/// left its empty file behind, and evict and settleStale silently kept such a file (FIRE
 	/// SYNC-ABORT3). `judged` as [`removeLocal`], re-checked immediately before the removal.
@@ -1567,24 +1467,11 @@
 	// missing. It holds only what is NOT held here, so it is recomputed
 	// whenever residency changes.
 
-	// WHICH ROOT "NOT ON THIS DEVICE" MEANS, and it is the active one.
-	//
-	// `file_read` and `file_list` read whichever root the workspace is in -- the
-	// folder the user has open when there is one -- so the list that tells them a
-	// path is in cloud storage has to be computed against that same root. `isHeld`
-	// and `fileAt` stay OPFS-only on purpose (see `fileUnderRoot`): eviction and the
-	// manifest-presence sweep are about bytes this device holds in storage it owns.
-	//
-	// Without this a desktop that offloaded its own shared folder's fonts was told by
-	// its own file tools that those fonts were in cloud storage and not on the disk
-	// they were sitting on -- and the census, which skips a cloud-only path because
-	// there are no local bytes to collect, then stopped seeing them at all.
-	var rootFn = null;
-	function useRoot(fn) { rootFn = (typeof fn === 'function') ? fn : null; }
-	function activeRoot() { try { return rootFn ? rootFn() : null; } catch (e) { return null; } }
-
+	// The page's one workspace is this account's sandbox (D-20261031-11), so "not on
+	// this device" is asked of it alone: the registered machine-folder root went with
+	// the folder.
 	async function refreshPaths() {
-		var ix = index(), out = {}, root = activeRoot();
+		var ix = index(), out = {};
 		var keys = Object.keys(ix);
 		// A BROWSER THAT HOLDS NO FILES HOLDS NONE OF THESE, so with no store every path
 		// is away and no directory is opened to find that out. Away is also the safe
@@ -1592,7 +1479,7 @@
 		// path in the fork point, where a path merely missing from the census would be
 		// read as deleted here. This walk used to throw instead, from inside the pull's
 		// merge, and a device with no OPFS never adopted another version.
-		var held = !!root || (await storeWord()) === 'held';
+		var held = (await storeWord()) === 'held';
 		for (var i = 0; i < keys.length; i++) {
 			var p = keys[i];
 			// A content manifest is not a workspace file: the agent's file tools
@@ -1605,7 +1492,7 @@
 			if (ix[p] && ix[p].peer) continue;
 			var here = false;
 			if (held) {
-				try { here = root ? !!(await fileUnderRoot(root, p)) : await isHeld(p); }
+				try { here = await isHeld(p); }
 				catch (e) { here = false; }		// the store went from under the walk: away
 			}
 			if (!here) out[p] = (ix[p] && ix[p].size) | 0;
@@ -2644,9 +2531,6 @@
 		touch:        touch,
 		awayPaths:    awayPaths,
 		refreshPaths: refreshPaths,
-		// Where the workspace's files are being read from right now, for the derived
-		// path list alone. See `useRoot`.
-		useRoot:      useRoot,
 		reclaim:      reclaim,
 		pressure:     pressure,
 		summary:      summary,
@@ -2657,9 +2541,6 @@
 		// The same question asked of a root this account does not own -- the folder
 		// the user has open. See `fileUnderRoot`.
 		fileUnderRoot: fileUnderRoot,
-		// Writing under that same root, for the merge that puts another device's
-		// version of a shared file onto the user's own disk. See `materialiseTo`.
-		materialiseTo: materialiseTo,
 		JUDGED_ABSENT: JUDGED_ABSENT,
 		rename:        rename,
 		fileKey:      fileKey,

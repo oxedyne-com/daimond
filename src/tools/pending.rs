@@ -389,60 +389,105 @@ pub(super) fn social_read_step(args: &str) -> Result<String, String> {
 // but no PDF reader today).  Logged, not blocked on: the free `cloudflare-ai`
 // pass covers the same case over the wire until that lands.
 
-/// OpenRouter's free PDF engine: lifts an existing text layer, no charge.
-pub(super) const PDF_ENGINE_FREE: &str = "cloudflare-ai";
-
-/// OpenRouter's paid OCR engine, for a scanned PDF with no text layer.
-pub(super) const PDF_ENGINE_OCR: &str = "mistral-ocr";
-
-/// Mistral's OCR model, for the direct image endpoint.
-pub(super) const MISTRAL_OCR_MODEL: &str = "mistral-ocr-latest";
-
-/// The cheap throwaway model the file-parser call names.  Its own words are
-/// discarded -- the text is read from the `annotations`, not the reply -- so the
-/// only thing asked of it is to be inexpensive and to accept a file part.
-pub(super) const OCR_RELAY_MODEL: &str = "openai/gpt-4o-mini";
-
-/// The vision model the image fallback names, where no text-returning OCR is
-/// configured.  Must read pictures; `gpt-4o-mini` does and is cheap.
-pub(super) const OCR_VISION_MODEL: &str = "openai/gpt-4o-mini";
-
 /// What the vision fallback asks for: the words, and nothing else.
 pub(super) const OCR_IMAGE_PROMPT: &str =
     "Transcribe every word of text in this image, verbatim and in reading order. \
      Output only that text: no description, no commentary, no code fences.";
 
-/// US dollars `mistral-ocr` charges per page ($2 per 1,000 pages).
-pub(super) const OCR_USD_PER_PAGE: f64 = 0.002;
+/// The engines, models and figures the reading of a PDF or a picture runs on (P2.5d).  They
+/// are the operator's, served by the gateway on `GET /api/policy` and carried to a turn as
+/// [`crate::engine::turn::TurnLimits`] carries the rest, so a runner's turn reads a file as
+/// the tab's would.  [`Default`] is the engine's own figure for each, used where nothing was
+/// carried (a page that never reached a gateway); it matches the gateway knobs' fallbacks.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OcrConf {
+    pub pdf_free:       String, // OpenRouter's free PDF engine: lifts a text layer, no charge
+    pub pdf_ocr:        String, // OpenRouter's paid OCR engine, for a scanned PDF
+    pub mistral_model:  String, // Mistral's OCR model, for the direct image endpoint
+    pub relay_model:    String, // the cheap throwaway model the file-parser call names
+    pub vision_model:   String, // the image fallback's model, where no Mistral key is set
+    pub usd_per_page:   f64,    // what the paid OCR engine charges per page
+    pub empty_floor:    usize,  // non-whitespace chars below which a free pass is empty
+}
 
-/// How much extracted text counts as "something came back".  A scanned PDF put
-/// through the free text-layer engine yields nothing, or a few stray ligatures;
-/// below this many non-whitespace characters the free pass is treated as empty
-/// and the caller escalates to real OCR.
-pub(super) const OCR_EMPTY_FLOOR: usize = 8;
+impl Default for OcrConf {
+    fn default() -> Self {
+        Self {
+            pdf_free:       "cloudflare-ai".to_string(),
+            pdf_ocr:        "mistral-ocr".to_string(),
+            mistral_model:  "mistral-ocr-latest".to_string(),
+            relay_model:    "openai/gpt-4o-mini".to_string(),
+            vision_model:   "openai/gpt-4o-mini".to_string(),
+            usd_per_page:   0.002,
+            empty_floor:    8,
+        }
+    }
+}
 
-/// An OpenRouter chat body that runs the file-parser over one PDF at `engine`.
+impl OcrConf {
+    /// The figures a `limits.ocr` object (or `/api/policy`'s `ocr`) carries, under the page's
+    /// names.  Zero, empty or absent is the engine's own figure, as for every other limit.
+    pub fn of_dat(d: &Dat) -> Self {
+        let mut c = Self::default();
+        let m = match d {
+            Dat::Map(m) => m,
+            _           => return c,
+        };
+        let text = |k: &str, into: &mut String| {
+            if let Some(Dat::Str(s)) = m.get(&Dat::Str(k.to_string())) {
+                if !s.trim().is_empty() { *into = s.trim().to_string(); }
+            }
+        };
+        text("pdfFree",      &mut c.pdf_free);
+        text("pdfOcr",       &mut c.pdf_ocr);
+        text("mistralModel", &mut c.mistral_model);
+        text("relayModel",   &mut c.relay_model);
+        text("visionModel",  &mut c.vision_model);
+        let rate = crate::engine::turn::num(m.get(&Dat::Str("usdPerPage".to_string())));
+        if rate.is_finite() && rate > 0.0 { c.usd_per_page = rate; }
+        let floor = crate::engine::turn::num(m.get(&Dat::Str("emptyFloor".to_string())));
+        if floor.is_finite() && floor >= 1.0 { c.empty_floor = floor.trunc() as usize; }
+        c
+    }
+
+    /// These figures under the page's names, as [`OcrConf::of_dat`] reads them.
+    pub fn to_dat(&self) -> Dat {
+        let mut d = oxedyne_fe2o3_jdat::map::DaticleMap::new();
+        let k = |s: &str| Dat::Str(s.to_string());
+        d.insert(k("pdfFree"),      Dat::Str(self.pdf_free.clone()));
+        d.insert(k("pdfOcr"),       Dat::Str(self.pdf_ocr.clone()));
+        d.insert(k("mistralModel"), Dat::Str(self.mistral_model.clone()));
+        d.insert(k("relayModel"),   Dat::Str(self.relay_model.clone()));
+        d.insert(k("visionModel"),  Dat::Str(self.vision_model.clone()));
+        d.insert(k("usdPerPage"),   Dat::from(self.usd_per_page));
+        d.insert(k("emptyFloor"),   Dat::U64(self.empty_floor as u64));
+        Dat::Map(d)
+    }
+}
+
+/// An OpenRouter chat body that runs the file-parser over one PDF at `engine`, denying data
+/// collection as every OpenRouter request does (REQ-D-044).
 ///
 /// `data_url` is `data:application/pdf;base64,…`.  `max_tokens` is tiny because
 /// the reply is thrown away; the text is taken from the annotations.
-pub(super) fn ocr_pdf_body(data_url: &str, engine: &str) -> String {
+pub(super) fn ocr_pdf_body(c: &OcrConf, data_url: &str, engine: &str) -> String {
     fmt!(
-        r#"{{"model":"{}","max_tokens":16,"messages":[{{"role":"user","content":[{{"type":"text","text":"Parse this document."}},{{"type":"file","file":{{"filename":"document.pdf","file_data":"{}"}}}}]}}],"plugins":[{{"id":"file-parser","pdf":{{"engine":"{}"}}}}]}}"#,
-        OCR_RELAY_MODEL, json_escape(data_url), engine)
+        r#"{{"model":"{}","max_tokens":16,"messages":[{{"role":"user","content":[{{"type":"text","text":"Parse this document."}},{{"type":"file","file":{{"filename":"document.pdf","file_data":"{}"}}}}]}}],"plugins":[{{"id":"file-parser","pdf":{{"engine":"{}"}}}}],"provider":{{"data_collection":"{}"}}}}"#,
+        json_escape(&c.relay_model), json_escape(data_url), json_escape(engine), crate::llm::DATA_COLLECTION)
 }
 
 /// A Mistral `/v1/ocr` body that transcribes one bitmap image to markdown text.
-pub(super) fn ocr_image_mistral_body(data_url: &str) -> String {
+pub(super) fn ocr_image_mistral_body(c: &OcrConf, data_url: &str) -> String {
     fmt!(
         r#"{{"model":"{}","document":{{"type":"image_url","image_url":"{}"}}}}"#,
-        MISTRAL_OCR_MODEL, json_escape(data_url))
+        json_escape(&c.mistral_model), json_escape(data_url))
 }
 
-/// A vision chat body that asks a model to read the text off one image.
-pub(super) fn ocr_image_vision_body(data_url: &str) -> String {
+/// A vision chat body, for OpenRouter, that asks a model to read the text off one image.
+pub(super) fn ocr_image_vision_body(c: &OcrConf, data_url: &str) -> String {
     fmt!(
-        r#"{{"model":"{}","max_tokens":8192,"messages":[{{"role":"user","content":[{{"type":"text","text":"{}"}},{{"type":"image_url","image_url":{{"url":"{}"}}}}]}}]}}"#,
-        OCR_VISION_MODEL, json_escape(OCR_IMAGE_PROMPT), json_escape(data_url))
+        r#"{{"model":"{}","max_tokens":8192,"messages":[{{"role":"user","content":[{{"type":"text","text":"{}"}},{{"type":"image_url","image_url":{{"url":"{}"}}}}]}}],"provider":{{"data_collection":"{}"}}}}"#,
+        json_escape(&c.vision_model), json_escape(OCR_IMAGE_PROMPT), json_escape(data_url), crate::llm::DATA_COLLECTION)
 }
 
 /// Read one JSON string literal that starts at `bytes[i]` (the opening quote),
@@ -610,8 +655,8 @@ pub(super) fn join_nonempty(parts: &[String]) -> String {
 }
 
 /// Is this extraction empty enough to escalate from the free engine to OCR?
-pub(super) fn ocr_text_empty(s: &str) -> bool {
-    s.chars().filter(|c| !c.is_whitespace()).count() < OCR_EMPTY_FLOOR
+pub(super) fn ocr_text_empty(c: &OcrConf, s: &str) -> bool {
+    s.chars().filter(|ch| !ch.is_whitespace()).count() < c.empty_floor
 }
 
 /// A rough page count read straight from the PDF bytes, for the cost line.
@@ -643,9 +688,9 @@ pub(super) fn pdf_page_count(bytes: &[u8]) -> Option<u32> {
     if n > 0 { Some(n) } else { None }
 }
 
-/// The dollar cost of OCR'ing `pages` at Mistral's rate.
-pub(super) fn ocr_cost_usd(pages: u32) -> f64 {
-    pages as f64 * OCR_USD_PER_PAGE
+/// The dollar cost of OCR'ing `pages` at the configured rate.
+pub(super) fn ocr_cost_usd(c: &OcrConf, pages: u32) -> f64 {
+    pages as f64 * c.usd_per_page
 }
 
 /// The one-line record `file_read` and `ocr` append: which engine ran, and what
@@ -658,14 +703,17 @@ pub(super) fn ocr_cost_usd(pages: u32) -> f64 {
 /// * `engine` - a human name for the engine: `"the free text layer"`, etc.
 /// * `pages`  - pages processed, where known.
 /// * `paid`   - whether this engine charges, so a cost is worth stating.
-pub(super) fn ocr_note(tag: &str, what: &str, engine: &str, pages: Option<u32>, paid: bool) -> String {
+pub(super) fn ocr_note(c: &OcrConf, tag: &str, what: &str, engine: &str, pages: Option<u32>, paid: bool)
+    -> String
+{
     let mut s = fmt!("\n[{}] read as {} via {}", tag, what, engine);
     match (paid, pages) {
         (true, Some(p)) =>
             s.push_str(&fmt!("; about {} page(s), ${:.3} on your OpenRouter key.", p,
-                ocr_cost_usd(p))),
+                ocr_cost_usd(c, p))),
         (true, None) =>
-            s.push_str("; paid OCR on your OpenRouter key, about $0.002 per page."),
+            s.push_str(&fmt!("; paid OCR on your OpenRouter key, about ${} per page.",
+                c.usd_per_page)),
         (false, Some(p)) =>
             s.push_str(&fmt!("; {} page(s), no charge.", p)),
         (false, None) =>

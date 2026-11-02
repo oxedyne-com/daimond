@@ -60,27 +60,27 @@
 	<p>存储满了的时候，最久没用过的文件会自己回到云端。释放不是删除，因为文件仍然列在那里，一旦被要求就会回来。</p>
 	<p>一个 daimon 想要的文件如果在云端，会被明白地告知，并且必须刻意去取。一个上限限制着它能自主下载多少。</p>
 
-	<h2 id="s4">把一个文件夹交出去</h2>
-	<p>Every row in the tree has a <span class="ui">◈</span> and a <span class="ui">⋯</span>. The ◈ adds the file or folder to what is in focus, or takes it out, and the ⋯ says the same in words: <span class="ui">Add to</span> the diamond by name, or <span class="ui">Add to this chat</span>, and <span class="ui">Remove from</span> once it is in. On a computer both appear when the pointer is over the row; on a phone the ◈ is always drawn and a long press opens the ⋯. A new diamond starts with nothing added, and its <span class="ui">Can change</span> list says where to add from.</p>
+	<h2 id="s4">附加文件或文件夹</h2>
+	<p>树中的每一行都有一个 <span class="ui">◈</span> 和一个 <span class="ui">⋯</span>。◈ 把文件或文件夹附加到当前焦点上，或再取下来；⋯ 用文字说同样的事： <span class="ui">添加到</span> 按名字的 diamond，或 <span class="ui">添加到此聊天</span>，以及 <span class="ui">移除</span> （已附加时）。在电脑上，指针移到该行时两者都会出现；在手机上 ◈ 始终显示，长按打开 ⋯。新的 diamond 开始时什么都没有附加。</p>
 	<ul>
-		<li><strong>焦点在一个 diamond 上。</strong> 这个文件或文件夹会加入那个 diamond 的工作区，一直留到你把它拿出去。</li>
+		<li><strong>焦点在一个 diamond 上。</strong> 文件或文件夹会一直附加在那个 diamond 上，直到你把它取下。</li>
 		<li><strong>焦点在一场聊天上。</strong> 这个附件只用于下一轮。</li>
 	</ul>
 	<p>附加不会复制任何东西。文件留在原地，diamond 只是指向它，所以把一个文件夹附加给两个 diamond，留下的还是一个文件夹。</p>
 	<p>每个附件要么是 <span class="ui">记下</span>，意思是这个路径值得知道，花几个 token；要么是 <span class="ui">读取</span>，意思是现在就要内容。先用「记下」，它便宜得多。不管哪一种，生成的文字都会放进消息框里、你打的字前面，你可以在那里改它或者删它。</p>
-	<p>在工作区那一组里勾选一个 <em>文件夹</em> ，就是许可，于是这场聊天或这个 diamond 就可以读取并修改里面的东西。勾选一个文件，只是把它放到模型面前。一个 diamond 的 <span class="ui">可及范围</span> 行，点出它可以写入的每一个文件夹，并且在两棵树里都会这样说明。</p>
+	<p>附加只是告诉它该看哪里。它不会给 daimon 任何本来够不到的东西，取下附件也不会拿走什么。daimon 能触及什么，取决于这一轮在哪里运行，见下一节。</p>
 
 	<h3 id="s5">一个 daimon 能打开什么</h3>
-	<p>一个 daimon 只能打开它这个 diamond 工作区里的东西。别的任何东西，不管是这个 daimon 还是它派发的任何帮手，都没法通过文件工具读到或写到。这个检查是编译好的代码，在每个文件工具都要经过的那一道门上，而那份代码在一个从公开源码可复现构建出来的软件包里，所以它不是提示词里的一条指示。</p>
+	<p>在 Kimberlite 上，daimon 能触及你的主文件夹。Daimond 仍会挡在外面的是被列为机密的文件，比如你的密钥和密码，以及它自己和 Kimberlite 的记录。在浏览器里，daimon 只改它所属 diamond 自己的文件，聊天只改它自己的文件夹。除此之外，无论 daimon 还是它派出的任何助手，都无法通过文件工具写入别的东西。这项检查位于每个文件工具都要经过的那唯一一道门上的已编译代码里，而这段代码所在的包可以从公开源码可复现地构建，所以它不是提示词里的一条指令。</p>
 	<p>这条规则定下的是一个 daimon 能碰到什么，不涉及它读到的东西最后去哪里，因为它打开的一切，都会连同这一轮的其余内容一起发给你的模型提供商。</p>
-	<p>Deleting or wiping counts the same way. Past a limit you set under <span class="ui">Settings</span> — eight in a turn by default — the turn stops there and asks before it goes on. Wiping a file means writing over it so that less than half of it is left. Daimond keeps a copy of anything deleted or wiped for at least seven days.</p>
+	<p>删除或清空也一样计数。超过你在 <span class="ui">设置</span> 中设定的上限（默认每轮八个），这一轮就在那里停下，先问过再继续。清空文件是指覆盖写入它，使剩下的不到一半。凡被删除或清空的内容，Daimond 会保留副本至少七天。</p>
 
 	<h3 id="s6">附件列表</h3>
 	<p>每一行都带着一个时间， <span class="ui">已添加 {when}</span>。一个不再存在的路径，会画成 <span class="ui">已不在</span> ，没有打开的动作，所以一行失效的记录，绝不会假装自己还活着。</p>
 	<p>一个 daimon 自己附加的任何东西——比如一次折叠的收获，或者一个智能体留下的文件——都收在一个折起来的标题下面， <span class="ui">由 daimon 添加</span>，带着一个数目和一个 <span class="ui">全部移除</span>。你自己的附件留在原处。</p>
 
-	<h3 id="s7">添加的文件夹和你的其他设备</h3>
-	<p>把文件夹或文件添加到一个 diamond，或者把文件夹添加到一个聊天的工作区，都会同步到你的其他设备，但在那台设备上再按一次之前，它在那里不会生效。在第二台设备上打开同一个 diamond，在别处添加的文件夹会显示为这里尚未使用，按 <span class="ui">在这里使用</span> 即可在那里开始使用，或按 <span class="ui">全部在这里使用</span> 一次性使用所有尚未使用的。移除文件夹会自动到达每台设备；开始使用则不会，所以添加的文件夹只在添加它或再按过一次的设备上使用。</p>
+	<h3 id="s7">附件与你的其他设备</h3>
+	<p>你附加到 diamond 的东西会同步到你的其他设备，并在那里指向同样的文件，不用再按一次。位于另一台机器上的附件会说明它在哪里，这台设备上的 daimon 无法从这里打开它。</p>
 
 	<h3 id="s8">把一个文件夹分享给你的其他设备</h3>
 	<p>浏览器自己存储中的文件夹会自动到达你的其他设备，所以没有什么需要手动共享。电脑磁盘上的文件夹由 Kimberlite 处理，并留在那台电脑上。</p>
@@ -88,13 +88,13 @@
 	<h2 id="s9">文档，以及书</h2>
 	<p>打开一个 <code>.typ</code> 文件，文档面板会多出两个按钮。 <span class="ui">编译</span> ，把文档排版进页面，在源码旁边写出一份预览 PDF；这些页面开着的时候，每次保存都会重新构建它们。在一个章节上按它，会编译包含这个章节的文档，然后带你去那一章的页面。</p>
 	<p>两个面板都得在屏幕上，这个循环才能运行。窗口太窄的时候，文档面板会说明这一点，等它们回来时，一次重新构建会补上。</p>
-	<p>编辑器不必是 Daimond 的。任何编辑器只要保存写进了被授权的文件夹，大约一秒内就会被察觉。</p>
+	<p>编辑器不必是 Daimond 的。任何编辑器向同一个文件夹保存，大约一秒内就会被察觉。</p>
 	<p>一部手机装不下一本书的文件，也承受不起排版要花的内存，所以它把编译交给一台配对过、能承受的电脑，像一轮对话一样封进你的账户，排好版的页面再送回来。</p>
 
 	<h2 id="s10">任何类型的文件</h2>
 	<p>任何文件都会被存储、同步，每个最多一 GB。一份文档或一张电子表格会以一个 <strong>阅读视图</strong>打开，显示的是它说了什么，而不是它打印出来什么样。数值按存的样子给出，公式不会重新计算，宏既不运行也不读取。 <span class="ui">保存副本</span> ，把一份写到你自己的设备上，这里的文件原样不动。</p>
 	<p>没有什么能认出一个文件时，它的字节会被直接显示出来，面板也会说明这一点。</p>
-	<p>A scan or picture saved as BMP, TIFF, HEIC or ICO is turned into a PNG or JPEG as it is opened, so a daimon can look at it, read the text in it, or place it in a document, with nothing to convert first. The text is read from every page of a TIFF that has several; looking at one shows its first page.</p>
+	<p>保存为 BMP、TIFF、HEIC 或 ICO 的扫描件或图片在打开时会转成 PNG 或 JPEG，所以 daimon 无需先转换，就能查看它、读出其中的文字，或把它放进文档。多页的 TIFF 会读取每一页的文字；查看时显示第一页。</p>
 
 	<h2 id="s11">邮件</h2>
 	<p>浏览器没法打开一个邮件连接，所以 Daimond 通过网关连接，网关把原始邮件传回来，然后忘掉你的凭据。你的邮件会以普通文件的形式写进工作区。</p>

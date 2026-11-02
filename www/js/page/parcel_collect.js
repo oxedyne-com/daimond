@@ -132,7 +132,7 @@ var DEVICE_NAME_MAX   = 64;			// a name, not a paragraph. Both names share it.
 // returned null, and the roster, the merge and the name memory dropped its lines
 // the same way. Sixteen hex is a subset of that alphabet, so the legacy width is
 // still admitted. ONE contract for every id the account can hold; cloud.js
-// `PEER_RE` and markshere.js `REF_DEVICES_RE` carry the same one, and
+// `PEER_RE` and marks.js `REF_DEVICES_RE` carry the same one, and
 // www/js/runnerstar.test.mjs pins all three to the gateway's own minting.
 export var DEVICE_ID_RE      = /^(?:[0-9a-f]{32}|[0-9a-ikmnp-z]{16})$/;
 // The LEGACY width on its own. Nothing has minted one of these since the id
@@ -1151,18 +1151,17 @@ var SYNC_SKIP_ROOT_DIRS  = { diamonds: 1 };		// Daimond's own per-diamond store.
 /// rather than a workspace file? Such a path never enters the census, is never written
 /// or deleted by a merge, is never tombed and never stands in the fork point: each
 /// device makes its own copy from something that does not travel. See
-/// `DaimondMarksHere.isAppStatePath`, the one mirror of the engine's `APP_STATE_DIRS`.
+/// `DaimondAppPaths.isAppStatePath`, the one mirror of the engine's `APP_STATE_DIRS`.
 ///
-/// AND A KEEPER'S RECORD (`DaimondMarksHere.isKeeperRecordPath`): a chat's version store
+/// AND A KEEPER'S RECORD (`DaimondAppPaths.isKeeperRecordPath`): a chat's version store
 /// is this device's record of the files its turns changed here, and the copies it kept of
 /// them. It rode the census from a device in the browser sandbox until 2026-09-25, and a
 /// peer's census without it deleted it by absence, the copy of the person's save a chat's
 /// Undo had just kept included (U5 of the reopen rehearsal).
 function syncAppState(p) {
-	var m = window.DaimondMarksHere;
+	var m = window.DaimondAppPaths;
 	if (!m) return false;
-	return !!((m.isAppStatePath && m.isAppStatePath(p))
-		|| (m.isKeeperRecordPath && m.isKeeperRecordPath(p)));
+	return m.isAppStatePath(p) || m.isKeeperRecordPath(p);
 }
 
 /// A path map without the app's own state, as the fork point and the tombstones hold it.
@@ -1205,7 +1204,6 @@ function ownFiles() {
 /// an older page sends these paths in `files` alone, so for its parcel `files` stays the
 /// one authority, as it was. Left out, as in the local census, there is no parcel to ask.
 function ownHere(plan, p, parcelOwn) {
-	if (plan && plan.folder) return false;
 	if (parcelOwn === false) return false;
 	var reg = ownFiles();
 	for (var i = 0; i < reg.length; i++) if (reg[i].path === p) return true;
@@ -1316,98 +1314,24 @@ export function parseSyncListing(text) {
 	return window.DaimondListing.parse(text);
 }
 
-/// Whether workspace files can be synced now: tools are up and the active
-/// root is the OPFS sandbox, not a real on-disk folder.
-///
-/// STILL FALSE IN FOLDER MODE, and deliberately. This is the predicate that gates
-/// the chunk-index MERGE and the COMMIT (`offloadAllowed`), and a folder-mounted
-/// device holds no mergeable index -- the owner's two desktops have never
-/// committed one and the phone commits for them, which is their steady state and
-/// not a fault. Gating the offload on commit-ability broke desktop sync inside a
-/// minute on 2026-09-12 and was reverted. The shared folder rides on a DIFFERENT
-/// predicate (`syncWalkPlan`), so what a folder-mounted device may now send has
-/// been widened without touching what it may declare.
+/// Whether workspace files can be synced now: the tools are up. The page's only
+/// workspace is the browser's own (the machine folder left the page with the grant
+/// model, D-20261031-11), so there is no other root to rule out.
 export function filesSyncable() {
-	if (!window.DaimondTools) return false;
-	try { if (Files && Files.folder && Files.folder()) return false; } catch (e) { return false; }
-	return true;
+	return !!window.DaimondTools;
 }
 
-// ── The shared folder ──────────────────────────────────────
+// ── The workspace's files ──────────────────────────────────
 //
-// Until 2026-09-14 the rule two hundred lines above was the whole story: "Only the
-// OPFS sandbox is synced -- a real folder is the user's own disk, device-specific."
-// It is not device-specific. A device that boots with a folder open holds work that
-// a device of the same account with no native access to that folder cannot reach at
-// all, and the only route to a file there was a chat turn handed to the first
-// device, which answered in prose.
+// ONLY THE BROWSER'S OWN WORKSPACE TRAVELS (D-20261031-11). A real folder is the
+// person's own disk: a mark on it is focus only and grants no copy of it to the
+// account, so a device with a folder open sends none of its bytes and writes none of
+// another device's into it. The folder share of 2026-09-14 (a flag per marked folder,
+// its ceiling, ignore list and materialise step) went with the grant model.
 //
-// So a device that has a folder open sends the contents of a FLAGGED folder on, to
-// the devices of the same account that have no native access, and writes their
-// edits back into the folder. What it does NOT do is make a copy anywhere a copy is
-// not needed: a device that has the folder open keeps using the folder. The open
-// folder stays the canonical thing -- Syncthing, git, Ore and the owner's own `dev`
-// script all read the same bytes as before, and nothing here writes a sidecar into
-// a tree under version control without saying so.
-//
-// Five rules stand around it, each with a test of its own:
-//
-//   FLAGGED, ONE FOLDER AT A TIME. A mark on a folder is the grant its daimon works
-//   under -- permission to READ -- and it is not permission to copy the folder onto
-//   every device of the account. The first version of this read the two as one, and
-//   the owner's marks came to some twenty-six gigabytes. So the copy grant is its
-//   own flag on the attachment (`Files.shareRoots`), generic with respect to
-//   devices, off until somebody turns it on.
-//
-//   THE CEILING, PER FLAGGED FOLDER. A folder is not a sandbox.
-//   `SYNC_FOLDER_SHARE_MAX` is the most one shared folder may weigh, symlinked trees
-//   counted. Past it THAT folder travels no part of itself and the panel names it;
-//   the other flagged folders go on travelling. Below it the ordinary budgets apply
-//   exactly as before.
-//
-//   THE IGNORE LIST. `.gitignore` and `.oreignore` are honoured where the folder has
-//   them, over a built-in floor of build output (js/ignore.js). Without this a
-//   `typst watch` rebuild -- a fresh 1.7 MB PDF beside the source on every keystroke
-//   -- would offload a megabyte and wake every device the account has, per keystroke.
-//
-//   CONTENT, NEVER TIME. Two desktops kept identical by Syncthing hold the same
-//   bytes at different modification times. Everything that travels is keyed on the
-//   content hash; the modification time is kept on the device that observed it
-//   (`FOLDER_SEEN_KEY`). See `put` in js/cloud.js.
-//
-//   NO DELETION BY ABSENCE. A file on somebody's disk is deleted only on an explicit
-//   tombstone from a device that HELD that file and deleted it, and only while the
-//   bytes on disk are still the bytes the tombstone was written about. A device that
-//   never received a file -- for budget, for an ignore rule, or because it dropped it
-//   -- can no longer cost the device holding the folder anything. The sandbox keeps
-//   the older absence-plus-complete-census rule, `dev/verify_dataloss.mjs` pins.
-
-// THE CEILING ON A SHARED FOLDER, and it is a different question from the parcel's.
-//
-// The parcel budgets bound one push. This bounds one flagged folder: past it the
-// account would be paying to hold, and every device would be paying to hear about,
-// a tree flagged without a thought for its size -- a home directory, a cloned
-// monorepo, a photo library. The fixture this was built against is 18 MB of book
-// plus 26 MB of fonts reached through a symlink, so the ceiling has to be well
-// clear of that and well short of a disk.
-//
-// PER FLAGGED FOLDER, since 2026-09-14, and it was the whole share before that. One
-// number over everything flagged makes a second folder's fate a function of the
-// first one's size, which is not a rule anybody can hold in their head; and the
-// all-or-nothing verdict it produced was reached, on the owner's own marks, after a
-// four-minute walk that then shared nothing.
-//
-// TWO HUNDRED MEBIBYTES, and the number is the chunk store's arithmetic rather than
-// a feeling: `SYNC_CHUNK_TOTAL_MAX` is 4 GiB for everything the account offloads,
-// and a folder is one of many things spending it. It is also about forty times the
-// parcel, so a folder at the ceiling is thousands of manifest entries and the index
-// is the next ceiling met -- which is the honest reason not to raise this without
-// measuring that one.
-//
-// SYMLINKED TREES COUNT. The File System Access API follows a link transparently, so
-// a walk sees the target's bytes and the user's disk holds them once; the ceiling is
-// about what would travel, and what would travel is what the walk finds.
-export var SYNC_FOLDER_SHARE_MAX = 200 * 1024 * 1024;
+// NO DELETION BY ABSENCE. A file is deleted only on an explicit tombstone from a
+// device that HELD that file and deleted it, and only while the bytes here are still
+// the bytes the tombstone was written about (see `put` in js/cloud.js).
 
 // Paths a device that HELD a file has deleted, `path -> the hash it held`. The hash
 // is the whole of the safety: the far end deletes only while the bytes on its disk
@@ -1428,271 +1352,27 @@ var SYNC_FOLDER_SEEN_KEY = 'daimond-foldershare-seen';
 // caches (the seen note per location, evicted with it; the stash folded away).
 var SYNC_FOLDER_EVER_KEY = 'daimond-sync-folder-ever';
 
-/// The handle of the real folder the user has open, or null for the sandbox.
-///
-/// Named for the share rather than for the handle, because the Workspace panel keeps
-/// a `folderHandle` of its own inside its closure and two things called one name in
-/// one file is how a reader comes to believe they are the same thing.
-export function sharedFolderHandle() {
-	try { return (Files && Files.folder) ? Files.folder() : null; } catch (e) { return null; }
-}
-
-/// The ignore rules in force over a set of shared roots.
-///
-/// The built-in floor first, then each root's own `.gitignore` and `.oreignore`, so
-/// a folder that states its own rules refines the floor rather than replacing it --
-/// and a `!` line in the folder's file can take back something the floor excluded,
-/// because the last match wins.
-///
-/// READ THROUGH THE FOLDER'S OWN HANDLE, not through `file_read`. The tool reads the
-/// workspace and would be the obvious door, but it is a door with policy on it -- a
-/// truncation ceiling, a scope fence, a refusal that resolves rather than throwing --
-/// and a rule file read through half of that is a rule file quietly not in force. The
-/// bytes come from the same place the census reads every other byte from.
-async function folderIgnoreRules(roots) {
-	if (!window.DaimondIgnore) return null;
-	var sets = [{ base: '', lines: DaimondIgnore.DEFAULTS }];
-	var handle = sharedFolderHandle();
-	for (var i = 0; i < roots.length; i++) {
-		for (var j = 0; j < DaimondIgnore.IGNORE_FILES.length; j++) {
-			var name = DaimondIgnore.IGNORE_FILES[j];
-			var text = null;
-			try {
-				var f = await DaimondCloud.fileUnderRoot(handle, roots[i] + '/' + name);
-				if (f) text = await f.text();
-			} catch (e) { text = null; }
-			if (text !== null) sets.push({ base: roots[i], lines: text });
-		}
-	}
-	return DaimondIgnore.matcher(sets);
-}
-
-/// Build a `file_list`-shaped entry `{ size, dir: false, cloud: false }` from a
-/// `file_read` answer's TEXT, for the one file `fileEntryUnderParent` cannot get a
-/// parent listing for.
-///
-/// A partial view or the empty-file notice names its size directly, in a `(123
-/// bytes)` parenthetical -- see `numbered_view` on the Rust side. A short file read
-/// WHOLE carries no such header at all, so its bytes are recovered by stripping the
-/// tool's own `<n>\t` numbering back off each line and re-encoding what is left. The
-/// one byte this can lose is a final trailing newline `numbered_view` trims before
-/// numbering; the census that reads this back is content-keyed, not size-keyed, so
-/// it does not matter here.
-function fileEntryFromRead(text) {
-	var s = String(text == null ? '' : text);
-	var m = /\((\d+) bytes\)/.exec(s);
-	if (m) return { size: parseInt(m[1], 10), dir: false, cloud: false };
-	var lines = s.length ? s.split('\n') : [];
-	if (lines.length && lines[lines.length - 1] === '') lines.pop(); // split's trailing ''
-	var body = [];
-	for (var i = 0; i < lines.length; i++) { body.push(lines[i].replace(/^\s*\d+\t/, '')); }
-	return { size: new TextEncoder().encode(body.join('\n')).length, dir: false, cloud: false };
-}
-
-/// Is `path` a FILE? `null` where it is not, or where nothing here can tell.
-///
-/// `file_list` opens directories, and an attachment can name a single file instead of
-/// one -- `.daimond/skills/think/SKILL.md` is the shape a shipped skill takes on disk.
-/// Asked to list a file it fails exactly the way a folder that is genuinely gone does,
-/// so `walkShared` calls this before it believes the second reading.
-///
-/// The parent's OWN listing is tried first, and answers most cases -- an ordinary
-/// file marked in on its own still sits inside a folder the fence has no opinion
-/// about. It does not answer `.daimond/skills/<name>/SKILL.md`: the read fence
-/// (`is_skills_disclosure` in `src/tools.rs`) opens that exact path but refuses its
-/// parent directory's listing, `.daimond/skills/<name>/`, so the parent read comes
-/// back refused for a file that is there and readable. Rather than widen the fence
-/// -- which is what a directory listing would have to grant, and is the whole reason
-/// that carve-out is spelled as two exact paths and not a prefix -- read the path
-/// itself: `file_read` is permitted there, and its answer alone says the file
-/// exists, with its size in `fileEntryFromRead`. Only when BOTH refuse does this
-/// return null and leave `walkShared` to warn.
-async function fileEntryUnderParent(app, path) {
-	if (!path) return null;
-	var cut    = path.lastIndexOf('/');
-	var parent = cut < 0 ? '' : path.slice(0, cut);
-	var base   = cut < 0 ? path : path.slice(cut + 1);
-	var res;
-	try { res = await app.run_tool_outcome('file_list', JSON.stringify({ path: parent || '.' })); }
-	catch (e) { res = null; }
-	if (res && res.outcome === 'done') {
-		var entries = parseSyncListing(res.text);
-		for (var i = 0; i < entries.length; i++) {
-			if (entries[i].name === base && !entries[i].dir) return entries[i];
-		}
-	}
-	var rr;
-	try { rr = await app.run_tool_outcome('file_read', JSON.stringify({ path: path })); }
-	catch (e) { return null; }
-	if (!rr || rr.outcome !== 'done') return null;
-	return fileEntryFromRead(rr.text);
-}
-
-/// Walk the shared roots and answer every file that may travel, with its size.
-///
-/// SORTED, which the sandbox walk is not. Two desktops enumerate one folder in
-/// whatever order their filesystems hand it over, and the order decides which files
-/// fit inline under the soft cap -- so an unsorted walk makes the inline section a
-/// function of the disk rather than of the content, and the two devices never agree.
-/// The sandbox keeps its existing order because nothing there is enumerated twice.
-///
-/// `complete` is false the moment anything is missed for a reason that might change;
-/// a path left out by an IGNORE RULE is not one of those and does not touch it.
-async function walkShared(app, roots, rules) {
-	// `away` is what the listing says is in cloud storage and not on this device:
-	// there are no local bytes to collect, so it is not an entry -- and it is not a
-	// gap either. See `noteFileTombs`, where the difference is a file on somebody
-	// else's disk.
-	var out = { entries: [], bytes: 0, complete: true, ignored: 0, away: {} };
-	for (var r = 0; r < roots.length; r++) {
-		var todo = [roots[r]], guard = 0;
-		while (todo.length && guard++ < 20000) {
-			var dir = todo.shift();
-			var res;
-			try { res = await app.run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' })); }
-			catch (e) { out.complete = false; continue; }
-			if (!res || res.outcome !== 'done') {
-				// Not a folder that refused -- maybe a FILE the walk was asked to open as
-				// one. See `fileEntryUnderParent`.
-				var asFile = await fileEntryUnderParent(app, dir);
-				if (asFile) {
-					if (asFile.cloud) { out.away[dir] = asFile.size | 0; }
-					else { out.entries.push({ path: dir, size: asFile.size | 0 }); out.bytes += asFile.size | 0; }
-					continue;
-				}
-				console.warn('sync: shared folder ' + (dir || '.') + ' would not list ('
-					+ ((res && res.outcome) || 'no answer')
-					+ '), so this census is incomplete and deletes nothing');
-				out.complete = false;
-				continue;
-			}
-			var entries = parseSyncListing(res.text);
-			for (var i = 0; i < entries.length; i++) {
-				var e = entries[i];
-				var full = dir ? (dir + '/' + e.name) : e.name;
-				// Dotfiles are not walked -- the same rule the sandbox census keeps --
-				// and the ignore files themselves are read by name above.
-				if (e.name.charAt(0) === '.') continue;
-				if (rules && rules.ignored(full, !!e.dir)) { out.ignored++; continue; }
-				if (e.dir) { todo.push(full); continue; }
-				if (e.cloud) { out.away[full] = e.size | 0; continue; }
-				out.entries.push({ path: full, size: e.size | 0 });
-				out.bytes += e.size | 0;
-				// THE VERDICT IN `syncWalkPlan` NEVER CHANGES ONCE THIS IS TRUE: a folder
-				// this far over `SYNC_FOLDER_SHARE_MAX` shares nothing whatever else the
-				// walk finds, so finding the rest is pure cost. On the owner's own tree
-				// this was ~22,500 `file_list` calls, three times a round, to reach a
-				// verdict the FIRST few hundred already decided. `complete` goes false
-				// because the census stops short of the whole tree -- the same meaning
-				// it carries when a listing refuses -- not because anything here failed.
-				if (out.bytes > SYNC_FOLDER_SHARE_MAX) { out.complete = false; return out; }
-			}
-		}
-		if (todo.length) out.complete = false;
-	}
-	out.entries.sort(function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0); });
-	return out;
-}
-
 // The last plan a collect computed, so the merge and the panel can ask what this
 // device is sharing without walking the folder again. Re-derived every collect.
 export var _sharePlan = null;
 // page-split: install 20
-var SYNC_WALKPLAN_TTL_MS = 25000;		// 25s: covers one round's three callers, well inside the next
 
-/// What the file census walks this round, or null when this device shares nothing.
+/// What the file census walks this round, or null when this device syncs no files.
 ///
 /// One answer for the three callers that read the workspace for sync -- the parcel,
 /// the baseline commit and the pull merge -- because a file one of them treats as
-/// shared and another does not is a file that travels one way and is deleted on the
-/// way back.
+/// synced and another does not is a file that travels one way and is deleted on the
+/// way back. Only the browser's own workspace is ever walked (the page opens no machine
+/// folder, D-20261031-11); null only before the workspace's tools are loaded
+/// (`filesSyncable` false).
 export async function syncWalkPlan() {
-	if (!window.DaimondTools) return null;
+	_sharePlan = null;
+	if (!filesSyncable()) return null;
 	var app; try { app = tools(); } catch (e) { return null; }
-	var handle = sharedFolderHandle();
-	if (!handle) {
-		if (!filesSyncable()) return null;
-		_sharePlan = { folder: false, roots: [''], flagged: [''], left: [], perRoot: {},
-			rules: null, app: app, max: SYNC_FOLDER_SHARE_MAX, loc: 'browser' };
-		return _sharePlan;
-	}
-	var roots = [];
-	try { roots = await Files.shareRoots(); } catch (e) { roots = []; }
-	// A FOLDER NOBODY FLAGGED IS A FOLDER NOBODY ASKED TO SHARE, and this is the
-	// ordinary state of a device that has turned nothing on: the function returns
-	// here, so not one `file_list` is issued and the whole feature costs a read of
-	// the links. It is also the state of every device on the day this ships, since
-	// nothing carries the flag yet.
-	if (!roots.length) { _sharePlan = null; pg._walkPlanCache = null; return null; }
-	// THE FOLDER IS PART OF THE KEY, not only its flagged roots: two folders sharing a
-	// root of the same name are two storage locations, and a plan memoised for one must
-	// never be the census of the other.
-	var fid = '';
-	try { fid = Files.folderId() || ''; } catch (e) { fid = ''; }
-	var key = fid + '\n' + roots.slice().sort().join('\n');
-	var now = Date.now();
-	if (pg._walkPlanCache && pg._walkPlanCache.key === key
-		&& (now - pg._walkPlanCache.at) < SYNC_WALKPLAN_TTL_MS) {
-		_sharePlan = pg._walkPlanCache.plan;
-		_sharePlan.app = app;		// `tools()` is a singleton, but never a stale one.
-		return _sharePlan;
-	}
-	var rules = await folderIgnoreRules(roots);
-	// ONE FLAGGED ROOT AT A TIME, so the ceiling is a fact about the folder somebody
-	// flagged and not about every folder they flagged added together. A root over it
-	// travels no part of itself and is NAMED; the rest go on travelling, which is
-	// what makes the flag worth having on a second folder. `walkShared`'s own early
-	// exit then fires per root, so a flagged home directory costs a few hundred
-	// listings rather than the tree.
-	var kept = [], left = [], perRoot = {};
-	var walk = { entries: [], bytes: 0, complete: true, ignored: 0, away: {} };
-	for (var i = 0; i < roots.length; i++) {
-		var w = await walkShared(app, [roots[i]], rules);
-		if (w.bytes > SYNC_FOLDER_SHARE_MAX) {
-			// NOT A PREFIX OF IT: sharing the first 200 MiB of a tree in whatever
-			// order it enumerated would be a census that calls itself partial for
-			// ever and a set the user cannot predict.
-			left.push({ root: roots[i], bytes: w.bytes });
-			continue;
-		}
-		kept.push(roots[i]);
-		perRoot[roots[i]] = w.bytes;
-		walk.entries  = walk.entries.concat(w.entries);
-		walk.bytes   += w.bytes;
-		walk.ignored += w.ignored;
-		if (!w.complete) walk.complete = false;
-		var away = w.away || {};
-		Object.keys(away).forEach(function (ap) { walk.away[ap] = away[ap]; });
-	}
-	// SORTED ACROSS THE ROOTS, not merely within each, for the reason `walkShared`
-	// sorts at all: the order decides which files fit inline, and two devices that
-	// disagree about it never agree about a parcel.
-	walk.entries.sort(function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0); });
-	// A ROOT LEFT OUT LEAVES A HOLE IN THE CENSUS, and the census says so: the same
-	// meaning `complete` carries when a listing refuses, and the reason no device
-	// anywhere reads the silence under that root as a deletion.
-	if (left.length) walk.complete = false;
-	_sharePlan = { folder: true, roots: kept, flagged: roots, left: left, perRoot: perRoot,
-		rules: rules, app: app, walk: walk, max: SYNC_FOLDER_SHARE_MAX,
-		loc: 'folder:' + fid + ':' + roots.slice().sort().join('|') };
-	pg._walkPlanCache = { key: key, at: now, plan: _sharePlan };
+	_sharePlan = { roots: [''], app: app, loc: 'browser' };
 	return _sharePlan;
 }
 // page-split: install 21
-
-/// Is this path inside what this device is sharing from a real folder?
-/// False in sandbox mode, where the question does not arise.
-function withinShare(plan, path) {
-	// `plan.roots` is the flagged roots that FIT; a root left out for its size is
-	// not in it, so nothing under one is written, deleted or counted here.
-	if (!plan || !plan.folder) return false;
-	if (plan.rules && plan.rules.ignored(path, false)) return false;
-	for (var i = 0; i < plan.roots.length; i++) {
-		var r = plan.roots[i];
-		if (path === r || path.indexOf(r + '/') === 0) return true;
-	}
-	return false;
-}
 
 /// Where a device's version of a file goes when the disk moved under it.
 ///
@@ -1932,21 +1612,14 @@ function noteAgreedAt(loc, agreed, keep, at) {
 /// then tells the desktop to delete the file off the disk it is sitting on. The
 /// census is complete, every named assertion is green, and the file is gone.
 ///
-/// AND "COMPLETE" IS THE CENSUS'S OWN WORD FOR ITSELF, NOT A FACT ABOUT THE DISK.
-/// `walkShared` marks itself incomplete on every refusal it cannot positively
-/// resolve -- `fileEntryUnderParent`'s two-step fallback answers for
-/// `.daimond/skills/<name>/SKILL.md` even though the read fence
-/// (`is_skills_disclosure`, src/tools.rs) refuses to list the folder around it --
-/// but that recovery only runs for a path the walk still VISITS. Unshare a marked
-/// file (not a delete: the person only stopped sharing it) and the next walk never
-/// reaches it at all: it is a dotfile no ordinary traversal opens (`walkShared`'s
-/// ignore rule) and no longer a root of its own, so the census over what remains is
-/// honestly complete and says nothing whatever about this path. D-open-2
+/// AND "COMPLETE" IS THE CENSUS'S OWN WORD FOR ITSELF, NOT A FACT ABOUT THE STORE.
+/// A census over what a walk visits is honestly complete and says nothing about a
+/// path the walk never reached (a dotfile no ordinary traversal opens); D-open-2
 /// (`specs/daimond_fixbrief_r52_del_20260925.md`): read that silence as a deletion
-/// and a folder-mounted desktop loses a file the person never asked to lose.
+/// and a file the person never asked to lose is gone.
 /// So a candidate is tombed only after asking the disk directly, THROUGH
 /// `syncFileAt` -- the same call `collectFiles` reads a file's bytes with, straight
-/// to the folder handle or the OPFS sandbox and never through anything a listing
+/// to the OPFS sandbox and never through anything a listing
 /// can be refused at. "Unknown is not absent" one layer deeper than R1: a walk that
 /// did not SEE a path is not evidence the path is gone, only that the walk did not
 /// look, and asking directly is the only way to tell the two apart.
@@ -1981,7 +1654,7 @@ export async function noteFileTombs(col, complete) {
 		// A DEVICE CAN SAY IT DELETED A FILE ONLY FROM THE STORAGE IT IS LOOKING AT: in
 		// a folder, only inside the share (an unshared path is not a deleted one).
 		var candidates = Object.keys(base).filter(function (p) {
-			return !here(p) && !(plan.folder && !withinShare(plan, p)) && !ownHere(plan, p);
+			return !here(p) && !ownHere(plan, p);
 		});
 		for (var i = 0; i < candidates.length; i++) {
 			var p = candidates[i], onDisk = null;
@@ -2028,19 +1701,6 @@ export async function noteFileTombs(col, complete) {
 	writeOldFileTombs(old);
 }
 
-/// Say which flagged folders are too big to travel, BY NAME.
-///
-/// The ceiling is per flagged folder, so the sentence has to name the folders it is
-/// about: the others are still going, and "a folder is too big" would be a notice
-/// nobody could act on. Same banner, same dismissal rule and same three-names-then-
-/// an-ellipsis shape as the Diamonds and the files left out of a parcel.
-export function noteFoldersLeft(left) {
-	noteLeft('folder', left || [], 'sync.folders_left',
-		function (r) { return r.root + ':' + r.bytes; },
-		function (r) { return r.root; },
-		{ max: fmtSyncBytes(SYNC_FOLDER_SHARE_MAX) });
-}
-
 /// The File behind a census entry, from whichever root this census is of.
 ///
 /// `DaimondCloud.fileAt` reads the account's OPFS sandbox whatever mode the
@@ -2050,7 +1710,6 @@ export function noteFoldersLeft(left) {
 /// own handle. A handle rather than text, because the offload streams a 20 MB font
 /// a slice at a time and never holds it.
 export function syncFileAt(plan, path) {
-	if (plan && plan.folder) return DaimondCloud.fileUnderRoot(sharedFolderHandle(), path);
 	return DaimondCloud.fileAt(path);
 }
 
@@ -2486,33 +2145,9 @@ export async function collectFiles(inlineBudget) {
 	// in the same parcel and so spend the same budget.
 	var total = 0, largeTotal = 0, growth = 0;
 	var ix = (window.DaimondCloud && DaimondCloud.index) ? DaimondCloud.index() : {};
-	// THE CENSUS IS A LIST OF ENTRIES, AND ONLY ITS SOURCE DIFFERS. A shared folder is
-	// walked and SORTED by `walkShared`, because two desktops enumerate one directory
-	// in whatever order their filesystems hand it over and the order decides which
-	// files fit inline; the sandbox keeps the walk it has always had, entry by entry
-	// as each directory lists, because nothing there is enumerated twice and changing
-	// it would move which files ride inline for no gain.
-	var flat = null;
-	if (plan.folder) {
-		flat = plan.walk.entries;
-		out.away = plan.walk.away || {};
-		if (!plan.walk.complete) out.complete = false;
-		// A FLAGGED ROOT LEFT OUT FOR ITS SIZE IS A HOLE IN THIS CENSUS, said here as
-		// well as in the walk: past the ceiling that root travels nothing, and
-		// `noteFileTombs` must not read the absence of everything under it as this
-		// device having deleted all of it.
-		if (plan.left && plan.left.length) out.complete = false;
-	}
-	var todo = flat ? [] : [''], guard = 0;
-	while ((flat || todo.length) && guard++ < 5000) {
+	var todo = [''], guard = 0;
+	while (todo.length && guard++ < 5000) {
 		var entries, dir;
-		if (flat) {
-			// One pass over a list already gathered: `dir` is unused below because
-			// every entry carries its whole path.
-			entries = flat;
-			dir = null;
-			flat = null;
-		} else {
 		dir = todo.shift();
 		var res;
 		try { res = await app.run_tool_outcome('file_list', JSON.stringify({ path: dir || '.' })); }
@@ -2534,20 +2169,16 @@ export async function collectFiles(inlineBudget) {
 			continue;
 		}
 		entries = parseSyncListing(res.text);
-		}
 		for (var i = 0; i < entries.length; i++) {
 			var e = entries[i];
 			var full;
-			if (dir === null) { full = e.path; }
-			else {
-				if (e.name.charAt(0) === '.') continue;				// dotfiles/dirs
-				full = dir ? (dir + '/' + e.name) : e.name;
-				if (e.dir) { if (!(!dir && SYNC_SKIP_ROOT_DIRS[e.name]) && !syncAppState(full)) todo.push(full); continue; }
-				// In cloud storage but not on this device: already safe, and there
-				// are no local bytes to collect. NAMED, because the fork point below
-				// has to tell "in the cloud" from "gone".
-				if (e.cloud) { out.away[full] = e.size | 0; continue; }
-			}
+			if (e.name.charAt(0) === '.') continue;				// dotfiles/dirs
+			full = dir ? (dir + '/' + e.name) : e.name;
+			if (e.dir) { if (!(!dir && SYNC_SKIP_ROOT_DIRS[e.name]) && !syncAppState(full)) todo.push(full); continue; }
+			// In cloud storage but not on this device: already safe, and there
+			// are no local bytes to collect. NAMED, because the fork point below
+			// has to tell "in the cloud" from "gone".
+			if (e.cloud) { out.away[full] = e.size | 0; continue; }
 			if (e.size > SYNC_CHUNK_FILE_MAX) { out.oversize.push(full); out.skipped++; continue; }
 
 			// Anything past the inline ceiling is offloaded, and is NOT read here:
@@ -2736,39 +2367,22 @@ async function deleteSyncFile(app, path) {
 	finally { if (mark) DaimondCloud.carrying(path, false); }
 }
 
-/// The storage location a walk plan is of: the browser's own, or a machine folder by
-/// its id on this device and the shares flagged in it.
+/// The storage location a walk plan is of. Only the browser's own workspace is ever
+/// walked (`syncWalkPlan`), so it is always the browser's.
 export function syncFileLoc(plan) {
-	if (!plan || !plan.folder) return 'browser';
-	// Named when the plan was made, so a census and everything read against it agree on
-	// the location even if the folder moves while they run.
-	if (typeof plan.loc === 'string') return plan.loc;
-	var fid = '';
-	try { fid = Files.folderId() || ''; } catch (e) { fid = ''; }
-	return 'folder:' + fid + ':' + (plan.flagged || plan.roots || []).slice().sort().join('|');
+	return 'browser';
 }
 
 /// Which note of held bytes (`DaimondCloud.localState`) a plan's files are under: the
-/// sandbox's, or the open folder's by its id on this device.
+/// sandbox's, the only storage a plan is ever of.
 export function heldLoc(plan) {
-	if (!plan || !plan.folder) return false;
-	var fid = '';
-	// Through the window's door rather than `Files`, so a test lifting this out of the
-	// file (dev/syncprobe.mjs `sliceDaimond`) is not handed the whole file browser.
-	try { fid = (window.DaimondFiles && DaimondFiles.folderId && DaimondFiles.folderId()) || ''; }
-	catch (e) { fid = ''; }
-	return 'f:' + fid;
+	return false;
 }
 
-/// The location `syncFileLoc` would name for the plan a walk would make now, without the
-/// walk: the folder handle and its flagged shares are all it reads. A folder with nothing
-/// flagged syncs no files and is named as a folder, never as the Browser, so leaving it for
-/// the Browser is still a change of location.
+/// The location this device's files are in now, without a walk: the browser's, or none
+/// before the tools are up. A `folder:` location is no longer written (D-20261031-11).
 export async function syncLocNow() {
-	if (!sharedFolderHandle()) return filesSyncable() ? 'browser' : 'none';
-	var roots = [];
-	try { roots = await Files.shareRoots(); } catch (e) { roots = []; }
-	return syncFileLoc({ folder: true, flagged: roots });
+	return filesSyncable() ? 'browser' : 'none';
 }
 
 
@@ -3042,12 +2656,8 @@ export async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromD
 	// agrees nothing and fails nothing; the chip already says so, and a store that comes back
 	// merges again (sync.js `daimond:file-store`). The test is sync.js `filesNotHeld`'s. Not a
 	// folder, whose files are on the disk and not in the browser's store.
-	if (!plan.folder && await noFileStore()) return;
+	if (await noFileStore()) return;
 	var loc = syncFileLoc(plan);
-	// SCOPED BY `withinShare`, whose roots are the flagged folders that FIT. An edit
-	// the far end made under a root this device left out -- unflagged, or over the
-	// ceiling -- stays in that device's own workspace and is never written to this
-	// disk; a tombstone from under such a root is likewise ignored here.
 	var app = plan.app;
 	var base  = withoutAppState(readFilebaseAt(loc));
 	// The same inline budget the parcel and the baseline use, so `local` classifies
@@ -3085,24 +2695,7 @@ export async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromD
 	// the sender as the newer version of the path -- its fork point is its own edit -- and
 	// theirs is written over there too.
 	var fileBeside = async function (p, r) {
-		if (plan.folder) {
-			// BOTH MOVED, AND ONE OF THEM IS A FILE ON SOMEBODY'S DISK. The disk wins
-			// and is not touched: the version that arrived lands beside it, named for
-			// the device that sent it and the moment it arrived, and the person
-			// decides. A `.synced` sidecar would do for a sandbox path nothing else
-			// reads; in a folder under version control it would be a file `git status`
-			// reports and a compiler may try to open, so it keeps the real extension
-			// and says in its name what it is.
-			var cname = conflictName(p, fromDevice, Date.now());
-			if (await writeSyncFile(app, cname, r, null, plan)) {
-				console.warn('sync: ' + p + ' changed on this device and on '
-					+ (fromDevice || 'another device') + '; the disk copy stands and '
-					+ 'theirs is beside it at ' + cname);
-				out_conflicts.push({ path: p, copy: cname });
-			}
-			else unwritten.push(p);
-		}
-		else if (!/\.synced$/.test(p)) sidecars[p + '.synced'] = { of: p, text: r };
+		if (!/\.synced$/.test(p)) sidecars[p + '.synced'] = { of: p, text: r };
 	};
 	// Theirs kept beside a file held here off the inline section (S13), in either storage, under
 	// a name of its own. A `.synced` sidecar of such a file is offloaded too, under the key the
@@ -3143,7 +2736,6 @@ export async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromD
 		// or one an ignore rule excludes, is not this folder's to hold and is left
 		// where it is. In the sandbox the whole workspace is the share and this is
 		// always true.
-		if (plan.folder && !withinShare(plan, p)) continue;
 		// Agreed only if the write LANDED. A refused or failed write leaves this
 		// device without the file, and a fork point that says both devices hold it
 		// is a fork point that will read its absence here as a deletion there.
@@ -3250,7 +2842,7 @@ export async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromD
 	var olds = (!stamped && remoteComplete === true && remoteTombs && typeof remoteTombs === 'object') ? remoteTombs : {};
 	for (var tp in olds) {
 		if (!Object.prototype.hasOwnProperty.call(olds, tp)) continue;
-		if (syncAppState(tp) || ownHere(plan, tp, parcelOwn) || (plan.folder && !withinShare(plan, tp))) continue;
+		if (syncAppState(tp) || ownHere(plan, tp, parcelOwn)) continue;
 		if (Object.prototype.hasOwnProperty.call(remoteFiles, tp)) continue;	// they have it after all.
 		if (Object.prototype.hasOwnProperty.call(wrote, tp) || gone[tp]) continue;
 		var tr = fileRecord(tp);
@@ -3347,7 +2939,7 @@ async function honourFileRecords(plan, loc, local, base, wrote, parcelOwn) {
 	var app = plan && plan.app;
 	if (!app) return gone;
 	var mineHere = readMine()[loc] || {}, seen = readAgreedAt(loc);
-	var inside = function (p) { return !syncAppState(p) && !ownHere(plan, p, parcelOwn) && !(plan.folder && !withinShare(plan, p)); };
+	var inside = function (p) { return !syncAppState(p) && !ownHere(plan, p, parcelOwn); };
 	var ps = Object.keys(local || {});
 	for (var i = 0; i < ps.length; i++) {
 		var p = ps[i];
@@ -3383,7 +2975,7 @@ async function honourFileRecords(plan, loc, local, base, wrote, parcelOwn) {
 			// as that copy is (fix/sync-resurrect, the offloaded form of `owesDeletion`).
 			if (m && !DaimondCloud.deadCovers(q, m)) continue;
 			if (!f) { if (m) DaimondCloud.forget(q); continue; }	// not held here: the reference goes
-			same = !!(m && !(plan && plan.folder) && m.mtime && m.bytes === f.size && m.mtime === f.lastModified);
+			same = !!(m && m.mtime && m.bytes === f.size && m.mtime === f.lastModified);
 			if (!same && window.DaimondChunks) {
 				try { same = (await DaimondCloud.fileKey(f, DaimondChunks.chunkSizeFor(f.size))) === (m ? m.hash : h); }
 				catch (e) { same = false; }
@@ -3583,10 +3175,10 @@ export function diamondTwoSided(r, mine, recv, dbase) {
 
 // ── What each copy carried outside its versioned files (lane DIA2) ───
 //
-// `id -> [[stamp, tags, links, name, kits], …]`, oldest first: for the last few
+// `id -> [[stamp, tags, links, name], …]`, oldest first: for the last few
 // copies of a Diamond this device held -- each one a parcel of its carried, each one
-// it received -- the tags, a short hash of each link's identity (`fileHash`), the
-// name and the toolchain grants. None of the four is in a versioned file, so a
+// it received -- the tags, a short hash of each link's identity (`fileHash`)
+// and the name. None of the three is in a versioned file, so a
 // "kept before sync" version cannot hold them, and a two-sided merge settled them by
 // UNION: a union cannot tell "the other device took it off" from "this device never
 // had it", so a mark taken off on one device came back, in force on the device that
@@ -3607,7 +3199,7 @@ function writeDiamondSeen(map) {
 	catch (e) { /* best effort: no common copy only means the merge unions */ }
 }
 
-/// The tags, links, name and grants a pack carries, in one parse; null for a pack
+/// The tags, links and name a pack carries, in one parse; null for a pack
 /// that cannot be read. As defensive as `packTags`, for the same reason.
 export function packFacets(data) {
 	var strs = function (a) {
@@ -3619,7 +3211,6 @@ export function packFacets(data) {
 		var links = files['.daimond/links.jsonl'] || files['.red/links.jsonl'] || '';
 		return {
 			tags:  strs(meta.tags),
-			kits:  strs(meta.toolkits),
 			name:  typeof meta.name === 'string' ? meta.name : '',
 			links: typeof links === 'string' ? links : '',
 		};
@@ -3644,12 +3235,12 @@ function sidecarRows(text) {
 /// One copy's record, from its pack facets.
 export function seenEntry(stamp, f) {
 	return [stamp, f.tags.slice().sort(), sidecarRows(f.links).map(function (x) { return x.key; }),
-		f.name, f.kits.slice().sort()];
+		f.name];
 }
 
 /// The lineage the parcel entry for this device's copy of `id` at `stamp` carries,
 /// noting in `recvCh` and `seenAdd` what the first parcel to carry a copy records:
-/// the copy as this device's newest, and its tags, links, name and grants where its
+/// the copy as this device's newest, and its tags, links and name where its
 /// export `data` was made (a reused reference was recorded when it was made).
 function entryLineage(recv, seen, id, stamp, data, recvCh, seenAdd) {
 	var rv = recvOf(recv, id), anc = diamondAncOf(rv, stamp);
@@ -3730,15 +3321,15 @@ export function seenAncestor(list, anc) {
 /// took off since that copy, plus what the loser added; the loser's name where only
 /// the loser renamed. A removal made on either side stands, an addition on either side
 /// stands, and nothing either side did not do is written. Where no common copy is
-/// held: the union of tags and links this merge always made, the winner's name and
-/// grants -- a removal the loser made can then come back, which is the residual.
+/// held: the union of tags and links this merge always made, the winner's name
+/// -- a removal the loser made can then come back, which is the residual.
 ///
-/// `{ tags, kits, name, both, drop, add, rows }`: the tags and grants to write (null:
+/// `{ tags, name, both, drop, add, rows }`: the tags to write (null:
 /// the winner's stand), the name to take (null: the winner's), whether both renamed,
 /// the rows to remove (`{ id, line }`), the rows to union in, and the rows the live copy holds
 /// afterwards, which the marks-here record settles against.
 export function diamondMergePlan(w, l, a) {
-	// Tags and grants compare as the store normalised them, on every device alike.
+	// Tags compare as the store normalised them, on every device alike.
 	var set3 = function (win, los, anc) {
 		var out = win.slice();
 		if (anc) out = out.filter(function (x) { return !(anc.indexOf(x) !== -1 && los.indexOf(x) === -1); });
@@ -3746,9 +3337,8 @@ export function diamondMergePlan(w, l, a) {
 		var same = out.length === win.length && out.every(function (x) { return win.indexOf(x) !== -1; });
 		return same ? null : out;
 	};
-	var plan = { tags: null, kits: null, name: null, both: false, drop: [], add: '', rows: '' };
+	var plan = { tags: null, name: null, both: false, drop: [], add: '', rows: '' };
 	plan.tags = set3(w.tags.slice(), l.tags.slice(), a ? a[1] : null);
-	if (a) plan.kits = set3(w.kits.slice(), l.kits.slice(), a[4]);
 	if (a && l.name !== a[3]) {
 		if (w.name === a[3]) plan.name = l.name;
 		else if (w.name !== l.name) plan.both = true;
@@ -3821,19 +3411,6 @@ export async function collectChunked(large, plan) {
 	// this parcel carries it (SIM-24).
 	if (DaimondCloud.refresh) { try { await DaimondCloud.refresh(); } catch (e) { /* the mirror as it is */ } }
 	if (!window.DaimondChunks || !DaimondCloud.available()) return DaimondCloud.index();
-	// A SHARED FOLDER'S MANIFESTS CARRY NO CLOCK, so this device's own "have I looked
-	// at this since it changed" note lives here instead. Two desktops kept identical
-	// by Syncthing hold one file at two modification times; a manifest carrying either
-	// of them differs between devices that agree about every byte, and two devices
-	// with permanently different parcels push at each other for ever.
-	var shared = !!(plan && plan.folder);
-	// PER FOLDER: a note of the size and time this device last looked at a path is a fact
-	// about one folder's file, and a file at the same path, size and time in another folder
-	// is another file (the QFB2 sweep). Keyed by the location the plan is of.
-	var seenKey = shared ? SYNC_FOLDER_SEEN_KEY + '@' + syncFileLoc(plan) : null;
-	if (shared) { try { localStorage.setItem(SYNC_FOLDER_EVER_KEY, '1'); } catch (e) { /* the fork points still say */ } }
-	var seen = shared ? readJson(seenKey, {}) : null;
-	var seenMoved = false;
 	// A passphrase change makes every chunk already in the cloud store
 	// unopenable: they were sealed under the old key and the gateway holds them
 	// still. `chunks.js` drops its address map so none of that ciphertext can be
@@ -3856,30 +3433,13 @@ export async function collectChunked(large, plan) {
 		// its chunk hashes, which never holds the file) and compared against the
 		// manifest. Same content, no upload, and the note is brought forward.
 		var known = DaimondCloud.manifest(p);
-		var liveKey = null;						// the content key, once this round has hashed it
-		if (shared && !stale && known && known.key && known.bytes === f.size) {
-			var mark = f.size + ':' + f.lastModified;
-			var fresh = seen[p] === mark;
-			if (!fresh) {
-				var live = null;
-				try { live = await DaimondCloud.fileKey(f, DaimondChunks.chunkSizeFor(f.size)); }
-				catch (e) { live = null; }
-				liveKey = live;
-				fresh = (live !== null && live === known.key);
-				if (fresh) { seen[p] = mark; seenMoved = true; }
-			}
-			if (fresh) {
-				if (pg._presenceAnswered) _offloadConfirmed[p] = known.key;
-				continue;
-			}
-		}
 		// Offload streams the file and asks the gateway which of its pieces
 		// are missing, so an unchanged file costs one `have` call and a read,
 		// and a file whose chunks were swept is refilled rather than left
 		// unfetchable with the index still promising it. The only thing worth
 		// skipping outright is a file identical in length and untouched since
 		// its own upload.
-		if (!shared && !stale && known && known.bytes === f.size && known.mtime === f.lastModified && known.key) {
+		if (!stale && known && known.bytes === f.size && known.mtime === f.lastModified && known.key) {
 			// REUSED ON ITS CHANGE-KEY, and therefore confirmed only if this round's
 			// presence sweep actually answered: that sweep asks about every address
 			// every manifest names and drops the stale ones before anything here runs,
@@ -3920,7 +3480,7 @@ export async function collectChunked(large, plan) {
 			if (ivNow !== null && ivNow !== 'i:' + agreedIn) vo = { parent: { ver: 'i:' + agreedIn, anc: [] } };
 		}
 		if (known && known.key) {
-			var ls = await DaimondCloud.localState(p, f, known, { folder: heldLoc(plan), live: liveKey });
+			var ls = await DaimondCloud.localState(p, f, known, { folder: heldLoc(plan) });
 			if (ls.state === 'same') {
 				if (!stale) {
 					if (pg._presenceAnswered) _offloadConfirmed[p] = known.key;
@@ -3929,7 +3489,7 @@ export async function collectChunked(large, plan) {
 				if (DaimondCloud.trusted(known)) vo = { keep: { ver: known.ver, anc: known.anc, sn: known.sn } };
 			} else if (ls.state === 'stale') {
 				if (DaimondCloud.mayDrop(p, known, ls.baseVer, ls.live)) {
-					if (!shared) await DaimondCloud.settleStale(p);
+					await DaimondCloud.settleStale(p);
 					continue;
 				}
 				// Not shown to be newer than what is here: ours is offered again, as a version
@@ -3952,9 +3512,7 @@ export async function collectChunked(large, plan) {
 		try {
 			var mani = await DaimondChunks.offloadFile(p, f);
 			await DaimondCloud.put(p, mani, mani.key,
-				shared ? { file: f, timeless: true, folder: heldLoc(plan), keep: vo.keep, parent: vo.parent, seen: vo.seen }
-					: { keep: vo.keep, parent: vo.parent, seen: vo.seen });
-			if (shared) { seen[p] = f.size + ':' + f.lastModified; seenMoved = true; }
+				{ keep: vo.keep, parent: vo.parent, seen: vo.seen });
 			// CONFIRMED BY THE UPLOAD ITSELF. `offloadFile` reuses an address only
 			// after `missing()` said the gateway holds it, and `putChunks` throws on
 			// anything but a 200 — so a manifest it RETURNED names chunks that are all
@@ -3969,8 +3527,6 @@ export async function collectChunked(large, plan) {
 	// Cleared only after the pass that owed it, so a round that never ran leaves
 	// the debt standing rather than marking it paid.
 	if (stale && DaimondChunks.clearStale) DaimondChunks.clearStale();
-	if (seenMoved) { try { localStorage.setItem(seenKey, JSON.stringify(seen)); }
-		catch (e) { /* quota: one re-derivation next round, never a byte */ } }
 	return DaimondCloud.index();
 }
 
@@ -3984,8 +3540,7 @@ export async function collectChunked(large, plan) {
 ///   - the bytes are the new version: nothing to do;
 ///   - they are the version the index moved past, and the new manifest was made from it
 ///     (`DaimondCloud.descends`): the sandbox drops its copy (fetched at the new version
-///     when opened; a pinned one at once), and a folder has `materialiseShared` write the
-///     new bytes over it;
+///     when opened; a pinned one at once);
 ///   - they changed here since, or cannot be placed, or the new manifest cannot be shown to
 ///     have been made from them (an older page's, which may be its stale copy, or a copy
 ///     relayed from a location that never merged ours): ours stands and theirs is filed
@@ -4001,13 +3556,9 @@ export async function collectChunked(large, plan) {
 /// first manifest of a path names the inline version it was made from (`i:` + the text's
 /// `fileHash`, see `collectChunked`), so bytes here that ARE that version are the older one,
 /// settled as above; bytes it cannot place stand, and theirs is filed beside them.
-/// Returns the paths where a folder's own bytes stand (`materialiseShared` leaves them).
-/// `judged`, for a folder, is told the File each path's judgement was made on, or
-/// `JUDGED_ABSENT`: `materialiseTo` writes over that and nothing else (FIRE SYNC-ABORT3).
-async function settleAdopted(plan, was, fromDevice, judged) {
-	var stand = {};
-	if (!window.DaimondCloud || !DaimondCloud.localState) return stand;
-	var folder = !!(plan && plan.folder), ix = DaimondCloud.index();
+async function settleAdopted(plan, was, fromDevice) {
+	if (!window.DaimondCloud || !DaimondCloud.localState) return;
+	var ix = DaimondCloud.index();
 	var keys = Object.keys(was || {});
 	Object.keys(ix).forEach(function (k) { if (!was || !Object.prototype.hasOwnProperty.call(was, k)) keys.push(k); });
 	keys.sort();
@@ -4016,24 +3567,18 @@ async function settleAdopted(plan, was, fromDevice, judged) {
 		var first = !l;										// a path the index names for the first time
 		if (!r || (l && l.hash === r.hash) || !Array.isArray(r.chunks) || (l && l.peer) || r.peer) continue;
 		if (/\.synced$/.test(p) || (DaimondCloud.isContentKey && DaimondCloud.isContentKey(p))) continue;
-		if (folder && !withinShare(plan, p)) continue;
 		var f = null;
 		try { f = await syncFileAt(plan, p); } catch (e) { f = null; }
-		if (folder && judged) judged[p] = f || DaimondCloud.JUDGED_ABSENT;
 		if (!f) continue;										// not held here: a reference, nothing to settle
 		var st = await DaimondCloud.localState(p, f, r, { folder: heldLoc(plan), base: l || null });
 		if (st.state === 'same') continue;
 		var bv = st.state === 'stale' ? st.baseVer : null;
 		if (first && st.state === 'unknown') bv = await inlineVerOf(f);
 		if (bv && DaimondCloud.mayDrop(p, r, bv, st.live)) {
-			// A folder's copy is replaced by `materialiseShared`, which runs next.
-			if (!folder) {
-				var res = await DaimondCloud.settleStale(p, first ? inlineVerOf : undefined);
-				if (String(res).indexOf('OK') !== 0) console.warn('sync: ' + p + ': ' + res);
-			}
+			var res = await DaimondCloud.settleStale(p, first ? inlineVerOf : undefined);
+			if (String(res).indexOf('OK') !== 0) console.warn('sync: ' + p + ': ' + res);
 			continue;
 		}
-		if (folder) stand[p] = 1;
 		// OURS IS RE-NAMED ONLY WHERE IT IS THE REPLACED MANIFEST'S CONTENT (stale). Bytes changed
 		// here are not `l`'s: renaming `l` as having seen theirs offered content nobody holds as the
 		// newest version, and a device holding theirs dropped its copy for it (C2P). Such bytes
@@ -4046,7 +3591,6 @@ async function settleAdopted(plan, was, fromDevice, judged) {
 			: ' changed on this device and on ' + (fromDevice || 'another device')
 				+ '; this device\'s version stands and theirs is kept beside it'));
 	}
-	return stand;
 }
 
 /// The inline version the bytes `f` are: `i:` and their text's `fileHash`, the name the inline
@@ -4076,58 +3620,23 @@ export async function applyChunked(remoteChunked, base, fromDevice, remoteTombs)
 	// A sibling tab's manifests first, so the merge compares with what this device holds
 	// and not with one tab's memory of it (SIM-24).
 	if (DaimondCloud.refresh) { try { await DaimondCloud.refresh(); } catch (e) { /* the mirror as it is */ } }
-	// A FOLDER-MOUNTED DEVICE MERGES THE SHARED PATHS, and until 2026-09-14 it
-	// merged nothing: this function opened on `filesSyncable`, which is the answer
-	// to a different question (see it) -- may this device COMMIT an index. So a
-	// phone's edit of anything past `SYNC_FILE_MAX` reached cloud storage and
-	// stopped there. The desktop adopted no manifest, never learned the file had
-	// changed, and the folder the user actually works in never heard about it,
-	// while every inline file crossed in one round. The gap was the whole of what
-	// "the folder travels" did not cover.
-	//
-	// ONLY THE SHARED PATHS. Everything else in another device's index is a path in
-	// ITS workspace, and on this device that is somebody's disk.
+	// A DEVICE WITH A REAL FOLDER OPEN MERGES NOTHING (D-20261031-11): another device's
+	// index names paths in ITS workspace, and on this device that is somebody's disk, which
+	// a mark no longer grants to the account.
+	if (!filesSyncable()) return;
 	var plan = _sharePlan;
 	if (!plan) plan = await syncWalkPlan();
-	var folder = !!(plan && plan.folder);
-	if (!folder && !filesSyncable()) return;
+	if (!plan) return;
 	var incoming = remoteChunked;
-	// WHETHER THIS MERGE TAKES THE PARCEL'S INDEX WHOLE, for the commit gate (see "A commit
-	// declares only an index merged in full"). A folder merge that leaves out an entry the
-	// sandbox merge would have taken -- a file, a sidecar, a peer slot, a preview -- leaves
-	// this index short of the account's. A content manifest of the sender's own is never
-	// taken by either, so leaving it out loses nothing.
-	var dropped = 0;
-	if (folder) {
-		incoming = {};
-		Object.keys(remoteChunked || {}).forEach(function (k) {
-			if (!withinShare(plan, indexPathOf(k))) {
-				var content = DaimondCloud.isContentKey && DaimondCloud.isContentKey(k);
-				var shared  = (DaimondCloud.isPreviewKey && DaimondCloud.isPreviewKey(k))
-					|| (DaimondCloud.peerOwner && DaimondCloud.peerOwner(k) !== null);
-				if (!content || shared) dropped++;
-				return;
-			}
-			incoming[k] = timelessManifest(remoteChunked[k]);
-		});
-	}
-	// The index as it stood BEFORE the merge, so the materialise below can tell a
-	// manifest this round adopted from one that has been ours all along.
+	// The index as it stood BEFORE the merge, so the settle below can tell a manifest
+	// this round adopted from one that has been ours all along.
 	// A COPY: the index is one mirror that the merge writes in place (SIM-24), so the
 	// object itself would already hold what the merge adopted.
 	var was = Object.assign({}, DaimondCloud.index());
 	// THE RUNNER'S CHUNKS ARE NAMED BY THIS DEVICE'S COMMIT, or nothing names them.
-	// A folder-mounted machine never commits the index (filesSyncable is false
-	// there), so the preview artifact it just uploaded is live only while some
-	// committing device declares its addresses. Noted BEFORE the merge, so a record
-	// this device is about to adopt as its own is recognised as such and the slot
-	// pruned rather than doubled.
-	//
-	// ONLY A COMMITTING DEVICE NOTES THEM, which is the gate this function used to
-	// open on. A folder-mounted device now merges the shared paths (above), but it
-	// still sends no index, so a peer slot written here would be a localStorage
-	// write that nothing ever reads.
-	if (filesSyncable() && DaimondCloud.isPreviewKey) {
+	// Noted BEFORE the merge, so a record this device is about to adopt as its own is
+	// recognised as such and the slot pruned rather than doubled.
+	if (DaimondCloud.isPreviewKey) {
 		var rx = (remoteChunked && typeof remoteChunked === 'object') ? remoteChunked : {};
 		Object.keys(rx).forEach(function (k) {
 			if (!DaimondCloud.isPreviewKey(k)) return;
@@ -4143,162 +3652,11 @@ export async function applyChunked(remoteChunked, base, fromDevice, remoteTombs)
 	// second-hand copy would name whatever we uploaded before our last change.
 	DaimondCloud.merge(incoming, base || {}, deviceId(), fromDevice, remoteTombs);
 	// THE BYTES IN THE SAME STEP AS THE MANIFEST, before anything reads the index again.
-	var judged = {};
-	var stand = await settleAdopted(plan, was, fromDevice, judged);
-	pg._chunkedWhole = !dropped && !!remoteChunked && typeof remoteChunked === 'object';
+	await settleAdopted(plan, was, fromDevice);
+	pg._chunkedWhole = !!remoteChunked && typeof remoteChunked === 'object';
 	// The deletions the records name were carried out by `applyFiles`, which runs first,
 	// for every copy here, inline or offloaded (`honourFileRecords`): one step, one law.
 	await DaimondCloud.refreshPaths();
-	if (folder) {
-		var made = await materialiseShared(plan, was, fromDevice, stand, judged);
-		// The panel's conflict list is the merge's, both halves of it: `applyFiles`
-		// runs first in `applySync` and set the inline ones.
-		if (made.length) _lastConflicts = _lastConflicts.concat(made);
-	}
-}
-
-/// A manifest with no clock on it, for adoption into a SHARED FOLDER's index.
-///
-/// A device that is not sharing a folder stamps its manifests with the file's
-/// modification time and the moment of upload, which is right for it: they are the
-/// cheap "did this change" test against its own sandbox. A folder-mounted device
-/// must not then adopt those numbers, because its own manifests carry none -- see
-/// `put` in js/cloud.js for why -- and one entry in its index disagreeing with the
-/// other desktop's copy of the same bytes is the difference the fixed point is
-/// measured on. `dev/verify_foldershare.mjs` found three such entries the first
-/// time the merge was let through at all.
-///
-/// The content key and the merge fingerprint are untouched, so which side wins a
-/// three-way compare is exactly what it was.
-function timelessManifest(m) {
-	if (!m || typeof m !== 'object') return m;
-	if (!m.mtime && !m.at) return m;
-	var out = {};
-	for (var k in m) { if (Object.prototype.hasOwnProperty.call(m, k)) out[k] = m[k]; }
-	out.mtime = 0;
-	out.at = 0;
-	return out;
-}
-
-/// The workspace path an index key is about, with a sidecar suffix taken off.
-///
-/// `<path>.synced` is the version the merge preserved when both sides moved, and
-/// `<path>.peer.<device>` is another device's addresses for the same file. Both are
-/// about the path in front of them, so the share test has to be applied to that and
-/// not to the key -- a sidecar judged by its own name is a sidecar outside every
-/// root, and it would be dropped on the floor along with the file it is about.
-function indexPathOf(key) {
-	var k = String(key).replace(/\.peer(?:\.[0-9a-f]{16,32})?$/, '');
-	return k.replace(/\.synced$/, '');
-}
-
-/// Bring another device's version of a SHARED FOLDER file onto the disk.
-///
-/// THE INLINE HALF'S THREE RULES, KEPT HERE TOO. Only a path inside the share is
-/// written (`withinShare`); where both sides moved the disk stands and theirs lands
-/// beside it under `conflictName`; and the folder's own ceiling counts these bytes,
-/// so a merge can never carry a folder past the size at which nothing may be shared
-/// at all.
-///
-/// A FILE WHOSE BYTES ARE ALREADY THESE BYTES IS NOT WRITTEN. Two desktops kept
-/// identical by Syncthing meet here on every round, and rewriting the file would
-/// cost the disk a modification time for nothing -- which is the one thing the
-/// shared folder is built not to spend (see `put` in js/cloud.js). The test is the
-/// content key, re-derived by streaming, so it is affordable at any size.
-///
-/// A FILE IS WRITTEN OVER ONLY AS IT WAS JUDGED. The downloads run one after another, long
-/// after `settleAdopted` judged each path (`judged`); a save made since, or a file created
-/// where the judgement found none, is not this merge's to replace. `materialiseTo` refuses
-/// it at the open and again just before the close, and the collect sends it as an edit.
-async function materialiseShared(plan, was, fromDevice, stand, judged) {
-	var out = [];
-	if (!window.DaimondCloud || !DaimondCloud.materialiseTo || !window.DaimondChunks) return out;
-	var handle = sharedFolderHandle();
-	if (!handle) return out;
-	var ix = DaimondCloud.index(), keys = Object.keys(ix).sort();
-	// What each flagged root already weighs, so what arrives is counted against the
-	// SAME per-root ceiling the walk applied. One number over all of them would let
-	// a small folder be refused its bytes because a large one beside it is full.
-	var spent = {};
-	var shareRoots = plan.roots || [];
-	Object.keys(plan.perRoot || {}).forEach(function (r) { spent[r] = plan.perRoot[r] | 0; });
-	var rootOf = function (rp) {
-		for (var ri = 0; ri < shareRoots.length; ri++) {
-			var rr = shareRoots[ri];
-			if (rp === rr || rp.indexOf(rr + '/') === 0) return rr;
-		}
-		return null;
-	};
-	for (var i = 0; i < keys.length; i++) {
-		var p = keys[i], m = ix[p];
-		if (!m || !Array.isArray(m.chunks) || m.peer) continue;
-		// Both sides moved: `merge` preserved theirs at `<path>.synced`, which is the
-		// right sidecar for a sandbox path nothing else reads. In a folder under
-		// version control it would be a file `git status` reports and a compiler may
-		// try to open, so it lands under the conflict name the inline half uses and
-		// the index entry follows the bytes.
-		var isSynced = /\.synced$/.test(p);
-		var real = isSynced ? p.slice(0, -7) : p;
-		if (!withinShare(plan, real)) continue;
-		// THE DISK'S OWN BYTES STAND where the settle could not place them against a manifest
-		// named here for the first time (S10): theirs lands beside them, as `<path>.synced`.
-		if (!isSynced && stand && stand[p]) continue;
-		// Ours all along: the manifest this device's own offload took of the file
-		// that is on the disk.
-		//
-		// UNLESS THE DISK IS BEHIND IT. The index is one per device and the folder's bytes
-		// are one per folder: a version taken while this device was in its Browser storage
-		// (or another folder) is "ours all along" to the index and still not on this disk.
-		// A disk copy this device's note places at an older version (`stale`) is brought
-		// up to the manifest; one changed here, or one it cannot place, stands, and the
-		// collect sends it.
-		// What this write may replace: the File judged for it, `JUDGED_ABSENT`, or, for a path
-		// no judgement reached, the `f` read below.
-		var jf = isSynced ? DaimondCloud.JUDGED_ABSENT
-			: (judged && Object.prototype.hasOwnProperty.call(judged, p) ? judged[p] : undefined);
-		if (!isSynced && was && was[p] && was[p].hash === m.hash) {
-			var fw = null;
-			try { fw = await DaimondCloud.fileUnderRoot(handle, p); } catch (e) { fw = null; }
-			if (!fw || !DaimondCloud.localState) continue;
-			var sw = await DaimondCloud.localState(p, fw, m, { folder: heldLoc(plan) });
-			if (sw.state !== 'stale' || !DaimondCloud.mayDrop(p, m, sw.baseVer, sw.live)) continue;
-			jf = fw;
-		}
-		// A CONFLICT COPY OF CONTENT ALREADY BESIDE THE FILE IS NOT WRITTEN AGAIN. An older
-		// page that re-offers its stale copy on every round would otherwise leave one more
-		// dated copy in the folder each time (`settleAdopted` files it, round after round).
-		if (isSynced && m.key && conflictCopyHeld(ix, real, m.key)) { DaimondCloud.forget(p); continue; }
-		var dest = isSynced ? conflictName(real, fromDevice, Date.now()) : p;
-		var f = null;
-		try { f = await DaimondCloud.fileUnderRoot(handle, dest); } catch (e) { f = null; }
-		if (f && m.key && f.size === (m.bytes | 0)) {
-			var live = null;
-			try { live = await DaimondCloud.fileKey(f, DaimondChunks.chunkSizeFor(f.size)); }
-			catch (e) { live = null; }
-			if (live !== null && live === m.key) continue;		// already these bytes.
-		}
-		var add  = (m.bytes | 0) - (f ? f.size : 0);
-		var root = rootOf(real);
-		if (add > 0 && root !== null && (spent[root] | 0) + add > SYNC_FOLDER_SHARE_MAX) {
-			console.warn('sync: ' + dest + ' was not written into the folder, because it '
-				+ 'would take ' + root + ' past the ' + fmtSyncBytes(SYNC_FOLDER_SHARE_MAX)
-				+ ' one shared folder may take');
-			continue;
-		}
-		// A path no judgement reached is written over only as `f`, the File the decisions above
-		// were made on, so a save made while it was hashed is not taken as the baseline.
-		if (jf === undefined) jf = f || DaimondCloud.JUDGED_ABSENT;
-		var res = await DaimondCloud.materialiseTo(handle, p, dest, heldLoc(plan), jf);
-		if (String(res).indexOf('OK') !== 0) { console.warn('sync: ' + dest + ': ' + res); continue; }
-		if (add > 0 && root !== null) spent[root] = (spent[root] | 0) + add;
-		if (!isSynced) continue;
-		DaimondCloud.rename(p, dest);
-		console.warn('sync: ' + real + ' changed on this device and on '
-			+ (fromDevice || 'another device') + '; the disk copy stands and theirs is '
-			+ 'beside it at ' + dest);
-		out.push({ path: real, copy: dest });
-	}
-	return out;
 }
 
 /// Does the index already name a conflict copy of `real` (a `conflictName` beside it) with
@@ -4567,7 +3925,7 @@ export async function collectDiamonds(budget, plan) {
 	var used = 0;
 	// What each entry's copy descends from (`anc`, see `diamondAncOf`), from the record
 	// read once. A copy this device made is recorded the first time a parcel carries
-	// it: its lineage, and its tags, links, name and grants, so a later two-sided
+	// it: its lineage, and its tags, links and name, so a later two-sided
 	// merge can find the copy both sides last shared. The lineage moves only with the
 	// entry's stamp, so it never pushes alone and the fixed point holds.
 	var recv = readDiamondRecv(), seen = readDiamondSeen(), recvCh = {}, seenAdd = {};
@@ -4810,25 +4168,8 @@ export async function collectDiamonds(budget, plan) {
 export function install() { // page-split: install
 	// page-split: install 20
 
-	// THE WALK ITSELF, memoised. A pull applies, then commits its own baseline, both
-	// against the census the parcel was already built from -- three callers a round,
-	// each walking the whole tree to answer the same question. Keyed on the SORTED
-	// FLAGGED roots, so flagging a folder or taking the flag off misses the cache
-	// rather than answering for a share that no longer matches -- and
-	// `toggleAttachShare` clears it outright, at the moment the set moved rather than
-	// a round later; good for `SYNC_WALKPLAN_TTL_MS`,
-	// long enough to cover one round's three callers and short enough that a folder
-	// the user just grew past the ceiling is re-measured well inside the next one.
-	// `daimond-file-written` clears it outright, for a write THIS DEVICE makes
-	// mid-round -- an edit that arrives some other way (Syncthing, git, the user's
-	// own editor) waits out the TTL like everything else past the ceiling does.
-	/* var */ pg._walkPlanCache     = null;			// { key, at, plan }
 	// page-split: install 21
 
-	// A WRITE THIS DEVICE MAKES MID-ROUND invalidates the memoised walk outright: the
-	// census `commitFileBaseline` is about to run must see it, not the plan from up to
-	// `SYNC_WALKPLAN_TTL_MS` ago.
-	window.addEventListener('daimond-file-written', function () { pg._walkPlanCache = null; });
 	// page-split: install 22
 	// Whether THIS round's presence question was answered at all. An unanswered query
 	// is not evidence of absence (see `verifyManifestPresence`), so it is not evidence

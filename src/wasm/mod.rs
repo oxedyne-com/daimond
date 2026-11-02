@@ -65,7 +65,6 @@ pub mod llm_fetch;
 pub mod diamond;
 pub mod mail;
 pub mod mailtls;
-pub mod marks;
 pub mod ocr;
 pub mod office;
 pub mod opfs;

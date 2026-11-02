@@ -121,7 +121,6 @@ pub fn trail(what: &str, detail: &str) { Backend::trail(what, detail) }
 
 pub fn heap_mb() -> u32 { Backend::heap_mb() }
 
-pub fn forget_press(owner: &str, id: &str) -> Outcome<()> { Backend::forget_press(owner, id) }
 
 pub fn links_check() -> crate::store::LinksCheck { Backend::links_check() }
 

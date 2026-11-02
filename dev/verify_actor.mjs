@@ -200,7 +200,7 @@ await arm('reentry', async (a) => {
 		// A real Diamond id, so the call gets past the id refusal and into compose_daimon,
 		// which reads the session the running turn holds.
 		let wsOut = 'pending';
-		const ws = app.wire_system(DID, '', undefined)
+		const ws = app.wire_system(DID, undefined)
 			.then((v) => { wsOut = 'composed ' + String(v).length + ' chars'; })
 			.catch((e) => { wsOut = 'threw'; errs.push('wire_system: ' + e); });
 		await within(Promise.all([t, ws]), 5000, 'run_turn + wire_system');
@@ -269,7 +269,7 @@ await arm('scopeback', async (a) => {
 		J(narrow).slice(0, 400));
 
 	// What scopeAgentTo does (it is page-private, so its engine sequence is driven here):
-	// read_scope_reach then set_diamond_scope on an app with a turn in flight, then read
+	// set_diamond_scope on an app with a turn in flight, then read
 	// write_allow back at once.  The reach is the engine's own read of the Diamond's marks
 	// (ENGINE-REENTRY, 17 Oct 2026): the scope call takes it and never a Diamond id.
 	const d = await p.evaluate(async ([MOCK, DID]) => {
@@ -278,9 +278,7 @@ await arm('scopeback', async (a) => {
 		const t = app.run_turn('@slow 1500 SCOPEAGENT', () => {}).catch(() => {});
 		await __sleep(300);
 		try {
-			const reach = await Promise.race([app.read_scope_reach(String(DID)),
-				__sleep(5000).then(() => { throw new Error('read_scope_reach hung past 5000 ms'); })]);
-			app.set_diamond_scope(reach, '[]');
+			app.set_diamond_scope(String(DID));
 		} catch (e) { out.err = String(e && e.message || e); }
 		try { out.allow = (JSON.parse(app.diamond_scope() || '{}').write_allow || []); } catch (e) { out.err2 = String(e); }
 		await Promise.race([t, __sleep(5000)]);

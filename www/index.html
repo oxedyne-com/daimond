@@ -902,13 +902,6 @@
 				     here only until the first render, so the frame does not flash on a
 				     page with no chat open. -->
 				<div class="arte-list chat-attach-strip" id="chat-attachments" style="display:none"></div>
-				<!-- MARKS NOT IN FORCE ON THIS DEVICE, above the composer on both faces of a
-				     Diamond and on a chat. A mark applies only on the device it was made or
-				     confirmed on (2026-09-23), so at that deploy every existing mark went
-				     inactive at once, and the only sign was a paperclip tooltip a touch screen
-				     never shows. Said here, in ink, with the press that puts each one back.
-				     Filled by `renderMarkNotice`; hidden while there is nothing to confirm. -->
-				<div class="mark-notice" id="mark-notice" aria-live="polite" hidden></div>
 				<div class="chat-input-bar" data-undo-row="chat-attachments">
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
 					<!-- The walk-back pair comes BEFORE Send, so Send is the last control and
@@ -1987,9 +1980,9 @@
 <script src="js/signals.js"></script>
 <script src="js/governor.js"></script>
 <script src="js/pause.js"></script>
-<!-- markshere.js: the marks pressed on this device, which a mark needs as well as
-     its synced row to be in force here. Before daimond.js, whose every grant asks it. -->
-<script src="js/markshere.js"></script>
+<!-- apppaths.js: the app's own paths (store, app state, keeper records), mirrors
+     of the engine's. Before daimond.js, whose page modules ask it. -->
+<script src="js/apppaths.js"></script>
 <!-- recent.js: the pure ring of files a daimon or chat last wrote, and the rows
      of what it can change, both drawn in the Workspace focus section. -->
 <script src="js/recent.js"></script>
@@ -2079,7 +2072,6 @@
      that decides what an arriving path may be written to must agree about which
      paths those are, so the rule lives in one file. Before daimond.js, which closes
      over both call sites. -->
-<script src="js/ignore.js"></script>
 <!-- One Web Lock per file around every OPFS write, before cloud.js and daimond.js, which
      open every writable through it; the wasm takes the same lock (OPFS-LOCK). -->
 <script src="js/filelock.js"></script>

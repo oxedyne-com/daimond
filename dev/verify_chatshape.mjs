@@ -79,12 +79,10 @@ async function paired(lead, name, label, extra = {}) {
 	return d;
 }
 const push = (s) => s.page.evaluate(async () => {
-	try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older build */ }
 	const r = window.DaimondSync.flush ? await DaimondSync.flush() : await DaimondSync.push();
 	return r && typeof r === 'object' ? { ok: r.ok, version: r.version } : r;
 }).then(async (r) => { await sleep(400); return r; }).catch((e) => 'threw ' + e);
 const pull = (s) => s.page.evaluate(async () => {
-	try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older build */ }
 	return DaimondSync.pull();
 }).then(() => sleep(400)).catch(() => {});
 const settle = (s) => s.page.evaluate(() => window.DaimondCore.chatStore().settled()).catch(() => {});

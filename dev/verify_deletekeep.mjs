@@ -19,7 +19,7 @@
 //       covers.
 //   F5. An overwrite whose old bytes are not on this device to keep -- a file only in cloud
 //       storage -- is refused. (The hand's arms and a present-but-unreadable file are pinned by
-//       native tests in src/tools.rs; F6 is the page's marks, in dev/verify_marknotice.mjs.)
+//       native tests in src/tools.rs; F6 was the page's marks notice, retired with GRANT-G2.)
 //   F8. A turn's deletes from the folder the user opened stop after the limit (8 unless set)
 //       until the PERSON says: the question is the page's own dialog, asked even under the
 //       autonomous posture; a stop refuses the rest of the turn's deletes there and keeps the
@@ -119,11 +119,10 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 				&& l.by === 'user' && pressedHere(String(l.to || '')));
 		for (const l of rows) {
 			if (want.includes(l.to)) continue;
-			window.DaimondMarksHere.drop(did, l.id, l.to);
 			await app.remove_link(did, l.id);
 		}
 		for (const ref of want) {
-			if (rows.some((l) => l.to === ref) && window.DaimondMarksHere.force(did, rows.find((l) => l.to === ref), ROOT)) continue;
+			if (rows.some((l) => l.to === ref)) continue;
 			if (!await window.__pressMark(app, did, ref, ROOT)) throw new Error('mark not pressed: ' + ref);
 		}
 	};
@@ -151,8 +150,7 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 		const seen = [];
 		try {
 			await press(id, marks);
-			const reach = await eng.read_scope_reach(String(id));
-			eng.set_diamond_scope(reach, '[]');
+			eng.set_diamond_scope(String(id));
 			await eng.run_turn(text, (ev) => {
 				if (ev.type === 'tool_result') seen.push(String(ev.content || ''));
 			});
@@ -168,7 +166,7 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 		const did = String(id);
 		const row = JSON.parse(await app.links_touching('diamond:' + did) || '[]')
 			.find((l) => l.owner === did && l.from === 'diamond:' + did && l.to === ref);
-		return !!row && window.DaimondMarksHere.grant(did, row, ROOT, { share: false });
+		return !!row; // a mark is focus only now (GRANT-G2): no press to make
 	};
 	const newest = async (id) => {
 		const rows = JSON.parse(await app.versions_list(id));
@@ -855,7 +853,7 @@ if (want('F10')) {
 			await mod.write_file(path, was.slice(2));
 		};
 		await press(id, ['vault']);
-		const wire = JSON.parse(await app.wire_system(id, '[]'));
+		const wire = JSON.parse(await app.wire_system(id));
 		out.wire = Array.isArray(wire.schemas);
 		const tools = (wire.schemas || []).map((s) => s.function || s);
 		// The fenced places: two record files and one unmarked file that are there, one of each

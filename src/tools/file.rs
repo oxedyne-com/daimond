@@ -1154,12 +1154,6 @@ pub(crate) async fn root_entries<H: Host>(ctx: &ToolContext<H>) -> Vec<(String, 
 /// * `raw` - The path as the model wrote it, which is the one the sentence names.
 /// * `path` - The same path, scoped, which is the one browser storage is asked about.
 pub(super) async fn wrong_root_note<H: Host>(ctx: &ToolContext<H>, raw: &str, path: &str) -> Option<String> {
-    // A grant the browser has just withdrawn is not a path spelled against the wrong root. The
-    // sentence below would send the model to correct a path that was right, and the probes it
-    // makes to compose it would fail for the same reason the call did.
-    if is_withdrawn_grant(&ctx.host().fs().thrown()) {
-        return None;
-    }
     if matches!(ctx.host().fs().exists(ctx.root, path).await, Ok(true)) {
         return None;
     }
@@ -1398,7 +1392,7 @@ pub(crate) async fn standing_now<H: Host>(ctx: &ToolContext<H>, path: &str)
     };
     match reach_of(ctx, &rel, &rel, Door::Look).await {
         Reach::Machine { abs, cwd, spec, .. } =>
-            match machine_before(&abs, &cwd, &spec, &ctx.no_write, ctx.host()).await {
+            match machine_before(&abs, &cwd, &spec, ctx.host()).await {
                 (Some(b), _)    => Some(Body::Held(b)),
                 (None, None)    => Some(Body::Gone),
                 (None, Some(_)) => None,
@@ -1566,13 +1560,12 @@ pub(super) fn machine_read(answer: &str) -> Outcome<MachineRead<'_>> {
 /// The reason is one word the History renders: `size` where the answer was cut by the hand's
 /// frame, `binary` where the file is not text and so did not survive the wire, `unreadable`
 /// otherwise.
-pub(super) async fn machine_before<H: Host>(abs: &str, cwd: &str, spec: &LinkedFence, kits: &[Bound], host: &H)
+pub(super) async fn machine_before<H: Host>(abs: &str, cwd: &str, spec: &LinkedFence, host: &H)
     -> (Option<Vec<u8>>, Option<String>)
 {
     // The whole file: offset 1, no limit. `read_op` adds no line numbers -- those are this
     // module's -- so what comes back after the header is the file's own characters.
-    let got = match machine_op("file_read", "read", abs, cwd, spec, kits,
-        r#","offset":1,"limit":0"#, host).await
+    let got = match machine_op("file_read", "read", abs, cwd, spec, r#","offset":1,"limit":0"#, host).await
     {
         Ok(g)  => g,
         Err(e) => return (None, Some(fmt!("unreadable: {}", e.plain()))),
@@ -2257,20 +2250,18 @@ pub(super) mod hand_door {
         abs:    &str,
         cwd:    &str,
         spec:   &LinkedFence,
-        kits:   &[Bound],
         fields: &str,
         host:   &H,
     )
         -> Outcome<Result<String, String>>
     {
         let req = bound_to_link(fmt!(
-            r#"{{"t":"file","id":"{}","op":"{}","path":"{}","cwd":"{}","fence":{},"toolkits":{}{}}}"#,
+            r#"{{"t":"file","id":"{}","op":"{}","path":"{}","cwd":"{}","fence":{}{}}}"#,
             json_escape(&fmt!("f-{}", op)),
             op,
             json_escape(abs),
             json_escape(cwd),
             spec.fence.to_json(),
-            toolkit_names_json(kits),
             fields,
         ), spec.link);
         let res = res!(host.exec().file(&req).await);
@@ -2301,7 +2292,6 @@ pub(super) mod hand_door {
         abs:    &str,
         cwd:    &str,
         spec:   &LinkedFence,
-        kits:   &[Bound],
         fields: &str,
         host:   &H,
     )
@@ -2312,7 +2302,7 @@ pub(super) mod hand_door {
                 "{}: '{}' changes a file, and a change reaches the machine only with the write \
                 fence's licence. Nothing was changed.", tool, op)));
         }
-        send(tool, op, abs, cwd, spec, kits, fields, host).await
+        send(tool, op, abs, cwd, spec, fields, host).await
     }
 
     /// Ask the hand to CHANGE a file on this computer, at exactly the path the licence names.
@@ -2330,7 +2320,6 @@ pub(super) mod hand_door {
         root:   &str,
         cwd:    &str,
         spec:   &LinkedFence,
-        kits:   &[Bound],
         host:   &H,
     )
         -> Outcome<Result<String, String>>
@@ -2360,7 +2349,7 @@ pub(super) mod hand_door {
             MachineChange::Move(from, to) =>
                 ("move", at(from), fmt!(r#","to":"{}""#, json_escape(&at(to)))),
         };
-        send(tool, op, &abs, cwd, spec, kits, &fields, host).await
+        send(tool, op, &abs, cwd, spec, &fields, host).await
     }
 }
 pub(super) use hand_door::machine_op;
@@ -2619,11 +2608,16 @@ pub(super) const LINKING_SCRIPTS: &[Linking] = &[
             which section you wanted run.",
     },
     Linking {
-        path: "dev/foldershare_book.mjs",
-        does: "an `assets` folder into the test book it generates, from the top and from an \
-            archived snapshot",
-        instead: "It builds the fixture dev/verify_foldershare.mjs shares and is not a check of \
-            its own. Ask the user to run that verifier, and say what you wanted shared.",
+        path: "dev/gwkeys.sh",
+        does: "the sandbox gateway key set into a worktree's gateway/keys",
+        instead: "Those keys hold the gateway's payment secrets, which the fence withholds by \
+            design. Ask the user to start the dev gateway, which runs it for itself.",
+    },
+    Linking {
+        path: "dev/gwkeys.test.sh",
+        does: "fixture key folders into the scratch worktrees it tests dev/gwkeys.sh on",
+        instead: "It is the check of a script a fenced command cannot run either. Ask the user \
+            to run it, and say what you wanted checked about the key resolver.",
     },
     Linking {
         path: "dev/verify_deploy_provmatch.sh",

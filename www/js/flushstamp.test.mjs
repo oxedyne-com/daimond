@@ -105,7 +105,7 @@ async function dispatchWith(fl, auto) {
 		'ownsChat', 'renderHistory', 'recoverOneLocally', 'storedPre', 'storedEffort', 'autonomousPosture',
 		'msgTombsOwed', 'msgTombsShipped', 'dsEvent', 'turnEffortOf', 'errandModelOf', 'errandFence',
 		'honoursModelSet', 'errandScope', 'errandClean', 'errandLocked', 'errandLimits',
-		'errandSession', 'errandReach', 'errandToday', 'errandWords', 'errandWordsFor', 'errandProdBase',
+		'errandSession', 'errandFocus', 'errandToday', 'errandWords', 'errandWordsFor', 'errandProdBase',
 		dispatchSrc + '\nreturn dispatchToPeer;');
 	const fn = make(win, Peer, Post, S, {}, noop, () => null, () => 'dev-a', noop, (k) => k, noop, noop,
 		() => false, noop, noop, () => '', () => null, () => auto === true, () => [], noop, noop, turnEffortOf,

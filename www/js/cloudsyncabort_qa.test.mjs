@@ -8,12 +8,11 @@
        the message and the next fetch answers "already on this device".
    (g) settleStale on a PINNED stale copy whose newer manifest has a missing chunk: the copy
        is removed BEFORE the download, the download fails, the device has no file.
-   (h) a save made while a SUCCESSFUL merge/fetch over an existing file is streaming is
+   (h) a save made while a SUCCESSFUL fetch over an existing file is streaming is
        overwritten by close() (pre-existing TOCTOU, not introduced by c9bd097f).
        FIRE SYNC-ABORT3: the write re-checks its target immediately before close and aborts.
-   (h2) the same for the merge's judgement (release QA qr2, u3a_rel_qr2.md F1, without the
-       lock): a save between the judgement and the open, a file created at a path judged
-       absent, or one created mid-download at a new path, is never written over.
+   (h2) a file created mid-download at a new path is never written over. (The folder
+       merge's arms went with the shared folder, UNBLOCK-82 G2, 1 Nov 2026.)
    (d2) a fetch that throws mid-file over a STALE copy is an error and keeps the copy.
    (g2) settleStale with a presence answer: a whole newer version replaces a pinned copy or
        drops an unpinned one; a missing part or a failed query keeps the older copy.
@@ -270,13 +269,6 @@ function faulty(d) {
 		[...opfs.files.entries()].map(([k, v]) => k + '=' + v.length + 'B').join(','));
 }
 {
-	const folder = faulty(dir(new Map()));
-	const r = await said(tab(dir(new Map())).materialiseTo(folder, 'full.txt'));
-	check('(d3) materialiseTo: not "kept" over its own empty placeholder', !/^kept/.test(r), r);
-	check('(d3) materialiseTo: and no empty file is left', !folder.files.has('full.txt') || folder.files.get('full.txt').length > 0,
-		[...folder.files.entries()].map(([k, v]) => k + '=' + v.length + 'B').join(','));
-}
-{
 	// The same through fetchDown's older whole-file door (writeText), on the lock line (U3a SA3).
 	const opfs = faulty(dir(new Map()));
 	const M_V1 = { v: 1, size: 9, bytes: 9, key: 'k1', v1: 'CLOUD V1!', chunks: [] };
@@ -290,14 +282,6 @@ function faulty(d) {
 
 console.log('\n(h) a save during a SUCCESSFUL download over an existing file\n');
 {
-	const folder = dir(new Map([['full.txt', enc('older copy')]]));
-	during = () => { folder.files.set('full.txt', enc(MINE)); };
-	const r = await said(tab(dir(new Map())).materialiseTo(folder, 'full.txt'));
-	during = null;
-	const now = dec(folder.files.get('full.txt') || enc('deleted'));
-	check('(h) materialiseTo: his save made mid-download survives (or the merge stands down)', now === MINE, r + ' -> ' + JSON.stringify(now));
-}
-{
 	const opfs = dir(new Map());
 	const win = tabWin(opfs, { 'full.txt': M_FULL });
 	await said(win.DaimondCloud.fetch('full.txt', false));
@@ -310,54 +294,13 @@ console.log('\n(h) a save during a SUCCESSFUL download over an existing file\n')
 	check('(h) fetchDown over a stale copy: his save made mid-download survives', now === MINE, r + ' -> ' + JSON.stringify(now));
 }
 
-console.log('\n(h2) the merge writes over nothing it did not judge\n');
-{
-	// The merge judged the folder's copy stale; he saves before materialiseTo opens it.
-	const folder = dir(new Map([['full.txt', enc('old stale copy')]]));
-	const w = tab(dir(new Map()));
-	const judged = await w.fileUnderRoot(folder, 'full.txt');
-	folder.files.set('full.txt', enc(MINE));
-	const r = await said(w.materialiseTo(folder, 'full.txt', 'full.txt', true, judged));
-	check('(h2) a save between the judgement and the open is kept, said "kept"', /^kept: /.test(r) && dec(folder.files.get('full.txt') || enc('deleted')) === MINE, r);
-}
-{
-	// The same, with a save of the very size of the copy judged: only the mtime moved.
-	const folder = dir(new Map([['full.txt', enc('old stale copy')]]));
-	const w = tab(dir(new Map()));
-	const judged = await w.fileUnderRoot(folder, 'full.txt');
-	folder.files.set('full.txt', enc('his own words!'));
-	const r = await said(w.materialiseTo(folder, 'full.txt', 'full.txt', true, judged));
-	check('(h2) a SAME-SIZE save between the judgement and the open is kept, said "kept"', /^kept: /.test(r) && dec(folder.files.get('full.txt') || enc('deleted')) === 'his own words!', r);
-}
-{
-	// The merge found the path absent; he creates the file before materialiseTo opens it.
-	const folder = dir(new Map());
-	const w = tab(dir(new Map()));
-	folder.files.set('full.txt', enc(MINE));
-	const r = await said(w.materialiseTo(folder, 'full.txt', 'full.txt', true, w.JUDGED_ABSENT));
-	check('(h2) a file created at a path judged absent is kept', /^kept: /.test(r) && dec(folder.files.get('full.txt') || enc('deleted')) === MINE, r);
-}
-{
-	// Absent at the open; he saves there while the download streams (the placeholder moves).
-	const folder = dir(new Map());
-	during = () => { folder.files.set('full.txt', enc(MINE)); };
-	const r = await said(tab(dir(new Map())).materialiseTo(folder, 'full.txt'));
-	during = null;
-	check('(h2) materialiseTo: a file saved mid-download at a new path is kept', dec(folder.files.get('full.txt') || enc('deleted')) === MINE, r);
-}
+console.log('\n(h2) a file saved mid-download at a new path is kept\n');
 {
 	const opfs = dir(new Map());
 	during = () => { opfs.files.set('full.txt', enc(MINE)); };
 	const r = await said(tab(opfs).fetch('full.txt', false));
 	during = null;
 	check('(h2) fetchDown: a file saved mid-download at a new path is kept', dec(opfs.files.get('full.txt') || enc('deleted')) === MINE, r);
-}
-{
-	// Unchanged throughout: the judged copy is written over as before.
-	const folder = dir(new Map([['full.txt', enc('old stale copy')]]));
-	const w = tab(dir(new Map()));
-	const r = await said(w.materialiseTo(folder, 'full.txt', 'full.txt', true, await w.fileUnderRoot(folder, 'full.txt')));
-	check('(h2) an unchanged judged copy is written over', /^OK: wrote full\.txt/.test(r) && dec(folder.files.get('full.txt')) === 'first half second half', r);
 }
 
 console.log('\n(d2) a fetch that throws mid-file over a stale copy\n');

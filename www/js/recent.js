@@ -116,49 +116,6 @@
 		return fmtLocal(at, d < 7 * 86400e3 ? 'dow' : 'dayMonth');
 	}
 
-	/// The Can change rows, from the fence's inputs: its own folder, each mark in
-	/// force here (read only where consulted), each mark waiting for a press here,
-	/// and each toolchain granted.
-	function canChange(b) {
-		if (!b || !str(b.own_dir)) return [];
-		var rows = [{ kind: 'own', path: b.own_dir, ro: false }];
-		var ro = {};
-		(b.read_only || []).forEach(function (p) { ro[p] = true; });
-		var held = {};
-		(b.attached || []).forEach(function (p) {
-			held[p] = true;
-			rows.push({ kind: 'mark', path: p, ro: !!ro[p] });
-		});
-		(b.unconfirmed || []).forEach(function (p) {
-			if (!held[p]) rows.push({ kind: 'ghost', path: p, ro: false });
-		});
-		(b.toolkits || []).forEach(function (k) { rows.push({ kind: 'kit', kit: k, ro: false }); });
-		return rows;
-	}
-
-	function sorted(list) {
-		var seen = {}, out = [];
-		list.forEach(function (k) { if (!seen[k]) { seen[k] = true; out.push(k); } });
-		return out.sort();
-	}
-
-	/// The rows as a set of keys, and the fence's inputs as the same set: N1 asks
-	/// these to be equal.
-	function rowKeys(rows) {
-		return sorted((rows || []).map(function (r) {
-			return r.kind === 'kit' ? 'kit:' + r.kit : r.kind + ':' + r.path + (r.ro ? ':ro' : '');
-		}));
-	}
-	function boundsKeys(b) {
-		if (!b || !str(b.own_dir)) return [];
-		var ro = {}, held = {}, out = ['own:' + b.own_dir];
-		(b.read_only || []).forEach(function (p) { ro[p] = true; });
-		(b.attached || []).forEach(function (p) { held[p] = true; out.push('mark:' + p + (ro[p] ? ':ro' : '')); });
-		(b.unconfirmed || []).forEach(function (p) { if (!held[p]) out.push('ghost:' + p); });
-		(b.toolkits || []).forEach(function (k) { out.push('kit:' + k); });
-		return sorted(out);
-	}
-
 	var api = {
 		CAP:		CAP,
 		pathOf:		pathOf,
@@ -168,9 +125,6 @@
 		serialise:	serialise,
 		ringPath:	ringPath,
 		when:		when,
-		canChange:	canChange,
-		rowKeys:	rowKeys,
-		boundsKeys:	boundsKeys,
 	};
 	if (typeof window !== 'undefined') window.DaimondRecent = api;
 	if (typeof module !== 'undefined' && module.exports) module.exports = api;

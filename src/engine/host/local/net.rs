@@ -50,14 +50,8 @@ impl HostNet for LocalNet {
     {
         Some(Verdict::Deny)
     }
-    async fn egress_allowed_kit(&self, _turn: &str, _cmd: &str, _detail: &str) -> Option<Permit> {
-        Some(Permit::No(PermitNo::Absent))
-    }
     async fn egress_allowed_net(&self, _turn: &str, _cmd: &str, _cwd: &str) -> Option<Verdict> {
         Some(Verdict::Deny)
-    }
-    async fn egress_allowed_place(&self, _turn: &str, _path: &str, _detail: &str) -> Option<Permit> {
-        Some(Permit::No(PermitNo::Absent))
     }
     async fn egress_allowed_publish(&self, _turn: &str, _shown: &str) -> Option<Verdict> {
         Some(Verdict::Deny)

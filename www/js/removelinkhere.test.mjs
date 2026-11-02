@@ -5,7 +5,7 @@
 // A hand-written sidecar row has no id. `removeLinkHere` sent that blank id to `remove_link`,
 // which now refuses it, and dropped this device's entry first: ◈/× on such a row did nothing and
 // left the mark waiting (FLOW LINK-BLANK review, follow-up). It now removes such a row by its
-// content, and takes the entry off only once the store has taken the row. The function is lifted
+// content; since D-20261031-11 there is no device entry, only the store row. The function is lifted
 // out of `www/js/daimond.js` by name and run against stand-ins, so what is proved is what the page runs.
 import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
@@ -38,46 +38,28 @@ function rig(refuse) {
 			return true;
 		},
 	};
-	const marks = { drop: (...a) => { calls.push(['drop', ...a]); } };
 	// eslint-disable-next-line no-new-func
-	const f = new Function('DaimondMarksHere', 'diamondApp',
-		lift('removeLinkHere') + 'return removeLinkHere;')(marks, () => app);
+	const f = new Function('diamondApp',
+		lift('removeLinkHere') + 'return removeLinkHere;')(() => app);
 	return { calls, f };
 }
 
 const ROW = { owner: 'd1', from: 'diamond:d1', to: 'file:/a.txt', other: 'file:/a.txt', rel: 'holds' };
 
-test('a link with an id goes by its id, and its entry with it', async () => {
+test('a link with an id goes by its id, and only the store is written', async () => {
 	const { calls, f } = rig(false);
 	assert.equal(await f({ ...ROW, id: 'k1' }), true);
-	assert.deepEqual(calls.filter((c) => c[0] !== 'drop'), [['remove_link', 'd1', 'k1']]);
-	assert.ok(calls.some((c) => c[0] === 'drop' && c[2] === 'k1'));
+	assert.deepEqual(calls, [['remove_link', 'd1', 'k1']]);
 });
 
 test('a hand-written row goes by its content, never by a blank id', async () => {
 	const { calls, f } = rig(false);
 	assert.equal(await f({ ...ROW, id: '' }), true);
 	assert.ok(!calls.some((c) => c[0] === 'remove_link'), 'no blank-id remove_link');
-	const i = calls.findIndex((c) => c[0] === 'remove_bare_link');
-	assert.deepEqual(calls[i], ['remove_bare_link', 'd1', 'diamond:d1', 'file:/a.txt', 'holds']);
-	// The entry goes only after the store took the row.
-	const d = calls.findIndex((c) => c[0] === 'drop');
-	assert.ok(d > i, 'entry dropped after the store accepted');
+	assert.deepEqual(calls, [['remove_bare_link', 'd1', 'diamond:d1', 'file:/a.txt', 'holds']]);
 });
 
-test('a refused hand-written removal keeps the entry and says so', async () => {
-	const { calls, f } = rig(true);
-	await assert.rejects(() => f({ ...ROW, id: '  ' }), /refused/);
-	assert.ok(!calls.some((c) => c[0] === 'drop'), 'the mark stays in force');
-});
-
-test('a refused removal by id keeps the entry too: the entry goes only once the store accepts', async () => {
-	const { calls, f } = rig(true);
-	await assert.rejects(() => f({ ...ROW, id: 'k1' }), /refused/);
-	assert.ok(!calls.some((c) => c[0] === 'drop'), 'the mark stays in force');
-	const ok = rig(false);
-	await ok.f({ ...ROW, id: 'k1' });
-	const i = ok.calls.findIndex((c) => c[0] === 'remove_link');
-	const d = ok.calls.findIndex((c) => c[0] === 'drop');
-	assert.ok(d > i, 'entry dropped after the store accepted');
+test('a refused removal, by id or by content, is said, never swallowed', async () => {
+	await assert.rejects(() => rig(true).f({ ...ROW, id: '  ' }), /refused/);
+	await assert.rejects(() => rig(true).f({ ...ROW, id: 'k1' }), /refused/);
 });

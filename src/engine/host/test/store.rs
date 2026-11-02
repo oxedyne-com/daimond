@@ -9,7 +9,6 @@ use crate::{
         store::{Drained, HostStore},
         types::store::{CrystalHalf, Landed, SettlePhase},
     },
-    marks::{Live, Reach},
     rating::Author,
     tools::{Bound, CrystalPassed, FileRoot, ToolContext},
 };
@@ -364,10 +363,6 @@ impl HostStore for TestStore {
     fn end_turn_counts(&self, _: &str) {}
     fn keeper_turn_ended(&self, _: &str) { self.keeper_ends.set(self.keeper_ends.get() + 1); }
 
-    async fn live_bounds(&self, _: &Live) -> Outcome<Vec<Bound>> { refused("live_bounds") }
-    async fn reach(&self, _: &Live) -> Outcome<Reach> {
-        Err(err!("{}", crate::marks::UNREAD; Invalid, Input))
-    }
     fn trail(&self, _: &str, _: &str) {}
 
     async fn journal_put(&self, _: &str, _: u64, _: &[u8]) -> Outcome<()> {

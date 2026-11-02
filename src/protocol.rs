@@ -745,6 +745,20 @@ impl ChatMessage {
         }
     }
 
+    /// [`ChatMessage::of_row_opening`] for a row the page numbered `n` (TURN-NUM): an opening user
+    /// row's note takes the label its own turn wrote, so every device sends the model the same
+    /// history.  An interjection opens no turn and carries none.
+    pub fn of_row_numbered(role: &str, content: String, pre: String, mid: String, opens: bool,
+        n: u32)
+        -> Option<Self>
+    {
+        let pre = match opens && role == "user" {
+            true    => crate::turn_num::noted(&pre, n),
+            false   => pre,
+        };
+        Self::of_row_opening(role, content, pre, mid, opens)
+    }
+
     /// [`ChatMessage::opening`] where `opens`, else the message unchanged: for a row the page
     /// rebuilds, which says itself whether a turn was run on it (QA r578d-B B3).
     pub fn opening_if(self, opens: bool) -> Self {

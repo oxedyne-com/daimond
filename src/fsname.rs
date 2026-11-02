@@ -216,8 +216,8 @@ pub fn encode_path(path: &str) -> String {
 }
 
 /// The Web Lock every writer of one file holds from before it opens the file until after it
-/// closes it: `daimond-file:<root>:<path>`, `root` being `folder` for the real folder the user has
-/// open and `sandbox` for this account's browser storage (OPFS-LOCK, 2026-10-17).
+/// closes it: `daimond-file:sandbox:<path>`, over this account's browser storage, the one root
+/// (OPFS-LOCK, 2026-10-17; the `folder` root went with the browser Machine folder, G2).
 ///
 /// **A writable's bytes are private until it closes**, so a restore's compare-and-swap could only
 /// see a rival that had already closed: two restores both "won", and a sync or upload write
@@ -233,7 +233,7 @@ pub fn encode_path(path: &str) -> String {
 /// so the name is the file written.  The page's walks DROP `..` instead, so the page refuses a path
 /// with `..` at the lock, before anything opens (OPFS-LOCK check2, D5): no path is ever locked
 /// under one name and written under another.
-pub fn file_lock_name(folder: bool, path: &str) -> String {
+pub fn file_lock_name(path: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
     for c in path.split('/') {
         match c {
@@ -242,11 +242,8 @@ pub fn file_lock_name(folder: bool, path: &str) -> String {
             _           => out.push(c),
         }
     }
-    let root = match folder {
-        true  => "folder",
-        false => "sandbox",
-    };
-    fmt!("daimond-file:{}:{}", root, out.join("/").to_lowercase())
+    // fixed: the name a page tab still on the old build takes, so the two still meet.
+    fmt!("daimond-file:sandbox:{}", out.join("/").to_lowercase())
 }
 
 

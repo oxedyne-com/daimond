@@ -29,7 +29,7 @@ impl Tool {
                 // journal. See `machine_before`, which can refuse nothing.
                 let keep = match ctx.keeper() {
                     Some(d) => Some((d,
-                        machine_before(&abs, &cwd, &spec, &ctx.no_write, ctx.host()).await)),
+                        machine_before(&abs, &cwd, &spec, ctx.host()).await)),
                     None    => None,
                 };
                 // A FILE THAT IS THERE AND COULD NOT BE KEPT is not overwritten: the
@@ -52,7 +52,7 @@ impl Tool {
                     let found = match &keep {
                         Some((_, f)) => f,
                         None         => {
-                            fresh = machine_before(&abs, &cwd, &spec, &ctx.no_write, ctx.host()).await;
+                            fresh = machine_before(&abs, &cwd, &spec, ctx.host()).await;
                             &fresh
                         },
                     };
@@ -101,7 +101,7 @@ impl Tool {
                 // restore is the one thing that would otherwise write over it with no copy.
                 // And the hand compares as it writes, as `put_bytes` has it (hist-safe F1).
                 let (rest, seen) = if ctx.restoring != 0 {
-                    let now = match machine_before(&abs, &cwd, &spec, &ctx.no_write, ctx.host()).await {
+                    let now = match machine_before(&abs, &cwd, &spec, ctx.host()).await {
                         (None, Some(why)) => {
                             Self::overwrite_failed(&over, ctx.host()).await;
                             return Ok(MessageContent::text(overwrite_unkept_refusal(&raw, &why)));
@@ -121,7 +121,7 @@ impl Tool {
                 } else {
                     (None, crate::diamond_versions::Seen::Unread)
                 };
-                // HIS FILE, ASKED ABOUT (UNBLOCK-26 U3): under the marks as they stand now, and only
+                // HIS FILE, ASKED ABOUT (UNBLOCK-26 U3): re-licensed, and only
                 // over the text he was shown.
                 let (lic, bound) = match Self::machine_bound(ctx, &lic, &over).await {
                     Ok(Some((l, b))) => (l, Some(b)),
@@ -133,7 +133,7 @@ impl Tool {
                 };
                 let got = match machine_change("file_write",
                     machine_write(rest.is_some(), &lic, &content, &seen, bound.as_ref()), &root,
-                    &cwd, &spec, &ctx.no_write, ctx.host()).await
+                    &cwd, &spec, ctx.host()).await
                 {
                     Ok(g)  => g,
                     Err(e) => {
@@ -458,7 +458,7 @@ impl Tool {
         let now = match reach_of(ctx, &raw, &path, Door::Look).await {
             Reach::Refuse(why) => return Ok(MessageContent::text(refusal_line(&why))),
             Reach::Machine { abs, cwd, spec, .. } =>
-                match machine_before(&abs, &cwd, &spec, &ctx.no_write, ctx.host()).await {
+                match machine_before(&abs, &cwd, &spec, ctx.host()).await {
                     (Some(b), _)   => crate::diamond_versions::Seen::of(Some(&b)),
                     (None, None)   => crate::diamond_versions::Seen::Absent,
                     (None, Some(_)) => crate::diamond_versions::Seen::Unread,
@@ -514,7 +514,7 @@ impl Tool {
                     Ok(t)  => t.to_string(),
                     Err(_) => return Ok(MessageContent::text(put_back_binary_refusal(&raw))),
                 };
-                let now = match machine_before(&abs, &cwd, &spec, &ctx.no_write, ctx.host()).await {
+                let now = match machine_before(&abs, &cwd, &spec, ctx.host()).await {
                     (None, Some(why)) => return Ok(MessageContent::text(
                         overwrite_unkept_refusal(&raw, &why))),
                     (b, _)            => b,
@@ -534,7 +534,7 @@ impl Tool {
                 let kept = WriteBound::Kept(seen.clone());
                 let change = machine_write(rest.is_some(), lic, &text, &seen, Some(&kept));
                 let got = match machine_change("file_write", change, &root, &cwd, &spec,
-                    &ctx.no_write, ctx.host()).await
+                    ctx.host()).await
                 {
                     Ok(g)  => g,
                     Err(e) => {
@@ -631,7 +631,7 @@ impl Tool {
                 // single hunk is the commonest edit there is.
                 let keep = match ctx.keeper() {
                     Some(d) => Some((d,
-                        machine_before(&abs, &cwd, &spec, &ctx.no_write, ctx.host()).await)),
+                        machine_before(&abs, &cwd, &spec, ctx.host()).await)),
                     None    => None,
                 };
                 // ALL-OR-NOTHING OVER A HAND THAT TAKES ONE HUNK AT A TIME.
@@ -652,7 +652,7 @@ impl Tool {
                 let mut checked = hunks.len() == 1;
                 if !checked {
                     let got = res!(machine_op("file_read", "read", &abs, &cwd, &spec,
-                        &ctx.no_write, "", ctx.host()).await);
+                        "", ctx.host()).await);
                     if let Ok(t) = got {
                         let read = res!(machine_read(&t));
                         if read.held >= read.lines {
@@ -685,7 +685,7 @@ impl Tool {
                     }
                 }
                 // HIS FILE, ASKED ABOUT (UNBLOCK-26 U3): ONE write of the whole text he was shown
-                // the change to, under the marks as they stand now and over the text he was shown
+                // the change to, re-licensed and over the text he was shown
                 // alone, rather than hunk by hunk.
                 let bound = match Self::machine_bound(ctx, &lic, &over).await {
                     Ok(b)    => b,
@@ -704,7 +704,7 @@ impl Tool {
                     };
                     let got = match machine_change("file_edit",
                         machine_write(false, l, whole, b.seen(), Some(b)), &root, &cwd, &spec,
-                        &ctx.no_write, ctx.host()).await
+                        ctx.host()).await
                     {
                         Ok(g)  => g,
                         Err(e) => Err(fmt!("file_edit: {}", e.plain())),
@@ -721,7 +721,7 @@ impl Tool {
                 for (i, (old, new)) in hunks.iter().take(sent).enumerate() {
                     let got = match machine_change("file_edit",
                         MachineChange::Edit(&lic, old, new), &root, &cwd, &spec,
-                        &ctx.no_write, ctx.host()).await
+                        ctx.host()).await
                     {
                         Ok(g)  => g,
                         // The road failed: whether the hunk landed is not known, which
@@ -1079,10 +1079,10 @@ impl Tool {
             },
             _ => None,
         };
-        // AFTER HIS APPLY, under the marks as they stand now and only the file he was shown.
+        // AFTER HIS APPLY, and only the file he was shown.
         let lic = if asked {
             let shown = keep.as_ref().map(|(_, now, _)| now.as_slice());
-            let now = ctx.licence_now(lic.path()).await.ok();
+            let now = ctx.licence(lic.path()).ok();
             let same = match &now {
                 Some(_) => match ctx.host().fs().read_file(ctx.root, &path).await {
                     Ok(b)  => Some(b.as_slice()) == shown,
@@ -1176,11 +1176,11 @@ impl Tool {
                 let hold = match ctx.keeper() {
                     Some(d) => {
                         let files = Self::machine_move_read(&d, (&abs, &raw),
-                            (&dest, &to_raw), &cwd, &spec, &ctx.no_write, ctx.host()).await;
+                            (&dest, &to_raw), &cwd, &spec, ctx.host()).await;
                         let folder = match files.as_slice() {
                             [f] if f.from == abs => false,
                             []                   => match machine_before(&abs, &cwd, &spec,
-                                &ctx.no_write, ctx.host()).await
+                                ctx.host()).await
                             {
                                 (None, Some(why)) => hand_said_directory(&why),
                                 _                 => false,
@@ -1207,15 +1207,13 @@ impl Tool {
                     },
                     None => None,
                 };
-                // AFTER HIS APPLY, under the marks as they stand now, and one file only as he
-                // was shown it.
+                // AFTER HIS APPLY, and one file only as he was shown it.
                 let (from_lic, to_lic) = if asked {
-                    let ends = (ctx.licence_now(from_lic.path()).await,
-                        ctx.licence_now(to_lic.path()).await);
+                    let ends = (ctx.licence(from_lic.path()),
+                        ctx.licence(to_lic.path()));
                     let same = match &shown {
                         None    => true,
-                        Some(b) => match machine_before(&abs, &cwd, &spec, &ctx.no_write,
-                            ctx.host()).await
+                        Some(b) => match machine_before(&abs, &cwd, &spec, ctx.host()).await
                         {
                             (Some(n), _) => n == *b,
                             _            => false,
@@ -1235,7 +1233,7 @@ impl Tool {
                 };
                 let got = match machine_change("file_move",
                     MachineChange::Move(&from_lic, &to_lic), &root, &cwd, &spec,
-                    &ctx.no_write, ctx.host()).await
+                    ctx.host()).await
                 {
                     Ok(g)  => g,
                     Err(e) => {
@@ -1329,10 +1327,10 @@ impl Tool {
             },
             None => None,
         };
-        // AFTER HIS APPLY, under the marks as they stand now, and one file only as he was shown it.
+        // AFTER HIS APPLY, and one file only as he was shown it.
         let (from_lic, to_lic) = if asked {
-            let ends = (ctx.licence_now(from_lic.path()).await,
-                ctx.licence_now(to_lic.path()).await);
+            let ends = (ctx.licence(from_lic.path()),
+                ctx.licence(to_lic.path()));
             let same = match &shown {
                 None    => true,
                 Some(b) => match ctx.host().fs().read_file(ctx.root, &from).await {
@@ -2250,7 +2248,7 @@ impl Tool {
     /// **Every answer but Apply is final for the rest of the turn** at that path and around it
     /// ([`crate::diamond_versions::ChangeRefusals`]), so a retry, a worker or another verb is
     /// refused unasked rather than asked again.  An Apply binds only the bytes shown: the caller
-    /// lands the change under the marks as they stand then and over those bytes alone.
+    /// lands the change re-licensed and over those bytes alone.
     ///
     /// # Arguments
     /// * `raw` - The path as the model wrote it, for the sentences.
@@ -2332,7 +2330,7 @@ impl Tool {
 
     /// Land `bytes` at the path `lic` names, after [`Tool::before_overwrite`], through
     /// [`landed_store_write`]: where nobody was asked, under `bound` (the read it follows, if
-    /// any); where the person was, under the marks as they stand now and only over the bytes they
+    /// any); where the person was, re-licensed, and only over the bytes they
     /// were shown ([`WriteBound::Shown`]).  `landed` rides both arms, so a landing's side files
     /// settle under the same lock either way.  `Ok(Ok(unrecorded))` once written, `unrecorded`
     /// the landing's note for the reply; `Ok(Err(why))` where the licence no longer holds.
@@ -2344,7 +2342,7 @@ impl Tool {
             Some(s) => s,
             None    => return Self::bound_write(ctx, lic, tool, raw, bytes, bound, landed).await,
         };
-        let now = match ctx.licence_now(lic.path()).await {
+        let now = match ctx.licence(lic.path()) {
             Ok(l)    => l,
             Err(why) => return Ok(Err(why)),
         };
@@ -2385,7 +2383,7 @@ impl Tool {
     }
 
     /// [`Tool::write_over`]'s licence on the machine, for [`machine_write`]: `None` where nobody
-    /// was asked, else the licence under the marks as they stand now and the bound to the bytes
+    /// was asked, else the licence re-taken and the bound to the bytes
     /// the person was shown, which the hand writes over alone (`MachineChange::WriteIf`) -- or
     /// the refusal where the licence no longer holds.
     pub(super) async fn machine_bound<H: Host>(ctx: &ToolContext<H>, lic: &Licence, over: &Option<Overwrite>)
@@ -2395,7 +2393,7 @@ impl Tool {
             Some(s) => s,
             None    => return Ok(None),
         };
-        match ctx.licence_now(lic.path()).await {
+        match ctx.licence(lic.path()) {
             Ok(l)    => Ok(Some((l, WriteBound::Shown(seen)))),
             Err(why) => Err(why),
         }
@@ -2748,7 +2746,6 @@ impl Tool {
         to:   (&str, &str),
         cwd:  &str,
         spec: &LinkedFence,
-        kits: &[Bound],
         host: &H,
     )
         -> Vec<MoveRead>
@@ -2757,7 +2754,7 @@ impl Tool {
             read: Result<Vec<u8>, (crate::diamond_versions::Body, String)>|
             MoveRead { from: path.to_string(), from_raw: path_raw.to_string(), to: dst,
                 to_raw: dst_raw, read };
-        match machine_before(from.0, cwd, spec, kits, host).await {
+        match machine_before(from.0, cwd, spec, host).await {
             (Some(b), _)                                 =>
                 vec![one(from.0, from.1, to.0.to_string(), to.1.to_string(), Ok(b))],
             (None, None)                                 => Vec::new(),
@@ -2767,7 +2764,7 @@ impl Tool {
             (None, Some(_))                              => {
                 let mut out = Vec::new();
                 for (path, rest, path_raw) in host.store().held_under(dia, from.0) {
-                    let read = match machine_before(&path, cwd, spec, kits, host).await {
+                    let read = match machine_before(&path, cwd, spec, host).await {
                         (Some(b), _)      => Ok(b),
                         (None, None)      => continue,  // a file the turn deleted stays so
                         (None, Some(why)) => Err((crate::diamond_versions::Body::Unseen, why)),

@@ -92,6 +92,7 @@ pub fn may_run_beside(name: &str) -> bool {
             // using them.
             | Tool::CrystalRead
             | Tool::Recall
+            | Tool::TurnGet
             // READ-ONLY BY CONSTRUCTION, which is why `edit` is not one of its ops. It runs its
             // own ops one after another inside a single call, and every one of them is one of
             // the reads named above -- so the four conditions are answered by the ops rather

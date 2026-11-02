@@ -44,45 +44,41 @@ const localStorage = {
 	setItem: (k, v) => { store[k] = String(v); },
 	removeItem: (k) => { delete store[k]; },
 };
-const env = { rootAsked: 0, holdsFolder: true, presence: {} };
+const env = { presence: {} };
 const STR = {
 	'tile.dlg_folder_abs':   'A folder is an absolute path, starting with /.',
 	'tile.dlg_folder_reach': '{path} lies outside every folder its runner may reach.',
 };
 const names = ['readJson', 'diamondFolder', 'setDiamondFolder', 'folderInReach', 'errandScope',
-	'chatNeedsFolder', 'folderRefusal'];
+	'folderRefusal'];
 const body = KEY + '\n' + names.map(lift).join('\n') + '\nreturn {'
 	+ names.map((n) => n + ': typeof ' + n + " === 'function' ? " + n + ' : null').join(', ') + '};';
 const window = {
 	DaimondPresence: { snapshot: () => env.presence },
-	DaimondMarksHere: {
-		_core: { rootOf: () => ({ kind: 'machine', name: 'usr' }) },
-		rootedHere: () => true,
-	},
 };
-const F = new Function('localStorage', 'window', 'DaimondMarksHere', 'rootHere', 'selfHoldsFolder',
-	'diag', 't', body)(localStorage, window, window.DaimondMarksHere,
-	() => { env.rootAsked++; return 'ws'; }, () => env.holdsFolder, () => {},
+// No `rootHere` is given: the workspace root went with marks (UNBLOCK-82, D-20261031-11), so a lifted
+// function that still asked for it throws here, and H2 reads that none names it.
+const F = new Function('localStorage', 'window',
+	'diag', 't', body)(localStorage, window,
+	() => {},
 	(k, v) => String(STR[k] || k).replace(/\{(\w+)\}/g, (_, n) => (v && v[n]) || ''));
 const need = (n) => { if (!F[n]) { check('has ' + n, false); return false; } return true; };
 
 console.log('HATE-7: a Diamond\'s folder is its own');
-if (need('setDiamondFolder') && need('errandScope') && need('chatNeedsFolder')) {
+if (need('setDiamondFolder') && need('errandScope')) {
 	const dia = { id: 'c1', diamondId: 'd1' };
 	F.setDiamondFolder('d1', '/srv/proj');
-	env.rootAsked = 0;
 	const s = F.errandScope(dia, ['a.txt']);
 	check('H1 a Diamond with a folder sends that root',
 		s && s.root === '/srv/proj' && Array.isArray(s.holds) && s.holds[0] === 'a.txt', JSON.stringify(s));
-	check('H2 the workspace root is never asked', env.rootAsked === 0, env.rootAsked);
-	check('H2 the turn needs no workspace folder at the runner', F.chatNeedsFolder(dia) === false);
+	check('H2 the workspace root is never asked: no lifted function names rootHere', !/\brootHere\b/.test(body), // keeps: rootHere absence check: no lifted function may name it (UNBLOCK-82)
+		names.filter((n) => /\brootHere\b/.test(lift(n))).join(', '));
 	const other = { id: 'c2', diamondId: 'd2' };
 	const s2 = F.errandScope(other, ['b']);
-	check('H3 a Diamond without one keeps the machine-folder scope',
-		s2 && s2.root === 'usr', JSON.stringify(s2));
-	check('H3 and still needs the workspace folder', F.chatNeedsFolder(other) === true);
+	check('H3 a Diamond without one sends the plain holds (no workspace folder)',
+		Array.isArray(s2) && s2[0] === 'b', JSON.stringify(s2));
 	F.setDiamondFolder('d1', '');
-	check('H3 cleared, the folder is gone', F.errandScope(dia, []).root === 'usr');
+	check('H3 cleared, the folder is gone', Array.isArray(F.errandScope(dia, [])));
 }
 if (need('folderRefusal')) {
 	env.presence = {};

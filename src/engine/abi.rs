@@ -12,8 +12,10 @@
 //    1, as each is optional and an ABI-1 peer reads the rest as before.
 // 3: P2, digest-signed envelopes (sigv 2, v1 refused) and the turn written to the chat log as
 //    sealed rows, the progress frame and its chunked answer gone; min 3, a single cut-over.
-pub const ENGINE_ABI: u32 = 3;      // the contract this build speaks
-pub const ENGINE_ABI_MIN: u32 = 3;  // the oldest peer contract it still accepts
+// 4: UNBLOCK-82, the errand's reach becomes `focus` (G1.2) and its scope names no folder, the
+//    `place` hand-back gone; min 4, page and runner cut over together (K7).
+pub const ENGINE_ABI: u32 = 4;      // the contract this build speaks
+pub const ENGINE_ABI_MIN: u32 = 4;  // the oldest peer contract it still accepts
 pub const WORDS_ABI: u32 = 2;       // the first page to file the words a runner stages home (U2)
 
 /// Does a peer speaking `abi`, accepting nothing older than `min`, work with this build?

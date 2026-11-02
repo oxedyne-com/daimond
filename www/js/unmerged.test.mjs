@@ -33,7 +33,7 @@ function check(name, cond, detail) {
 async function merge({ local, base, remote, refuse }) {
 	const w = makeWindow({});
 	const writes = [], committed = [];
-	const plan = { folder: false, roots: [''], app: {} };
+	const plan = { roots: [''], app: {} };
 	const stub = {
 		syncWalkPlan:      async () => plan,
 		collectFiles:      async () => ({ files: Object.assign({}, local), plan }),
@@ -46,7 +46,6 @@ async function merge({ local, base, remote, refuse }) {
 		withoutAppState:   (m) => m,
 		syncAppState:      () => false,
 		ownHere:           () => false,
-		withinShare:       () => true,
 		deleteSyncFile:    async () => true,
 		conflictName:      (p) => p + '.conflict',
 		syncFileAt:        async () => null,			// nothing held here off the inline section (S13: heldsplit.test)

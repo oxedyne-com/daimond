@@ -309,19 +309,10 @@
 	async function writeMachine(id, entries, ticket, isUndo, take) {
 		var refused = [];
 		if (!(entries || []).length) return refused;
-		// THE DIAMOND'S REACH AS IT IS NOW, and not as it was when the file was
-		// written: `run_diamond_tool` reads the marks, this device's record of them
-		// and the open workspace itself at each call (HIST-SAFE U2), so a mark the
-		// user has withdrawn since is refused in the fence's own sentence and the file
-		// on disk is untouched. A CHAT'S STORE (`chat:<id>`) goes back through the
-		// chat's workspace, and only its holdings travel -- the engine counts each
-		// only where this device's record has the press.
-		var chat = String(id).indexOf('chat:') === 0 ? String(id).slice(5) : '';
-		var holds;
-		if (chat) {
-			try { holds = DaimondAttach.chatHolds(chat); }
-			catch (e) { holds = '[]'; }
-		}
+		// THE KEEPER'S REACH AS IT IS NOW, and not as it was when the file was
+		// written: `run_diamond_tool` builds the fence at each call. A chat's store
+		// (`chat:<id>`) goes back through the chat's own reach. Four arguments: the
+		// engine refuses a fifth, the holdings an older page passed (D-20261031-11).
 		var eng = app(id);
 		// FAILS CLOSED. An engine without the fenced door is not a reason to write
 		// through an unfenced one: the whole property of this half is that a restore
@@ -333,9 +324,7 @@
 			return refused;
 		}
 		var run = function (tool, args) {
-			return chat
-				? eng.run_diamond_tool(String(id), tool, JSON.stringify(args), ticket, holds)
-				: eng.run_diamond_tool(String(id), tool, JSON.stringify(args), ticket);
+			return eng.run_diamond_tool(String(id), tool, JSON.stringify(args), ticket);
 		};
 		// HIS ANSWER IS THE ENGINE'S (hist-safe QA A F2, 2026-10-12). Each question's
 		// answer is recorded against the bytes he was asked about, and the door refuses an

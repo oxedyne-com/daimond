@@ -15,7 +15,7 @@
    (c) `bearsOnLinks` is the wasm's `bears_on_links`, over its table;
    (d) `linksByDiamond` gives each Diamond exactly what
        `links_touching('diamond:<id>')` answers, `other` included;
-   (e) `shareRoots` reads the graph once, never per Diamond.
+   (e) `shareRoots`, which read the links once per Diamond, is gone (UNBLOCK-82).
 
    Run:   node www/js/u86links.test.mjs
    ============================================================ */
@@ -56,7 +56,7 @@ const SIDE = 'diamonds/d1/.daimond/links.jsonl';
 	const seen = new Set();
 	for (let i = 0; i < 3; i++) {
 		const rec = [];
-		const w = await L.writable('sandbox', SIDE, async () => fakeWritable(rec));
+		const w = await L.writable(SIDE, async () => fakeWritable(rec));
 		const before = ls.getItem(KEY);
 		await w.write('x');
 		check('(a) not moved before the close, write ' + i, ls.getItem(KEY) === before);
@@ -67,18 +67,18 @@ const SIDE = 'diamonds/d1/.daimond/links.jsonl';
 		seen.add(after);
 	}
 	const still = ls.getItem(KEY);
-	const w = await L.writable('sandbox', 'diamonds/d1/.daimond/log', async () => fakeWritable([]));
+	const w = await L.writable('diamonds/d1/.daimond/log', async () => fakeWritable([]));
 	await w.close();
 	check('(a) a write that is no sidecar leaves the mark', ls.getItem(KEY) === still);
-	const ab = await L.writable('sandbox', SIDE, async () => fakeWritable([]));
+	const ab = await L.writable(SIDE, async () => fakeWritable([]));
 	await ab.abort();
 	check('(a) an aborted write leaves the mark', ls.getItem(KEY) === still);
 
 	// (b) Removals.
-	await L.hold('sandbox', SIDE, async () => true);
+	await L.hold(SIDE, async () => true);
 	const held = ls.getItem(KEY);
 	check('(b) a held act on a sidecar moves the mark', held !== still);
-	const d = await L.writable('sandbox', 'diamonds/d2/.daimond/links.jsonl', async () => fakeWritable([]));
+	const d = await L.writable('diamonds/d2/.daimond/links.jsonl', async () => fakeWritable([]));
 	await d.discard(async () => true);
 	check('(b) a discarded write that removes its stub moves the mark', ls.getItem(KEY) !== held);
 }
@@ -121,14 +121,9 @@ const SIDE = 'diamonds/d1/.daimond/links.jsonl';
 	}
 }
 
-// (e) shareRoots reads the graph once.
+// (e) The per-Diamond read is gone with the folder-share walk (UNBLOCK-82 removed `shareRoots`).
 {
-	const at = VIEW.indexOf('shareRoots:    async function');
-	const body = at < 0 ? '' : VIEW.slice(at, VIEW.indexOf('\n\t\tbounds:', at));
-	check('(e) shareRoots found', body.length > 0);
-	check('(e) shareRoots asks all_links once', (body.match(/all_links\(/g) || []).length === 1);
-	check('(e) and hands each Diamond its rows, never a read of its own',
-		/attachmentsOf\(d\.id, by\[d\.id\]/.test(body) && !/links_touching/.test(body));
+	check('(e) no Files method walks the Diamonds for their links', VIEW.indexOf('shareRoots:') < 0);
 }
 
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall ok');

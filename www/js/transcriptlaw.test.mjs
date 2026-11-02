@@ -92,7 +92,6 @@ function world(opts) {
 		ChatStore,
 		notePeerRef: (key, carried, adopted, from) => { rec.peer.push({ key, carried: !!carried, adopted }); },
 		onChatsChangedElsewhere: () => {},
-		DaimondMarksHere: { chatSettle: () => false, chatDropAll: () => {} },
 		dropChatApp: () => {},
 		trail: (w2, d) => { rec.trail.push(w2 + ' | ' + d); },
 		diag: () => {},

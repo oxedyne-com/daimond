@@ -7,20 +7,19 @@ import { filesSyncable, nominatedDeviceId, parseSyncListing } from './parcel_col
 import { deviceLabelFor, isMobileDeviceSelf, peerSyncShim, selfDeviceId } from './handoff.js';
 import { PeerAgents, tools } from './workers.js';
 import { diag } from './passkey_phrase.js';
-import { attachedTruly, attachedTrulyAll, attachmentsOf, linksByDiamond, bind, clear, closePop, closePreview, curDir,
+import { attachedTruly, attachedTrulyAll, bind, clear, closePop, closePreview, curDir,
 	docFilling, fmtFileBytes, isOpen, joinPath, list, listNote, listed,
 	openFile, parseListing, pickListing, pvEl, relabelListing, renderCrumbs,
 	renderFocus, renderMode, machineFolderKept, retireMachineFolder, showLineNos, showModeMsg, showViewedFile, toggleAttach,
-	underPath, viewEl } from './files_tree.js';
+	viewEl } from './files_tree.js';
 import { DaimondPanels } from './layout.js';
-import { placeOpts, selfHoldsFolder, selfHoldsHand, toolReason } from './sourcemenu.js';
+import { placeOpts, selfHoldsHand, toolReason } from './sourcemenu.js';
 import { annotatePresence } from './turns.js';
 import { confirmDialog, promptDialog, runnerAsker } from './consent.js';
 import { versionsPath } from './chats.js';
 import { INSTRUCTIONS_FILE, Instructions, Prompts, instructionsSeed } from './pending.js';
 import { diamondApp } from './diamonds.js';
 import { showDoc, watchedPath } from './agentspanel.js';
-import { markInForce } from './marks.js';
 // page-split: end imports
 export let Files; // page-split: hoisted
 
@@ -292,7 +291,6 @@ async function capabilityLedger(imports) {
 	return {
 		deviceId: selfDeviceId(),
 		hand:     selfHoldsHand(),
-		folder:   selfHoldsFolder(),
 		mobile:   isMobileDeviceSelf(),
 		budgetMB: st ? (st.budget | 0) : (isMobileDeviceSelf() ? 768 : 2500),
 		heapMB:   heap | 0,
@@ -611,11 +609,9 @@ function compileDeps() {
 		///
 		/// And the main has to BE here -- either already on this device or among
 		/// the files the errand carries. What is NOT asked is whether this device
-		/// holds a real mounted folder: that is what the PLACEMENT requires of a
-		/// runner, and it is about where the preview PDF lands and what `run` may
-		/// touch. A machine holding the whole book in its own storage can lay it
-		/// out perfectly well, and refusing it here would refuse the phone's own
-		/// compile by the same rule.
+		/// holds a real mounted folder: a machine holding the whole book in its own
+		/// storage can lay it out perfectly well, and refusing it here would refuse
+		/// the phone's own compile by the same rule.
 		check:     async function (e) {
 			var mine = await wsidNow();
 			if (e.wsid && mine && e.wsid !== mine) {
@@ -2062,7 +2058,7 @@ export function install() { // page-split: install
 		refresh:       refresh,
 		// A Machine folder handle a device saved before is cleared, with one line (R1).
 		retireMachineFolder: retireMachineFolder,
-		// Is an older build's Machine folder record still waiting? The sync seed asks.
+		// Are an older build's Machine folder handles still waiting? The sync seed asks.
 		machineFolderKept: machineFolderKept,
 		clear:         clear,
 		// ── What the `+` picker borrows ────────────────────────────
@@ -2212,23 +2208,20 @@ export function install() { // page-split: install
 		compileDeps:        compileDeps,
 		docKeyOf:           docKeyOf,
 		sidecarFor:         sidecarFor,
-		/// What the open Diamond's workspace is made of, as the three lists
-		/// `diamond_bounds` in src/tools.rs takes: its own directory, what the
-		/// user attached, and which of those were attached to be consulted
-		/// rather than worked on.
-		///
-		/// This is the INPUT to a fence and not a fence. The bounds, and the
-		/// compartment built from them, are computed in Rust; a page that
-		/// composed either would be a second opinion about what a command may
-		/// touch, free to drift from the one the hand enforces.
-		///
-		/// Read here because this module already keeps the attachments — the
-		/// panel lists them on every open — and a second reader of the same
-		/// links would be a second answer to the same question.
+		/// The open Diamond's own folder, the one input the engine's scope takes from
+		/// the page: a daimon reaches the agreed tree without any marking
+		/// (D-20261031-11), so there is no list of what was granted to send.
 		/// # Arguments
 		/// * `id` - Which Diamond, or nothing for the one on screen. A worker is
 		///   scoped to the Diamond it works FOR, which is not always the one the
 		///   user is looking at.
+		bounds:        async function (id) {
+			var did = id || (pg.currentDiamond ? pg.currentDiamond.id : '');
+			// A trashed Diamond has no workspace: `scopeAgentTo` refuses a scope with no
+			// `own_dir`, so an agent dispatched into a deleted Diamond does not start.
+			if (!did || trashed(did)) return { own_dir: '' };
+			return { own_dir: 'diamonds/' + did };
+		},
 		/// The ☁ rows a compile of this document would look for and not find, and the
 		/// fetch of them. Published because `dev/verify_foldershare.mjs` asserts what
 		/// a device without native access sees, and a verifier that recomputed which
@@ -2237,102 +2230,6 @@ export function install() { // page-split: install
 		hydrateProject:   async function (main) {
 			var el = viewEl && viewEl.querySelector('.files-view-msg');
 			return await hydrateProject(main, el || document.createElement('div'));
-		},
-		/// Every workspace path FLAGGED for sharing on a Diamond, deduped and sorted.
-		///
-		/// THE SHARED FOLDER'S WHOLE DEFINITION, and what travels is exactly what the
-		/// user FLAGGED. A mark is the grant a daimon works under -- permission to
-		/// READ the folder (`dev/ATTACH_CONTRACT.md` §2) -- and it is not permission
-		/// to copy the folder onto every device of the account. Reading the two as
-		/// one, which this did until 2026-09-14, put some twenty-six gigabytes of the
-		/// owner's marks up for replication and cost every round a walk of all of it.
-		/// So the copy grant is a second, explicit act: `share` on the attachment,
-		/// worded generically about devices, off until somebody turns it on.
-		///
-		/// A FOLDER NOBODY FLAGGED COSTS NOTHING. An empty answer here is the ordinary
-		/// state, and `syncWalkPlan` returns before it walks anything at all.
-		///
-		/// EVERY Diamond'S marks, not the one on screen. `currentDiamond` is a piece of
-		/// UI state, and a parcel that changed when the user clicked a different Diamond
-		/// would be a parcel that is never the same twice -- which is the one thing sync
-		/// cannot survive (`dev/verify_syncfixedpoint.mjs`).
-		///
-		/// Sorted, and a path under another is dropped, so the walk below it happens
-		/// once and the set is the same on two devices that hold the same Diamonds.
-		shareRoots:    async function () {
-			var out = [];
-			// ONE read of the whole graph, not one per Diamond (U86): each ask read every sidecar.
-			var by = {};
-			try { by = linksByDiamond(JSON.parse(await diamondApp().all_links() || '[]')); }
-			catch (e) { by = {}; }
-			for (var i = 0; i < pg.diamonds.length; i++) {
-				var d = pg.diamonds[i];
-				if (!d || !d.id || trashed(d.id)) continue;
-				var list = [];
-				try { list = await attachmentsOf(d.id, by[d.id] || []); } catch (e) { list = []; }
-				list.forEach(function (a) {
-					if (a.here === false || !a.path) return;
-					// The flag, and not the mark. See above.
-					if (!a.share) return;
-					// AND ONLY ON THE USER'S MARK IN FORCE ON THIS DEVICE (re-check of
-					// 2026-09-23, R3). Every row with the flag counted, a daimon's and a
-					// fold's included, and what is shared is synced into and deleted from
-					// on another device's word, with no copy kept here.
-					if (!markInForce(a.link)) return;
-					if (out.indexOf(a.path) < 0) out.push(a.path);
-				});
-			}
-			out.sort();
-			return out.filter(function (p, i2) {
-				for (var j = 0; j < i2; j++) if (underPath(p, out[j])) return false;
-				return true;
-			});
-		},
-		bounds:        async function (id) {
-			var did = id || (pg.currentDiamond ? pg.currentDiamond.id : '');
-			// A trashed Diamond has no workspace to confine anything to. It is
-			// answered here rather than at the callers because this is the one
-			// input to the fence: `scopeAgentTo` refuses a scope with no
-			// `own_dir` and throws rather than starting a turn, which is the
-			// behaviour wanted — an agent dispatched into a deleted Diamond
-			// must not run at the reach of an ordinary workspace turn.
-			if (trashed(did)) return { own_dir: '', attached: [], read_only: [], toolkits: [], unconfirmed: [] };
-			if (!did) return { own_dir: '', attached: [], read_only: [], toolkits: [], unconfirmed: [] };
-			var d = pg.diamonds.find(function (x) { return x.id === did; });
-			// THE MARKS IN FORCE ARE THE ENGINE'S TO SAY (HIST-SAFE U2, 2026-10-12): the
-			// one composition -- only the user's `holds` and `consulted` rows, only where
-			// pressed on this device, only on the workspace open now, none for a Diamond in
-			// the trash -- is `marks::reach` in src/marks.rs, read at every act. This page
-			// only draws and reports what it answers, so what is shown is what is in force.
-			// A record the engine cannot read REJECTS here (fail closed), and so does an
-			// engine without the door: neither is "nothing is marked".
-			var eng = diamondApp(did);
-			if (!eng || typeof eng.diamond_reach !== 'function') {
-				throw new Error('This build of the engine cannot say what this diamond reaches.');
-			}
-			var r = JSON.parse(await eng.diamond_reach(String(did)));
-			return {
-				own_dir:   'diamonds/' + did,
-				attached:  Array.isArray(r.attached)  ? r.attached  : [],
-				read_only: Array.isArray(r.read_only) ? r.read_only : [],
-				// The toolchains the USER granted this Diamond, from the store. Never
-				// inferred from anything a model asked to run — see `Toolkit` in
-				// src/tools.rs, which says the same thing at the other end.
-				toolkits:  (d && Array.isArray(d.toolkits)) ? d.toolkits.slice() : [],
-				// MARKED, AND NOT IN FORCE ON THIS DEVICE until the user confirms them
-				// here. They grant nothing; the engine names them in a refusal so the
-				// daimon asks for the press (audit finding 6).
-				unconfirmed: Array.isArray(r.unconfirmed) ? r.unconfirmed : [],
-			};
-		},
-		/// The marks on a Diamond that are not in force on this device and that
-		/// the user can bring into force here with one press -- what the notice
-		/// above the composer lists. See `markWaiting`.
-		waiting:       async function (id) {
-			if (!id || trashed(id)) return [];
-			var list = [];
-			try { list = await attachmentsOf(id); } catch (e) { list = []; }
-			return list.filter(function (a) { return a.waiting; });
 		},
 	}; // page-split: end lift
 
@@ -2343,9 +2240,6 @@ export function install() { // page-split: install
 		// The viewer lets go of the Preview panel: the live pages taking it ask here.
 		previewAside: function () { try { Files.previewAside(); } catch (e) { /* no viewer yet */ } },
 		entries: function (dir) { return Files.entries(dir || ''); },
-		// What sync may write into and delete from on another device's word: the
-		// folders shared AND in force here (R2), for the verifiers of marks.
-		shareRoots: function () { return Files.shareRoots(); },
 		// The Typst seams, for `dev/verify_typedit_loop.mjs`: which file a chapter's
 		// Compile actually builds, what that compile writes, where a jump lands, and
 		// the command Publish would send to the machine.

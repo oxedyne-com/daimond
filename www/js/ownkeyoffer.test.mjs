@@ -353,9 +353,10 @@ function offerChecks(M) {
 	const phone = abi({ mobile: true }, ['an']);
 	check('SEATWHY-ALL a starred runner that is a phone: runner-phone', !phone.runner && phone.why === 'runner-phone',
 		JSON.stringify(phone));
+	// G2: no chat needs a folder of its runner any more, so no runner is passed over for one.
 	const req = offer(W, answer({ abi: 1, abiMin: 1 }), ['an'], { needFolder: true });
-	check('SEATWHY-ALL a starred runner without the chat\'s folder: runner-require', !req.runner
-		&& req.why === 'runner-require' && req.require === 'folder', JSON.stringify(req));
+	check('SEATWHY-ALL a starred runner is offered whatever folder the chat once asked for', !!req.runner
+		&& req.why !== 'runner-require', JSON.stringify(req));
 	const none = abi({}, []);
 	check('SEATWHY-ALL a turn with no source at all: runner-nosource', !none.runner && none.why === 'runner-nosource',
 		JSON.stringify(none));
@@ -499,7 +500,7 @@ function pageChecks() {
 		whyText({ why: 'runner-unchecked', runnerId: 'rn' }));
 	check('TRUTH page-old has its line', whyText({ why: 'page-old', runnerId: 'rn' }).indexOf('seat.why_page_old') === 0,
 		whyText({ why: 'page-old', runnerId: 'rn' }));
-	for (const [why, key] of [['runner-busy', 'busy'], ['runner-phone', 'phone'], ['runner-require', 'require'],
+	for (const [why, key] of [['runner-busy', 'busy'], ['runner-phone', 'phone'],
 		['runner-nosource', 'nosource']]) {
 		check('SEATWHY-ALL ' + why + ' has its line', whyText({ why: why, runnerId: 'rn' }).indexOf('seat.why_runner_' + key) === 0,
 			whyText({ why: why, runnerId: 'rn' }));

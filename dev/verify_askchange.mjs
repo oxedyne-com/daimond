@@ -78,11 +78,10 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 				&& l.by === 'user' && pressedHere(String(l.to || '')));
 		for (const l of rows) {
 			if (want.includes(l.to)) continue;
-			window.DaimondMarksHere.drop(did, l.id, l.to);
 			await app.remove_link(did, l.id);
 		}
 		for (const ref of want) {
-			if (rows.some((l) => l.to === ref) && window.DaimondMarksHere.force(did, rows.find((l) => l.to === ref), ROOT)) continue;
+			if (rows.some((l) => l.to === ref)) continue;
 			if (!await window.__pressMark(app, did, ref, ROOT)) throw new Error('mark not pressed: ' + ref);
 		}
 	};
@@ -108,8 +107,7 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 		try {
 			await press(id, marks);
 			// As the page scopes a worker (`scopeAgentTo`): the engine reads the marks itself.
-			const reach = await eng.read_scope_reach(String(id));
-			eng.set_diamond_scope(reach, '[]');
+			eng.set_diamond_scope(String(id));
 			await eng.run_turn(text, (ev) => {
 				if (ev.type === 'tool_result') seen.push(String(ev.content || ''));
 			});
@@ -125,7 +123,7 @@ const install = (fresh) => p.evaluate(async ({ folder, mock, fresh }) => {
 		const did = String(id);
 		const row = JSON.parse(await app.links_touching('diamond:' + did) || '[]')
 			.find((l) => l.owner === did && l.from === 'diamond:' + did && l.to === ref);
-		return !!row && window.DaimondMarksHere.grant(did, row, ROOT, { share: false });
+		return !!row; // a mark is focus only now (GRANT-G2): no press to make
 	};
 	const newest = async (id) => {
 		const rows = JSON.parse(await app.versions_list(id));

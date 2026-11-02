@@ -32,9 +32,7 @@ pub trait HostNet {
     async fn egress_query(&self, turn: &str, tool: &str, query: &str) -> Option<EgressWord>;
     async fn egress_allowed_act(&self, turn: &str, tool: &str, url: &str, detail: &str, alone: bool)
         -> Option<Verdict>;
-    async fn egress_allowed_kit(&self, turn: &str, cmd: &str, detail: &str) -> Option<Permit>;
     async fn egress_allowed_net(&self, turn: &str, cmd: &str, cwd: &str) -> Option<Verdict>;
-    async fn egress_allowed_place(&self, turn: &str, path: &str, detail: &str) -> Option<Permit>;
     async fn egress_allowed_publish(&self, turn: &str, shown: &str) -> Option<Verdict>;
     async fn egress_allowed_run(&self, turn: &str, tool: &str, cmd: &str, cwd: &str) -> Option<Permit>;
     async fn openrouter_chat(&self, body: &str) -> Outcome<String>;

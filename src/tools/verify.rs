@@ -471,40 +471,6 @@ impl Tool {
         fmt!("{}{}{}", head, body, tail)
     }
 
-    /// Is this project's check a command the toolkit for it has not been granted?
-    ///
-    /// Its own sentence, because the hand's refusal names a binary that is not on PATH and the
-    /// cause is a grant the user makes in a panel.
-    pub(super) fn toolkit_missing(argv0: &str, bounds: &[Bound]) -> Option<String> {
-        let granted = toolkits(bounds);
-        // The tail of a path is the program: `/usr/bin/cargo` is cargo.
-        let prog = argv0.rsplit('/').next().unwrap_or(argv0);
-        for kit in Toolkit::all() {
-            if kit.programs().contains(&prog) && !granted.contains(&kit) {
-                return Some(fmt!(
-                    "Refused: the project's verify command is '{}' and the {} toolkit is not \
-                    granted to this Diamond -- grant it in the Workspace panel, or declare a \
-                    command in .daimond/verify.json that does not need it.",
-                    prog, kit.name()));
-            }
-        }
-        None
-    }
-
-    /// [`Self::toolkit_missing`] on `machine`: never on a whole-home fence, where no toolkit is
-    /// granted because none is needed ([`Machine::whole_home`]).
-    ///
-    /// # Arguments
-    /// * `argv0` - The check's program.
-    /// * `bounds` - This turn's bounds.
-    /// * `machine` - The machine the check runs on.
-    pub(super) fn toolkit_missing_on(argv0: &str, bounds: &[Bound], machine: &Machine) -> Option<String> {
-        if machine.whole_home() {
-            return None;
-        }
-        Self::toolkit_missing(argv0, bounds)
-    }
-
     /// Run THIS PROJECT's own check, inside the fence, and say what its exit code was.
     pub(super) async fn verify_project<H: Host>(args: &str, ctx: &ToolContext<H>) -> Outcome<String> {
         let cwd_rel = match asked_cwd(args) {
@@ -547,20 +513,6 @@ impl Tool {
         };
         // The call's ceiling is now the check's own budget, not the default (U3a LV2, A2).
         crate::engine::worker::deadline::stretch(plan.timeout);
-        // Where the toolchain question can be put, `run_exec` puts it; this sentence is for the
-        // turns it cannot be put on (a worker alone, the bypass rung, a hand with no home).
-        // No answer is no home: `run_exec` says why the hand did not answer.  A whole-home fence
-        // grants no toolkit and needs none, so it is neither asked nor refused one.
-        let machine = ctx.host().exec().status().await
-            .map(|st| Machine::from_status(&st))
-            .unwrap_or_else(|_| Machine::at(""));
-        if !ctx.can_ask_kits_on(mode(), &machine) {
-            if let Some(why) = Self::toolkit_missing_on(
-                &plan.argv[0], &ctx.run_bounds(), &machine)
-            {
-                return Ok(refusal_line(why.trim_start_matches("Refused: ")));
-            }
-        }
         // The declaration's `cwd` is relative to the project root, which is where this turn's
         // commands already run.
         let run_in = match plan.cwd.trim() {
@@ -674,7 +626,7 @@ impl Tool {
         // `run`'s own fence on this turn, by the function `run` builds it with, so the verifier
         // takes its read-only marks and deny rules (and, on a hand older than the deletion
         // meter, its everything-read-only).
-        let fence = command_fence(&ctx.run_bounds(), &machine, true);
+        let fence = command_fence(&ctx.no_write, &machine, true);
         let spec = match Self::verify_spec(args, &Self::run_id("verify", ctx), &root, net, &fence) {
             Ok(s)  => bound_to_link(s, extract_json_number(&st, "link")),
             Err(r) => return Ok(r),
@@ -980,7 +932,7 @@ pub(super) fn serve_started(id: &str, abs: &str, port: u16, listing: &str) -> St
 // is a shell line; `.daimond/verify.json` because every fence already denies that directory, so
 // a command cannot rewrite the file that decides how it is judged. Inside the fence because a
 // daimon's ordinary turn CAN write that file with `file_write` -- only a command is stopped --
-// so the command it names is model-reachable in effect and gets the fence, the toolkits, the
+// so the command it names is model-reachable in effect and gets the fence, the
 // network question and the consent rung exactly as `run` does.
 
 /// Which manifests a project root holds, as the inference reads them.

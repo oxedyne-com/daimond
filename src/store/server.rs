@@ -1105,7 +1105,7 @@ fn named(call: &StoreCall) -> Named<'_> {
         C::AddLink { owner, .. } | C::LinksPage { owner, .. }
         | C::RemoveLinkByModel { owner, .. } => Named::Id(owner),
         C::AllLinks {} | C::LinksJson { .. } | C::FolderOf { .. }
-        | C::CloseWindow { .. } | C::RouteHere { .. } | C::LiveBounds { .. } | C::Reach { .. }
+        | C::CloseWindow { .. } | C::RouteHere { .. }
         | C::Trail { .. } | C::LetGo { .. } | C::Ping {}
         | C::JournalPut { .. } | C::JournalRead { .. } | C::JournalDrop { .. }
         | C::JournalList { .. } | C::JournalSweep { .. } => Named::Nothing,
@@ -2347,9 +2347,6 @@ async fn serve_wait_late(st: &Shared, run: &str, bs: &Bodies, call: StoreCall,
             };
             R::RecordSteer(diamond::record_steer(h.held(), &id, &json, &instruction).await)
         }
-        C::LiveBounds { .. } => R::LiveBounds(Err(not_served("live_bounds",
-            "the marks are the tab's"))),
-        C::Reach { .. } => R::Reach(Err(not_served("reach", "the marks are the tab's"))),
         C::BodyPut { id, act, hash, len, offset, chunk } =>
             R::BodyPut(body_put(st, run, id, act, hash, len, offset, chunk).await),
         C::BodyGet { id, hash, offset, max } =>
@@ -2404,7 +2401,7 @@ async fn standing_settle(
     // The one own-area rule (HL5c): the child's `ctx.root` is `Workspace`, which names the
     // store's own area under `diamonds/` as `Opfs` does.  A test's switch lets any id through.
     if let Err(e) = own_area_of("standing_settle", id, root, path, opfs_only) {
-        if !archive_any_id() || root == FileRoot::Machine {
+        if !archive_any_id() {
             return Err(e);
         }
     }
@@ -2450,12 +2447,12 @@ fn own_area_of(what: &str, id: &str, root: FileRoot, path: &str, opfs_only: bool
     -> Outcome<()>
 {
     // `Workspace` and `Opfs` both name the store's own area at `diamonds/<id>/` (HL5a ruling,
-    // [`store_owned`]); the machine's root never does.
-    if root == FileRoot::Machine || (opfs_only && root != FileRoot::Opfs) {
+    // [`store_owned`]).
+    if opfs_only && root != FileRoot::Opfs {
         return Err(err!("store.{} reads the store's own area, and {:?} is not it.", what, root;
             Invalid, Input));
     }
-    match crate::tools::store_owned(root, path) {
+    match crate::tools::store_owned(path) {
         Some(owner) if owner == id => Ok(()),
         _ => Err(err!("store.{}: '{}' is not a file of the Diamond '{}'.", what, path, id;
             Invalid, Input)),

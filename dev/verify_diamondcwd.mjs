@@ -70,8 +70,7 @@ await p.evaluate(async (root) => {
 		const app = new mod.DaimondApp(
 			'http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 		if (scope) {
-			const reach = await app.read_scope_reach(String(scope.own).replace(/^diamonds\//, ''));
-			app.set_diamond_scope(reach, JSON.stringify(scope.toolkits || []));
+			app.set_diamond_scope(String(scope.own).replace(/^diamonds\//, ''));
 		}
 		return app;
 	};

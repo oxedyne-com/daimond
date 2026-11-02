@@ -10,7 +10,7 @@
 //
 // Held on Chromium at 1440x900 (hover, then the ⋯) and on WebKit as an iPhone at 390x844 (the ◈ drawn at
 // rest, and the long-press ⋯), with a new Diamond in focus:
-//   A1  Can change shows the one-line pointer while nothing is added, and loses it once something is;
+//   A1  In focus shows the one-line pointer while nothing is added, and loses it once something is;
 //   A2  on a phone the tree's ghost ◈ is drawn at rest;
 //   A3  a file's ⋯ offers "Add to <Diamond>" first; pressing it puts the file in the Diamond's fence;
 //   A4  the same ⋯ then offers "Remove from <Diamond>"; pressing it takes the file out, with the Undo;
@@ -74,10 +74,10 @@ const STATE = ([sel, id, file]) => (async () => {
 	const shown = (el) => { if (!el) return false; const cs = getComputedStyle(el), r = el.getBoundingClientRect();
 		return cs.display !== 'none' && cs.visibility !== 'hidden' && +cs.opacity > 0.05 && r.width > 0 && r.height > 0; };
 	const r = document.querySelector(sel), dm = r && r.querySelector('[data-act="mark"]');
-	const keys = DaimondRecent.boundsKeys(await DaimondDiamond.bounds(id));
+	const keys = (JSON.parse(await DaimondCore.diamondApp().links_touching('diamond:' + id) || '[]')).filter((l) => l.owner === id && l.from === 'diamond:' + id).map((l) => String(l.to || '').replace(/\/$/, ''));
 	return { row: !!r, ghost: !!dm && dm.classList.contains('ghost'), dmShown: shown(dm),
 		pointer: shown(document.querySelector('#panel-work .files-focus .files-focus-note')),
-		in: keys.some((k) => k.endsWith(':' + file)), undo: !!(r && r.querySelector('[data-act="undo"]')) };
+		in: keys.some((k) => k.endsWith(']' + file) || k.endsWith(':' + file)), undo: !!(r && r.querySelector('[data-act="undo"]')) };
 })();
 
 async function rowMenu(page, phone) {
@@ -170,7 +170,7 @@ async function device(tag, s, size, phone) {
 
 	let s0 = await st();
 	check(s0.row && s0.ghost && !s0.in, `${tag}: the file is in the tree, not yet in the Diamond`, JSON.stringify(s0));
-	check(s0.pointer, `${tag}: A1 Can change says where adding is while nothing is added`, JSON.stringify(s0));
+	check(s0.pointer, `${tag}: A1 In focus says where adding is while nothing is added`, JSON.stringify(s0));
 	if (phone) check(s0.dmShown, `${tag}: A2 the ghost ◈ is drawn at rest on a phone`, JSON.stringify(s0));
 
 	let m = await rowMenu(page, phone);

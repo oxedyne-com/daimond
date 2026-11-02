@@ -104,75 +104,6 @@ export var DIAMOND_TOMBS_KEY = 'daimond-diamond-tombs';
 export var MSG_TOMBS_KEY = 'daimond-msgs-deleted';   // individual messages removed (a continued interrupted turn)
 
 // ── Diamonds state ─────────────────────────────────────────────
-/// The toolchains this build can grant, in the order they are offered.
-///
-/// At the top level since E1: the Workspace panel draws them and the consent door names
-/// them when a command first needs one.
-///
-/// The same five names `Toolkit::all` gives, and they are names rather than labels
-/// because the name is what is STORED and what reaches `Toolkit::parse`. The label is
-/// only ever how it is written on a button.
-///
-/// `remote` is NOT here and must not be added back. A Terminal's ssh is a posture the
-/// user sets on the COMPUTER -- `hand/install/install.sh --remote`, which makes the
-/// key and writes the wrapper -- and the hand reports it in `hello` as `remote:ready`.
-/// It was a per-Diamond chip until 2026-08-26 and the owner's objection to that is
-/// `dev/BLOCKERS.md` B12: a Terminal is not tied to a Diamond, so neither is what one
-/// may reach. There is nothing to press here because there is nothing per Diamond to
-/// decide.
-export var KITS = [
-	{ name: 'rust',   label: 'Rust' },
-	{ name: 'node',   label: 'Node' },
-	{ name: 'python', label: 'Python' },
-	{ name: 'go',     label: 'Go' },
-	// Not cosmetic, and the odd one out: `git` itself is already reachable, so
-	// what this grants is the user's own configuration -- their name, their
-	// email, and `core.hooksPath`. Without it a fenced git runs with NO hooks,
-	// and an unreadable hooks directory is indistinguishable from an empty one,
-	// so the credential-scanning pre-commit hook silently does not run.
-	{ name: 'git',    label: 'Git' },
-];
-
-// TOOLCHAIN ASKS NOT GRANTED (Workspace round 2, E3; spec §3.3): a question answered
-// "Not now", or that nobody answered, is kept per Diamond on this device and never
-// synced, since a grant is a press on a device. It is drawn as a ghost the user can
-// press later to grant. Kept here is only the question: the engine still asks afresh
-// next time, so a no never stands as a refusal (N2).
-var KITS_WAITING_KEY = 'daimond-kits-waiting';	// per account, by accounts.js
-
-function kitsWaitingAll() {
-	try {
-		var m = JSON.parse(localStorage.getItem(KITS_WAITING_KEY) || '{}');
-		return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
-	} catch (e) { return {}; }
-}
-
-/// The toolchains asked for `diamondId` that nobody answered, by name.
-function kitsWaiting(diamondId) {
-	var l = kitsWaitingAll()[diamondId];
-	return (Array.isArray(l) ? l : []).filter(function (n) {
-		return KITS.some(function (k) { return k.name === n; });
-	});
-}
-
-/// The toolchains waiting for `d` that it does not hold: what a ghost is drawn for.
-/// The one reader the drawing uses, so a renderer that moves takes nothing else with it.
-export function kitsAwaiting(d) {
-	if (!d) return [];
-	var on = Array.isArray(d.toolkits) ? d.toolkits : [];
-	return kitsWaiting(d.id).filter(function (n) { return on.indexOf(n) < 0; });
-}
-
-/// Add (`on`) or take off toolchains waiting for `diamondId`, and repaint.
-export function setKitsWaiting(diamondId, names, on) {
-	if (!diamondId || !names.length) return;
-	var m = kitsWaitingAll();
-	var l = kitsWaiting(diamondId).filter(function (n) { return names.indexOf(n) < 0; });
-	if (on) l = l.concat(names);
-	if (l.length) m[diamondId] = l; else delete m[diamondId];
-	try { localStorage.setItem(KITS_WAITING_KEY, JSON.stringify(m)); } catch (e) { /* drawn without it */ }
-	document.dispatchEvent(new CustomEvent('daimond-kits-waiting'));
-}
 // page-split: install 2
 // WHAT THE CENTRE IS SHOWING, and the ONLY three values `centreMode` ever
 // holds. `showCentre` is the only thing that writes it, and it refuses a
@@ -469,3 +400,4 @@ export function install_3() { // page-split: install
 	/* var */ chatOutputEl  = document.getElementById('chat-output');
 	/* var */ chatInputBar  = document.querySelector('.chat-input-bar');
 } // page-split: end install
+

@@ -25,6 +25,9 @@ const MAX_TAG_LEN: usize = 24;
 const MAX_CARRIED: usize = 65_536;
 
 /// Every key this build reads into a [`Meta`] field; any other is carried in [`Meta::extra`].
+///
+/// `toolkits` is the toolchain grant an older build wrote (R2 GOES, D-20261031-11): known so that
+/// it is read and dropped, never carried into `extra` and written back.
 const KNOWN_KEYS: [&str; 10] = ["name", "crystal_version", "brief_version", "updated", "touched",
 	"builtin", "builtin_named", "tags", "toolkits", "no_progress_rounds"];
 
@@ -48,14 +51,6 @@ pub struct Meta {
 	pub touched: u64,
 	/// User-defined tags, as [`normalise_tags`] leaves them.
 	pub tags:    Vec<String>,
-	/// The toolchains the user granted this Diamond, as [`normalise_kits`] leaves them.
-	///
-	/// A GRANT and not a tag, and the difference is the whole reason this is its own field rather
-	/// than a reserved tag name.  A tag is an arbitrary string the user types; deriving a
-	/// toolchain grant from one would mean a Diamond filed under "rust" quietly reaching the
-	/// compiler, which is a permission nobody gave.  What is in here reaches
-	/// `Toolkit::parse` and decides what a COMMAND may touch outside the workspace.
-	pub kits:    Vec<String>,
 	/// Which built-in Diamond this record IS, as the fixed id that built-in is seeded at, or
 	/// empty for every Diamond a person made (NAMES N1, 2026-10-16).
 	///
@@ -102,9 +97,9 @@ impl Meta {
 	/// Serialise to a compact single-line JSON object.
 	pub fn to_json(&self) -> String {
 		fmt!(
-			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{},\"toolkits\":{}{}{}}}",
+			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{}{}{}}}",
 			json_escape(&self.name), self.version, self.updated, self.touched,
-			json_escape(&self.builtin), self.named, self.tags_json(), self.kits_json(),
+			json_escape(&self.builtin), self.named, self.tags_json(),
 			// Only when set, so a record nobody tuned is byte for byte what it was.
 			if self.no_progress > 0 { fmt!(",\"no_progress_rounds\":{}", self.no_progress) }
 				else { String::new() },
@@ -127,14 +122,6 @@ impl Meta {
 	pub fn tags_json(&self) -> String {
 		let items: Vec<String> = self.tags.iter()
 			.map(|t| fmt!("\"{}\"", json_escape(t)))
-			.collect();
-		fmt!("[{}]", items.join(","))
-	}
-
-	/// The granted toolkits as a JSON array of strings, `[]` when there are none.
-	pub fn kits_json(&self) -> String {
-		let items: Vec<String> = self.kits.iter()
-			.map(|k| fmt!("\"{}\"", json_escape(k)))
 			.collect();
 		fmt!("[{}]", items.join(","))
 	}
@@ -173,10 +160,6 @@ impl Meta {
 			// tab (see `read_meta`). Normalising here means the very next write
 			// puts the file right.
 			tags:    normalise_tags(&extract_json_string_array(s, "tags").unwrap_or_default()),
-			// Postdates every Diamond already on a device, and an absent field means no grant --
-			// which is both the honest reading and the safe one. A toolkit is off by default.
-			kits:    normalise_kits(
-				&extract_json_string_array(s, "toolkits").unwrap_or_default()),
 			// Postdates every Diamond already on a device; absent means a person's own Diamond,
 			// and the page marks the built-ins it can prove on the next boot.
 			builtin: normalise_builtin(&extract_json_string(s, "builtin").unwrap_or_default()),
@@ -256,22 +239,6 @@ pub fn keep_built_in_marker(incoming: &str, local: &Meta) -> Option<String> {
 }
 
 
-/// The toolkit names this build knows, in the order they are offered.
-///
-/// Named here as strings rather than reached for from `crate::tools::Toolkit`, because this module
-/// is the STORE and the store's job is to hold what the user chose, not to decide what it means.
-/// A name that survives this is still put through `Toolkit::parse` before it grants anything, and
-/// one this build does not know grants nothing there.
-///
-/// **This list and `Toolkit` are two copies of one fact, and they have already drifted once.**
-/// `git` was added to the enum, to the fence's `TOOLKIT_ROOTS` and to the page's `KITS` row, and
-/// not to this array -- so the chip drew, the click was written, the store dropped the name, and
-/// the chip redrew unlit. Nothing was broken and nothing said anything: the store was doing
-/// exactly what it is for, against a list that was one name short. Add a toolkit here whenever one
-/// is added there, and see `test_every_toolkit_the_engine_knows_is_a_name_the_store_keeps`, which
-/// fails when they disagree.
-const KNOWN_KITS: [&str; 5] = ["rust", "node", "python", "go", "git"];
-
 /// Normalise a built-in marker: a fixed Diamond id is twelve lowercase hex digits, and anything
 /// else is no marker at all, so a damaged or hand-written field cannot make a Diamond a built-in
 /// under some other name.
@@ -285,32 +252,6 @@ pub fn normalise_builtin(mark: &str) -> String {
 	} else {
 		String::new()
 	}
-}
-
-/// Normalise a caller's toolkit grants into the form the store holds.
-///
-/// Lowercased, trimmed, de-duplicated keeping first-seen order, and -- unlike a tag -- checked
-/// against [`KNOWN_KITS`].  A tag is an arbitrary string and this is not: it decides what a command
-/// may reach outside the workspace, so a name nobody can act on has no business being stored as
-/// though somebody had granted something.
-///
-/// An unknown name is DROPPED rather than refused, so a `meta.json` written by a later build that
-/// knows a fifth toolchain still opens, carrying the grants this build does understand.
-///
-/// # Arguments
-/// * `kits` - The names the caller offered.
-pub fn normalise_kits(kits: &[String]) -> Vec<String> {
-	let mut out: Vec<String> = Vec::new();
-	for kit in kits {
-		let name = kit.trim().to_lowercase();
-		if !KNOWN_KITS.contains(&name.as_str()) {
-			continue;
-		}
-		if !out.contains(&name) {
-			out.push(name);
-		}
-	}
-	out
 }
 
 /// Normalise a caller's tags into the form the store holds.
@@ -350,6 +291,80 @@ pub fn normalise_tags(tags: &[String]) -> Vec<String> {
 	out
 }
 
+
+// Built-in Diamonds' sight.
+
+/// The folder each built-in Diamond consults, by its fixed id (`DEFAULT_IDS` in
+/// `www/js/page/diamonds.js`): Help reads the guide's mirror and the Optimiser the usage digest.
+/// Part of the definition, not a link, so it is the same on every device and no row can widen it.
+/// Reading is free under every Diamond's bounds and writing stays fenced to its own folder, so
+/// this is read-only sight; it reaches the turn as focus ([`crate::store::diamond::attached_focus`]).
+/// It replaces the page's `grantConsulted` link-grant (D-20261031-11).
+pub const BUILT_IN_CONSULTS: [(&str, &str); 2] = [
+	("0da1000000e1", "system/guide"),	// fixed: Help's id and crate::tools::APP_STATE_DIRS
+	("0da1000000f2", "system/usage"),	// fixed: the Optimiser's id and APP_STATE_DIRS
+];
+
+/// The folder the built-in Diamond `id` consults, where it is one.
+pub fn built_in_consults(id: &str) -> Option<&'static str> {
+	BUILT_IN_CONSULTS.iter().find(|(d, _)| *d == id).map(|(_, p)| *p)
+}
+
+// Keeper ids (re-homed from the retired marks rule, D-20261031-11).
+
+/// Is every character a lower-case hex digit?
+fn is_hex(s: &str) -> bool {
+	s.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+}
+
+/// Is this a Diamond id the store mints (`generate_session_id`: hex)?
+pub fn is_diamond_id(id: &str) -> bool {
+	!id.is_empty() && is_hex(id)
+}
+
+/// A Diamond's id, validated once where it enters the engine, so no unchecked string can name the
+/// directory a scope is composed on.  `""` named `diamonds/` -- every Diamond's home -- and
+/// `<X>/../<Y>` normalised to Y's (QA B F2, 2026-10-12); neither is hex, so neither is one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiamondId(String);
+
+impl DiamondId {
+
+	/// The id, or a refusal naming what was given.
+	pub fn parse(id: &str) -> Outcome<Self> {
+		if is_diamond_id(id) {
+			Ok(Self(id.to_string()))
+		} else {
+			Err(err!("'{}' is not a Diamond's id: an id is the hex the store mints.", id;
+				Invalid, Input))
+		}
+	}
+
+	pub fn as_str(&self) -> &str { &self.0 }
+
+	/// Its own directory, `diamonds/<id>`.
+	pub fn dir(&self) -> String { fmt!("diamonds/{}", self.0) }
+}
+
+impl std::fmt::Display for DiamondId {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "{}", self.0)
+	}
+}
+
+/// Is this a chat id the page mints: `c` and digits, or `c` and `newMid`'s three parts?
+pub fn is_chat_id(id: &str) -> bool {
+	let rest = match id.strip_prefix('c') {
+		Some(r) => r,
+		None    => return false,
+	};
+	if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+		return true;
+	}
+	let parts: Vec<&str> = rest.split('-').collect();
+	let word = |s: &str| s.chars().all(|c| c.is_ascii_digit() || c.is_ascii_lowercase());
+	parts.len() == 3 && !parts[0].is_empty() && !parts[1].is_empty() && parts.iter().all(|p| word(p))
+}
 
 #[cfg(test)]
 #[path = "../tests/unit/diamond_meta/tests.rs"]

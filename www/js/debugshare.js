@@ -924,17 +924,16 @@
 		return str({ v: o.v, d: o.d, n: o.n, b: o.b, t: o.t, tr: 1 });
 	}
 
-	/// THE THREE CAPABILITY FACTS a stuck device cannot otherwise be seen to be
-	/// missing: whether the tool surface exists at all, whether a workspace folder
-	/// is actually mounted, and whether this device may commit a chunk set. The
-	/// third is the one that matters most -- a device whose chunk index has not
+	/// THE CAPABILITY FACTS a stuck device cannot otherwise be seen to be
+	/// missing: whether the tool surface exists at all, and whether this device may
+	/// commit a chunk set (the folder fact went with the machine folder,
+	/// D-20261031-11). The second is the one that matters most -- a device whose chunk index has not
 	/// merged refuses every commit, silently, and that state was invisible until
 	/// it cost a turn. `null` means the answer is not knowable yet (the core has
 	/// not loaded), which is a different thing from `false`.
 	function capabilities() {
-		var cap = { tools: false, folder: false, mayCommit: null };
+		var cap = { tools: false, mayCommit: null };
 		try { cap.tools = !!window.DaimondTools; } catch (e) {}
-		try { cap.folder = !!(window.DaimondFiles && DaimondFiles.folder && DaimondFiles.folder()); } catch (e) {}
 		try {
 			if (window.DaimondCore && DaimondCore.syncMayCommitChunks) {
 				cap.mayCommit = !!DaimondCore.syncMayCommitChunks();
@@ -971,7 +970,6 @@
 		if (kind === 'boot' || kind === 'beat') {
 			var cap = capabilities();
 			ev.tools     = cap.tools;
-			ev.folder    = cap.folder;
 			ev.mayCommit = cap.mayCommit;
 		}
 		if (payload && typeof payload === 'object') {

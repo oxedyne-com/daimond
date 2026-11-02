@@ -34,15 +34,11 @@ function rig({ refuseUnion = false, refuseRemove = false } = {}) {
 		remove_link: async (...a) => { calls.push(['remove_link', ...a]); if (refuseRemove) throw new Error(REFUSAL); return true; },
 		remove_bare_link: async (...a) => { calls.push(['remove_bare_link', ...a]); if (refuseRemove) throw new Error(REFUSAL); return true; },
 	};
-	const marks = {
-		drop: (...a) => { calls.push(['drop', ...a]); },
-		parseSidecar: (line) => [JSON.parse(line)],
-	};
 	// eslint-disable-next-line no-new-func
-	const f = new Function('DaimondMarksHere', 'diamondApp', 'trail', 'toast', 't', 'friendlyError', 'noticeDialog',
+	const f = new Function('diamondApp', 'trail', 'toast', 't', 'friendlyError', 'noticeDialog',
 		'var unionRefused = {}, unionFaultSaid = {};\n' + lift('storeRefusal') + lift('unionLinksSaid') + lift('removeLinkHere')
 		+ lift('dropRefused') + lift('mergeConflictLinks') + 'return mergeConflictLinks;')(
-		marks, () => app, () => {}, (text, err) => toasts.push([text, err]), (k) => k, (e) => e.message,
+		() => app, () => {}, (text, err) => toasts.push([text, err]), (k) => k, (e) => e.message,
 		(title, body) => notices.push([title, body]));
 	return { calls, toasts, notices, f, app };
 }
@@ -74,5 +70,5 @@ test('a merge the store takes says nothing', async () => {
 	const { calls, notices, toasts, f, app } = rig();
 	await f(app, 'd1', { drop: [DROP('a')], add: '{"id":"x"}\n' });
 	assert.equal(notices.length + toasts.length, 0);
-	assert.deepEqual(calls.map((c) => c[0]), ['remove_link', 'drop', 'union_links']);
+	assert.deepEqual(calls.map((c) => c[0]), ['remove_link', 'union_links']);
 });

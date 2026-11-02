@@ -67,14 +67,8 @@ impl HostNet for TestNet {
     async fn egress_allowed_act(&self, turn: &str, tool: &str, url: &str, detail: &str, alone: bool) -> Option<Verdict> {
         LocalNet.egress_allowed_act(turn, tool, url, detail, alone).await
     }
-    async fn egress_allowed_kit(&self, turn: &str, cmd: &str, detail: &str) -> Option<Permit> {
-        LocalNet.egress_allowed_kit(turn, cmd, detail).await
-    }
     async fn egress_allowed_net(&self, turn: &str, cmd: &str, cwd: &str) -> Option<Verdict> {
         LocalNet.egress_allowed_net(turn, cmd, cwd).await
-    }
-    async fn egress_allowed_place(&self, turn: &str, path: &str, detail: &str) -> Option<Permit> {
-        LocalNet.egress_allowed_place(turn, path, detail).await
     }
     async fn egress_allowed_publish(&self, turn: &str, shown: &str) -> Option<Verdict> {
         LocalNet.egress_allowed_publish(turn, shown).await

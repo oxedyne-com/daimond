@@ -19,7 +19,6 @@ use crate::{
         types::store::CrystalHalf,
     },
     executor::Executor,
-    marks::{Live, Reach},
     rating::Author,
     store::{
         call::{encode_call, FRAME_MAX},
@@ -42,7 +41,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 // └───────────────────────────────────────────────────────────────┘
 
 /// WasmHost's store port body, natively: each method is its namesake in `store::diamond`
-/// (`trail` to `store::own`; the marks are the tab's, so `live_bounds` and `reach` refuse).
+/// (`trail` to `store::own`).
 #[derive(Clone, Debug, Default)]
 struct Direct;
 
@@ -357,12 +356,6 @@ impl HostStore for Direct {
         diamond::end_turn_counts(id)
     }
 
-    async fn live_bounds(&self, live: &Live) -> Outcome<Vec<Bound>> {
-        { let _ = live; Err(not_served("live_bounds", "the marks are the tab's")) }
-    }
-    async fn reach(&self, target: &Live) -> Outcome<Reach> {
-        { let _ = target; Err(not_served("reach", "the marks are the tab's")) }
-    }
     fn trail(&self, what: &str, detail: &str) {
         crate::store::own::trail(what, detail)
     }
@@ -473,8 +466,7 @@ fn turn_ctx() -> ToolContext<TestHost> {
         daimon_of:   String::new(),
         turn:        String::new(),
         keeper:      String::new(),
-        unconfirmed: Vec::new(),
-        live:        None,
+        scope:       None,
         by_model:    false,
         restoring:   0,
         by:          None,
@@ -907,10 +899,7 @@ async fn script<S: HostStore>(st: &S, ctx: &ToolContext<TestHost>, stub: Option<
     drop(hold);
     st.end_turn_counts(D);
 
-    // Marks and the trail
-    let live = Live::Chat(s("c"), Vec::new());
-    say!("live_bounds {}", o(&st.live_bounds(&live).await));
-    say!("reach {}", o(&st.reach(&live).await));
+    // The trail
     st.trail("remote_tests", "done");
     (log, ids)
 }
@@ -965,7 +954,8 @@ fn the_port_through_the_link_answers_as_the_port_directly() {
     let files = differ(&here.1, &there.1);
     assert!(lines.is_empty(), "the answers differ:\n{}", lines.join("\n"));
     assert!(files.is_empty(), "the stores differ:\n{}", files.join("\n"));
-    assert!(here.0.len() >= 82, "the script logged {} lines", here.0.len());  // 58, and 24 refusals
+    // 82 until the two marks calls (live_bounds, reach) went with D-20261031-11.
+    assert!(here.0.len() >= 81, "the script logged {} lines", here.0.len());
     let refused = here.0.iter().filter(|l| l.starts_with("refuse ") && l.contains("Err⟨")).count();
     let open: Vec<&str> = here.0.iter().filter(|l| l.starts_with("refuse ") && !l.contains("Err⟨"))
         .map(|l| l.split(' ').nth(1).unwrap_or("")).collect();
@@ -1432,8 +1422,7 @@ fn a_state_read_of_another_root_diamond_or_leaf_is_refused() {
         let child = state_read_of(st, D, FileRoot::Workspace, STATE_MD);
         assert!(!state_read_refused(&child), "d's STATE.md under Workspace was refused: {:?}", child);
         for (id, root, path, what) in [
-            (D, FileRoot::Machine, STATE_MD, "the machine's root"),
-            (D, FileRoot::Opfs, e_state, "a path of another granted Diamond under d's id"),
+            (D, FileRoot::Opfs, e_state.as_str(), "a path of another granted Diamond under d's id"),
             (D, FileRoot::Opfs, DECISIONS, "a leaf not STATE.md"),
             (D, FileRoot::Opfs, "diamonds/d/notes.md", "a plain file"),
             ("e", FileRoot::Opfs, "diamonds/e/STATE.md", "an ungranted Diamond"),

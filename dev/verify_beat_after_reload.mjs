@@ -29,7 +29,7 @@ try {
 	const idB = await b.page.evaluate(() => window.DaimondIdentity.deviceId());
 	// B as it stood the moment a reload cut its turn short: its last beat said busy.
 	await b.page.evaluate(() => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), 'brb',
-		true, true, false, false, undefined, undefined, 1));
+		true, true, false, false, undefined, 1));
 	const seen = (id) => a.page.evaluate(async (id) => {
 		await window.DaimondSync.refreshPresence();
 		const r = (window.DaimondPresence.snapshot() || {})[id] || {};

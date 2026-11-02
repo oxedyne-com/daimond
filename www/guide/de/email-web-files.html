@@ -60,27 +60,27 @@
 	<p>Wenn der Speicher voll läuft, gehen die am längsten unbenutzten Dateien von selbst zurück in die Cloud. Freigeben ist kein Löschen, die Datei bleibt aufgeführt und kommt zurück, wenn sie angefordert wird.</p>
 	<p>Einem Daimon wird klar gesagt, wenn eine gewünschte Datei in der Cloud liegt, und er muss sie bewusst holen. Eine Grenze beschränkt, wie viel er von sich aus herunterholen darf.</p>
 
-	<h2 id="s4">Einen Ordner übergeben</h2>
-	<p>Every row in the tree has a <span class="ui">◈</span> and a <span class="ui">⋯</span>. The ◈ adds the file or folder to what is in focus, or takes it out, and the ⋯ says the same in words: <span class="ui">Add to</span> the diamond by name, or <span class="ui">Add to this chat</span>, and <span class="ui">Remove from</span> once it is in. On a computer both appear when the pointer is over the row; on a phone the ◈ is always drawn and a long press opens the ⋯. A new diamond starts with nothing added, and its <span class="ui">Can change</span> list says where to add from.</p>
+	<h2 id="s4">Eine Datei oder einen Ordner anhängen</h2>
+	<p>Jede Zeile im Baum hat ein <span class="ui">◈</span> und ein <span class="ui">⋯</span>. Das ◈ hängt die Datei oder den Ordner an das an, was im Fokus ist, oder nimmt sie wieder ab, und das ⋯ sagt dasselbe in Worten: <span class="ui">Hinzufügen zu</span> dem Diamond mit Namen, oder <span class="ui">Zu diesem Chat hinzufügen</span>, und <span class="ui">Entfernen aus</span> sobald es drin ist. Am Computer erscheinen beide, wenn der Zeiger über der Zeile ist; am Telefon ist das ◈ immer zu sehen, und langes Drücken öffnet das ⋯. Ein neues Diamond beginnt ohne Anhänge.</p>
 	<ul>
-		<li><strong>Ein Diamond ist im Fokus.</strong> Die Datei oder der Ordner tritt dem Arbeitsbereich dieses Diamond bei und bleibt, bis Sie sie herausnehmen.</li>
+		<li><strong>Ein Diamond ist im Fokus.</strong> Die Datei oder der Ordner bleibt an diesem Diamond angehängt, bis Sie sie abnehmen.</li>
 		<li><strong>Ein Chat ist im Fokus.</strong> Der Anhang gilt nur für den nächsten Zug.</li>
 	</ul>
 	<p>Anhängen kopiert nichts. Die Datei bleibt, wo sie ist, und das Diamond zeigt auf sie; einen Ordner an zwei Diamonds zu hängen lässt also weiterhin einen Ordner übrig.</p>
 	<p>Jeder Anhang ist entweder <span class="ui">Notiz</span>, was heißt, der Pfad ist wissenswert und kostet ein paar Token, oder <span class="ui">Lesen</span>, was heißt, der Inhalt wird jetzt gebraucht. Beginnen Sie mit Notiz, das deutlich billiger ist. So oder so geht der erzeugte Text in das Nachrichtenfeld vor das, was Sie tippen, wo Sie ihn bearbeiten oder löschen können.</p>
-	<p>Ein Häkchen bei einem <em>Ordner</em> in der Arbeitsbereichsgruppe ist die Erlaubnis, dieser Chat oder dieses Diamond darf dann lesen und ändern, was darin liegt. Ein Häkchen bei einer Datei stellt sie nur vor das Modell. Die <span class="ui">Reichweite</span> -Zeile eines Diamond nennt jeden Ordner, in den es schreiben darf, und sagt das in beiden Bäumen.</p>
+	<p>Anhängen sagt nur, wo man hinsehen soll. Es gibt einem Daimon nichts, was er nicht ohnehin erreichen könnte, und das Abnehmen eines Anhangs nimmt nichts weg. Was ein Daimon erreicht, hängt davon ab, wo der Zug läuft, wie der nächste Abschnitt sagt.</p>
 
 	<h3 id="s5">Was ein Daimon öffnen kann</h3>
-	<p>Ein Daimon kann nur öffnen, was im Arbeitsbereich seines Diamond liegt. Nichts anderes ist über die Dateiwerkzeuge lesbar oder beschreibbar, weder für den Daimon noch für einen Helfer, den er losschickt. Die Prüfung sitzt im kompilierten Code, an der einen Tür, durch die jedes Dateiwerkzeug geht, und dieser Code steckt in einem Bündel, das reproduzierbar aus öffentlichem Quelltext baut — es ist also keine Anweisung in einem Prompt.</p>
+	<p>Auf Kimberlite erreicht ein Daimon Ihren Home-Ordner. Daimond hält trotzdem die als Geheimnis benannten Dateien heraus, etwa Ihre Schlüssel und Passwörter, dazu seine eigenen Aufzeichnungen und die von Kimberlite. Im Browser ändert ein Daimon nur die eigenen Dateien seines Diamond und ein Chat nur seinen eigenen Ordner. Nichts sonst ist über die Datei-Werkzeuge beschreibbar, weder für den Daimon noch für einen Helfer, den er losschickt. Die Prüfung steckt in kompiliertem Code an der einen Tür, die jedes Datei-Werkzeug passiert, und dieser Code liegt in einem Bundle, das sich reproduzierbar aus öffentlichem Quellcode bauen lässt; sie ist also keine Anweisung in einem Prompt.</p>
 	<p>Diese Regel legt fest, was ein Daimon erreichen kann, und sagt nichts darüber, wo das, was er liest, endet, denn was auch immer er öffnet, geht mit dem Rest des Zugs an Ihren Modellanbieter.</p>
-	<p>Deleting or wiping counts the same way. Past a limit you set under <span class="ui">Settings</span> — eight in a turn by default — the turn stops there and asks before it goes on. Wiping a file means writing over it so that less than half of it is left. Daimond keeps a copy of anything deleted or wiped for at least seven days.</p>
+	<p>Löschen oder Leeren zählt genauso. Ab einer Grenze, die Sie unter <span class="ui">Einstellungen</span> festlegen — standardmäßig acht pro Zug —, hält der Zug dort an und fragt, bevor er weitermacht. Eine Datei leeren heißt, sie so zu überschreiben, dass weniger als die Hälfte übrig bleibt. Daimond bewahrt von allem Gelöschten oder Geleerten mindestens sieben Tage lang eine Kopie auf.</p>
 
 	<h3 id="s6">Die Anhangsliste</h3>
 	<p>Zeilen tragen ein Alter, <span class="ui">Hinzugefügt {when}</span>. Ein Pfad, der nicht mehr da ist, wird gezeichnet als <span class="ui">Weg</span> ohne Öffnen-Aktion, eine tote Zeile gibt sich also nie als lebende aus.</p>
 	<p>Alles, was ein Daimon von sich aus angehängt hat, etwa der Ertrag eines Einklappens oder eine Datei, die ein Agent behalten hat, sitzt unter einer eingeklappten Überschrift, <span class="ui">Vom Daimon hinzugefügt</span>, mit einer Zählung und einem <span class="ui">Alle entfernen</span>. Ihre eigenen Anhänge bleiben, wo sie sind.</p>
 
-	<h3 id="s7">Hinzugefügte Ordner und Ihre anderen Geräte</h3>
-	<p>Wenn Sie einem Diamond einen Ordner oder eine Datei hinzufügen, oder dem Arbeitsbereich eines Chats einen Ordner, wird das mit Ihren anderen Geräten synchronisiert, wirkt dort aber erst, wenn Sie es auf dem jeweiligen Gerät noch einmal drücken. Öffnen Sie denselben Diamond auf einem zweiten Gerät, steht ein anderswo hinzugefügter Ordner dort als hier noch nicht in Gebrauch, mit <span class="ui">Hier verwenden</span> , um ihn dort zu verwenden, oder <span class="ui">Alle hier verwenden</span> für alles, was noch nicht in Gebrauch ist, auf einmal. Das Entfernen eines Ordners erreicht jedes Gerät von selbst; das Verwenden nicht, daher ist ein hinzugefügter Ordner nur auf einem Gerät in Gebrauch, auf dem er hinzugefügt oder noch einmal gedrückt wurde.</p>
+	<h3 id="s7">Anhänge und Ihre anderen Geräte</h3>
+	<p>Was Sie an ein Diamond anhängen, wird mit Ihren anderen Geräten synchronisiert und zeigt dort auf dieselben Dateien, ohne dass Sie erneut etwas drücken müssen. Ein Anhang, der auf einem anderen Gerät liegt, sagt, wo er liegt, und ein Daimon auf diesem Gerät kann ihn von hier aus nicht öffnen.</p>
 
 	<h3 id="s8">Einen Ordner mit Ihren anderen Geräten teilen</h3>
 	<p>Ein Ordner im eigenen Speicher des Browsers erreicht Ihre anderen Geräte von selbst, es gibt also nichts von Hand zu teilen. Ein Ordner auf der Festplatte Ihres Computers ist Sache von Kimberlite und bleibt auf diesem Computer.</p>
@@ -88,13 +88,13 @@
 	<h2 id="s9">Dokumente und Bücher</h2>
 	<p>Öffnen Sie eine <code>.typ</code> -Datei, und das Dok-Panel bekommt zwei Schaltflächen. <span class="ui">Kompilieren</span> setzt das Dokument in der Seite und schreibt ein Vorschau-PDF neben die Quelle; solange diese Seiten offen sind, baut jedes Speichern sie neu. Drücken Sie es bei einem Kapitel, kompiliert es das Dokument, das das Kapitel enthält, und bringt Sie dann zur Seite dieses Kapitels.</p>
 	<p>Beide Panels müssen auf dem Bildschirm sein, damit die Schleife läuft. Ist das Fenster zu schmal, sagt das Dok-Panel das, und ein Neubau holt nach, sobald sie zurückkehren.</p>
-	<p>Der Editor muss nicht der von Daimond sein. Ein Speichern aus jedem Editor, der in den gewährten Ordner schreibt, wird innerhalb etwa einer Sekunde aufgenommen.</p>
+	<p>Der Editor muss nicht der von Daimond sein. Ein Speichern aus jedem Editor, der in denselben Ordner schreibt, wird binnen etwa einer Sekunde aufgegriffen.</p>
 	<p>Ein Telefon kann die Dateien eines Buchs nicht halten oder sich den Arbeitsspeicher leisten, den ein Layout kostet, es reicht das Kompilieren also an einen gekoppelten Rechner weiter, der das kann, versiegelt an Ihr Konto genau wie ein Zug, und die gesetzten Seiten kommen zurück.</p>
 
 	<h2 id="s10">Jede Art von Datei</h2>
 	<p>Jede Datei wird gespeichert und reist mit, bis zu einem Gigabyte je Stück. Ein Dokument oder eine Tabelle öffnet sich als <strong>Leseansicht</strong>, die zeigt, was darin steht, nicht wie es gedruckt aussieht. Werte sind, wie gespeichert, Formeln werden nicht neu berechnet, und Makros werden weder ausgeführt noch gelesen. <span class="ui">Eine Kopie speichern</span> schreibt eine auf Ihr eigenes Gerät und lässt die Datei hier unberührt.</p>
 	<p>Erkennt nichts eine Datei, werden ihre Bytes gezeigt, und das Panel sagt das.</p>
-	<p>A scan or picture saved as BMP, TIFF, HEIC or ICO is turned into a PNG or JPEG as it is opened, so a daimon can look at it, read the text in it, or place it in a document, with nothing to convert first. The text is read from every page of a TIFF that has several; looking at one shows its first page.</p>
+	<p>Ein Scan oder Bild im Format BMP, TIFF, HEIC oder ICO wird beim Öffnen in PNG oder JPEG umgewandelt, sodass ein Daimon es ansehen, den Text darin lesen oder es in ein Dokument setzen kann, ohne vorher etwas umzuwandeln. Bei einem TIFF mit mehreren Seiten wird der Text jeder Seite gelesen; beim Ansehen erscheint die erste Seite.</p>
 
 	<h2 id="s11">E-Mail</h2>
 	<p>Ein Browser kann keine Mail-Verbindung öffnen, deshalb verbindet sich Daimond über das Gateway, das die rohe Nachricht zurückgibt und Ihre Zugangsdaten vergisst. Ihre Mail wird als gewöhnliche Dateien in den Arbeitsbereich geschrieben.</p>

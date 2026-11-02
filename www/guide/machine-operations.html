@@ -44,7 +44,7 @@
 	<div class="note stop"><strong>A snap or flatpak browser cannot do this, and cannot be made to.</strong> The installer detects one and refuses rather than writing into it, so this is the first thing you will meet, and on Ubuntu the default Chromium is a snap. <a href="#s2">Why, and what to install instead</a>.</div>
 
 	<h2 id="s1">What it gives you</h2>
-	<p>With the hand installed, a daimon can run a build, a test suite, a linter or a script against the folder you granted, and read the result. Nothing else on the machine is in reach.</p>
+	<p>With the hand installed, a daimon can run a build, a test suite, a linter or a script against the folder you chose, and read the result. Nothing else on the machine is in reach.</p>
 	<p>The tools it uses are named in the <span class="ui">Tools</span> panel, and four of them are worth knowing by name.</p>
 	<ul>
 		<li><strong>run</strong> runs one command, given as a list of arguments, and answers with the exit code, the tail of the output and the time taken.</li>
@@ -86,9 +86,9 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 			<p>Use <code translate="no">--manifest-path</code> and not <code translate="no">-p</code>, because the hand is a cargo workspace of its own, so <code translate="no">-p</code> reports no such package and builds nothing.</p>
 		</li>
 		<li>
-			<h3 id="s8">Grant a folder, and register the hand</h3>
+			<h3 id="s8">Choose a folder, and register the hand</h3>
 			<pre><code translate="no">hand/install/install.sh --workspace ~/work</code></pre>
-			<p>Put your own folder in place of <code translate="no">~/work</code>. That folder bounds everything any command can read or write, so choose one for the work. The script refuses your home directory and <code>/</code> outright, since granting either grants everything. The folder has to exist already.</p>
+			<p>Put your own folder in place of <code translate="no">~/work</code>. That folder bounds everything any command can read or write, so choose one for the work. The script refuses your home directory and <code>/</code> outright, since either would open everything. The folder has to exist already.</p>
 			<p>That one run does three things, each with a failure you would otherwise meet later.</p>
 			<ul>
 				<li><strong>Writes your folder into <code translate="no">root.txt</code></strong>, at <code translate="no">~/.local/share/daimond/hand/journal/root.txt</code>. The hand will not serve a page until it has been told the folder, and it never guesses, because a guessed folder is a guess about what a command may touch. To change it later, run the same command with a different folder.</li>
@@ -139,7 +139,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<h3 id="s16">Ask the extension</h3>
 	<p>In the browser, on the Daimond tab, open the developer console and run:</p>
 	<pre><code translate="no">await DaimondHand.status()</code></pre>
-	<p>The extension answers with JSON saying whether a hand is paired, which folder it says it was granted, what it can enforce, and, where the answer is no, a <code translate="no">reason</code> written as a whole sentence. Daimond shows the model that same sentence, so the JSON explains what the daimon has been told.</p>
+	<p>The extension answers with JSON saying whether a hand is paired, which folder it says it works in, what it can enforce, and, where the answer is no, a <code translate="no">reason</code> written as a whole sentence. Daimond shows the model that same sentence, so the JSON explains what the daimon has been told.</p>
 
 	<h2 id="s17">What it actually is</h2>
 	<p>A command is an ordinary process, owned by you, on your own kernel, against your own files, with capabilities removed first. There is no virtual machine, no container and no emulation, so nothing is simulated and nothing copied in. Four parts each do one job.</p>
@@ -155,9 +155,9 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<h3 id="s18">Daimond implements no tools</h3>
 	<p>There is no built-in <code translate="no">ls</code>, no built-in <code translate="no">grep</code>, no bundled toolbox and no shell. <code translate="no">ls</code> is <code translate="no">/usr/bin/ls</code>, the one already on your machine, at the version you installed.</p>
 
-	<p>Every program under the system directories is reachable, because the compartment adds them to the grant <strong>read-only</strong>: <code translate="no">/usr</code>, <code translate="no">/bin</code>, <code translate="no">/sbin</code>, <code translate="no">/lib</code>, <code translate="no">/lib32</code>, <code translate="no">/lib64</code>, <code translate="no">/libx32</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code>, and the harmless devices <code translate="no">/dev/null</code>, <code translate="no">/dev/zero</code>, <code translate="no">/dev/full</code>, <code translate="no">/dev/random</code> and <code translate="no">/dev/urandom</code>. Without them nothing starts, not even <code translate="no">cat</code>, because the loader has to read the shared objects and the process has to open something for the standard streams.</p>
+	<p>Every program under the system directories is reachable, because the compartment adds them <strong>read-only</strong>: <code translate="no">/usr</code>, <code translate="no">/bin</code>, <code translate="no">/sbin</code>, <code translate="no">/lib</code>, <code translate="no">/lib32</code>, <code translate="no">/lib64</code>, <code translate="no">/libx32</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code>, and the harmless devices <code translate="no">/dev/null</code>, <code translate="no">/dev/zero</code>, <code translate="no">/dev/full</code>, <code translate="no">/dev/random</code> and <code translate="no">/dev/urandom</code>. Without them nothing starts, not even <code translate="no">cat</code>, because the loader has to read the shared objects and the process has to open something for the standard streams.</p>
 
-	<p>A bare name is looked up on <code translate="no">PATH</code>, which is <code translate="no">/usr/local/bin:/usr/bin:/bin</code> unless a granted toolchain has added to it. What that finds is resolved to an absolute path and checked against the compartment like anything else, so finding is not permission. A <code translate="no">PATH</code> pointing outside finds a program the command may not run, and the refusal names it.</p>
+	<p>A bare name is looked up on <code translate="no">PATH</code>, which is <code translate="no">/usr/local/bin:/usr/bin:/bin</code>. What that finds is resolved to an absolute path and checked against the compartment like anything else, so finding is not permission. A <code translate="no">PATH</code> pointing outside finds a program the command may not run, and the refusal names it.</p>
 
 	<div class="note"><strong>There is no shell, so there is no shell syntax.</strong> A command is a list (<code translate="no">["cargo", "test", "--lib"]</code>), and a semicolon, pipe, redirection, backtick, <code>$(…)</code> or <code translate="no">&amp;&amp;</code> arrives at the program as a literal argument. To chain two commands the daimon runs the tool twice, which is better anyway, because it reads the first result before choosing the second.</div>
 
@@ -165,30 +165,23 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 
 	<h3 id="s20">Files</h3>
 	<ul>
-		<li><strong>Read and write inside the granted folder.</strong> That folder, minus Daimond's own <code translate="no">.daimond</code> directory, is the writable world.</li>
+		<li><strong>Read and write inside your folder.</strong> That folder, minus Daimond's own <code translate="no">.daimond</code> directory, is the writable world.</li>
 		<li><strong>A private temporary directory.</strong> It is writable, with <code translate="no">TMPDIR</code> pointing at it, removed when the run ends, unreachable by any other run, and the one place outside your folder a command may write. <code translate="no">/tmp</code> is outside the compartment, and a build that cannot write a temporary file fails part-way through for a reason nobody can read.</li>
 		<li><strong>The system, read-only.</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code> and the rest of the list above.</li>
-		<li><strong>Everything else is refused by the kernel</strong>, not by a check somebody wrote. A file one folder outside the grant comes back <code>Permission denied</code>, and the daimon is shown that refusal instead of the file.</li>
+		<li><strong>Everything else is refused by the kernel</strong>, not by a check somebody wrote. A file one folder outside it comes back <code>Permission denied</code>, and the daimon is shown that refusal instead of the file.</li>
 	</ul>
-	<p>One consequence is worth knowing before it looks like a broken tool. Where the whole granted folder is writable, that folder <em>itself</em> cannot be listed and a file cannot be created directly in it, because Landlock cannot grant a directory and withhold part of it, so the children are granted one by one. Everything one level down works normally.</p>
+	<p>One consequence is worth knowing before it looks like a broken tool. Where the whole folder is writable, that folder <em>itself</em> cannot be listed and a file cannot be created directly in it, because Landlock cannot grant a directory and withhold part of it, so the children are granted one by one. Everything one level down works normally.</p>
 
 	<h3 id="s21">Named local sockets are refused, always</h3>
 	<p>A command cannot create a unix socket, whatever else it was allowed. That costs a local database over a socket file, <code translate="no">docker</code>, anything wanting X11, and <code translate="no">ssh-agent</code>. <code translate="no">socketpair</code>, the paired socket a build uses to talk to its own child processes, is untouched, so <code translate="no">cargo build</code> is unaffected.</p>
 	<p>Below Landlock ABI 9 (Linux 7.1) the compartment does not govern connecting to a socket file at all. We measured it. With the fence in force and the network refused, one message to the desktop's session bus starts a process that was never fenced and reads a file the fence denies. That is a way out of the compartment, and no leak at its edge, so it is closed unconditionally.</p>
 
 	<h3 id="s22"><code translate="no">ssh</code> does not work</h3>
-	<p>Two independent reasons stop it, and closing either alone would not be enough. <code translate="no">~/.ssh</code> is not in the compartment, because every path is built from the folder you granted. And the agent socket is a unix socket, refused above. <code translate="no">git push</code> over SSH fails for both reasons at once. Granting your home directory would remove the first reason and most of the point of the compartment, which is why the installer refuses it.</p>
-	<p>Operations that touch only the repository do work. <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> and a local <code translate="no">commit</code> are ordinary file operations inside the folder you granted.</p>
+	<p>Two independent reasons stop it, and closing either alone would not be enough. <code translate="no">~/.ssh</code> is not in the compartment, because every path is built from the folder you chose. And the agent socket is a unix socket, refused above. <code translate="no">git push</code> over SSH fails for both reasons at once. Choosing your home directory would remove the first reason and most of the point of the compartment, which is why the installer refuses it.</p>
+	<p>Operations that touch only the repository do work. <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> and a local <code translate="no">commit</code> are ordinary file operations inside the folder you chose.</p>
 
-	<h3 id="s23">A toolchain needs a grant</h3>
-	<p>Open a diamond and the Workspace panel shows a <strong>Toolchains</strong> row with five buttons: <span class="ui" translate="no">Rust</span>, <span class="ui" translate="no">Node</span>, <span class="ui" translate="no">Python</span>, <span class="ui" translate="no">Go</span>, <span class="ui" translate="no">Git</span>. All five start off, so <code translate="no">cargo</code> is refused until you turn Rust on, because <code translate="no">~/.cargo</code> and <code translate="no">~/.rustup</code> sit under your home directory, and your home directory is not in the compartment.</p>
-	<p><span class="ui" translate="no">Git</span> is the odd one out. <code translate="no">git</code> is already in the read-only base, which is why <code translate="no">git status</code> and a local commit work with no grant. The button adds your own configuration, read-only, meaning your name, your email, and the hooks <code translate="no">core.hooksPath</code> names. Your stored passwords and <code translate="no">~/.ssh</code> are denied by name.</p>
-	<p>Three things about that are deliberate.</p>
-	<ul>
-		<li><strong>It is never inferred from what was asked to run.</strong> A compartment that widened itself to fit the requested binary would be a compartment the model chooses, and the whole arrangement depends on the compartment being something the model cannot choose. <code translate="no">cargo</code> is reachable because you granted the Rust toolchain, and for no other reason.</li>
-		<li><strong>It is per diamond.</strong> A grant belongs to one diamond, alongside the folders that diamond holds, and is taken back the same way.</li>
-		<li><strong>It is a short list of named directories, never the home directory.</strong> Rust grants <code translate="no">~/.cargo/bin</code> and <code translate="no">~/.rustup</code> read-only, makes the registry and caches writable because cargo cannot build without writing them, and <em>denies</em> <code translate="no">~/.cargo/credentials.toml</code>, where your crates.io token is written. The other four are drawn the same way, each leaving out the file that holds a secret.</li>
-	</ul>
+	<h3 id="s23">Programs under your home directory</h3>
+	<p><code translate="no">~/.cargo</code>, <code translate="no">~/.rustup</code> and the like sit under your home directory, which is not in the compartment, so <code translate="no">cargo</code> is refused here. <code translate="no">git</code> is in the read-only base, which is why <code translate="no">git status</code> and a local commit work. A build that needs a toolchain under your home runs on Kimberlite, which reaches your home folder and still keeps out the files that hold a secret, such as <code translate="no">~/.cargo/credentials.toml</code>.</p>
 
 	<h3 id="s24">The network</h3>
 	<p>Whether a command may reach the network depends on the permission mode and on what the turn has already read. Under <strong>Ask</strong> and <strong>Guarded</strong>, once a turn has taken in content from outside (a web page it read or fetched, an email, the output of an earlier command), every command in that turn runs with TCP refused, and the daimon is told why, so it reports the cause instead of a broken project. Under <strong>Bypass</strong> the network is kept whatever the turn has read.</p>
@@ -216,7 +209,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 		</div>
 	</div>
 
-	<p><strong>A rung never changes what is possible.</strong> The compartment a command runs inside, the system-call filter under it, the folders a diamond is scoped to, a granted toolchain, the marking on content from outside, and the journal are identical on all three. A rung changes only what you are asked.</p>
+	<p><strong>A rung never changes what is possible.</strong> The compartment a command runs inside, the system-call filter under it, the folder it works in, the flag on content from outside, and the journal are identical on all three. A rung changes only what you are asked.</p>
 	<p>The rung is a word in the chat header beside the model, because a mode you have to remember is one you will be wrong about. Click it to change it, or press <kbd>Ctrl</kbd> <kbd>K</kbd> (<kbd>Cmd</kbd> <kbd>K</kbd> on a Mac) and type the rung's name.</p>
 
 	<h2 id="s30">Unconventional systems</h2>
@@ -224,7 +217,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 
 	<h3 id="s31">Will not work</h3>
 	<ul>
-		<li><strong>NixOS and Guix.</strong> Programs live in <code translate="no">/nix/store</code> or <code translate="no">/gnu/store</code>, neither of which is granted, and <code translate="no">/usr/bin</code> holds almost nothing. A bare name resolves through <code translate="no">PATH</code> to a store path outside the compartment, and the command is refused by name. The app cannot widen it today.</li>
+		<li><strong>NixOS and Guix.</strong> Programs live in <code translate="no">/nix/store</code> or <code translate="no">/gnu/store</code>, neither of which is in the compartment, and <code translate="no">/usr/bin</code> holds almost nothing. A bare name resolves through <code translate="no">PATH</code> to a store path outside the compartment, and the command is refused by name. The app cannot widen it today.</li>
 		<li><strong>A kernel without Landlock.</strong> That means before Linux 5.13, or compiled out, or absent from the active LSM list, or removed by a hardening patch. The hand reports <code translate="no">fence:none</code> and Daimond refuses every command instead of running one unfenced. Check that <code translate="no">landlock</code> appears in <code translate="no">/sys/kernel/security/lsm</code>.</li>
 		<li><strong>An architecture other than x86-64 or aarch64.</strong> The filter's syscall numbers are written out per architecture and there is no third table. The hand will not guess one, so there is no filter, and without a filter no command runs.</li>
 	</ul>
@@ -232,8 +225,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<h3 id="s32">Partly</h3>
 	<ul>
 		<li><strong>Linux 5.13 to 6.6.</strong> Files are fenced, but Landlock has no network rules before Linux 6.7, so a command that would have to run with the network withheld is refused outright, with a sentence saying so, instead of running with the network it was supposed to lose. Bypass works, and Guarded works until the turn reads something.</li>
-		<li><strong>Homebrew on Linux, Flatpak and Snap.</strong> None of <code translate="no">/home/linuxbrew/.linuxbrew</code>, the Flatpak trees or <code translate="no">/snap</code> is granted, so a program installed that way is refused, while what your distribution put under <code translate="no">/usr</code> is reachable in the same session. That concerns the programs a command runs. A browser packaged that way is a separate problem, and a fatal one, covered under <a href="#s2">Before you start</a>.</li>
-		<li><strong>Version managers other than the two that are known.</strong> The toolchain paths are a fixed list, and <code translate="no">~/.nvm</code> and <code translate="no">~/.pyenv</code> are the only version managers on it. <code translate="no">asdf</code>, <code translate="no">mise</code>, <code translate="no">volta</code>, <code translate="no">rbenv</code> and <code translate="no">sdkman</code> install under <code translate="no">~/.asdf</code>, <code translate="no">~/.local/share</code>, <code translate="no">~/.volta</code>, <code translate="no">~/.rbenv</code> and <code translate="no">~/.sdkman</code>, and nothing grants any of those. The Python grant covers <code translate="no">~/.local/bin</code> and <code translate="no">~/.local/lib</code> and pointedly leaves out <code translate="no">~/.local/share</code>.</li>
+		<li><strong>Homebrew on Linux, Flatpak and Snap.</strong> None of <code translate="no">/home/linuxbrew/.linuxbrew</code>, the Flatpak trees or <code translate="no">/snap</code> is in the compartment, so a program installed that way is refused, while what your distribution put under <code translate="no">/usr</code> is reachable in the same session. That concerns the programs a command runs. A browser packaged that way is a separate problem, and a fatal one, covered under <a href="#s2">Before you start</a>.</li>
 	</ul>
 
 	<h3 id="s33">Fine</h3>
@@ -253,7 +245,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<p><code translate="no">--report</code> prints two lists, and the second is the reason to run it. Every entry in it was measured on a running kernel and not inferred, and it changes with your kernel, so read your own. The entries fall into a few groups.</p>
 	<ul>
 		<li><strong>Asking about a file is not opening it.</strong> <code translate="no">stat</code> still answers outside the compartment, so sizes, timestamps, ownership and the presence or absence of a file are readable. The compartment governs opening.</li>
-		<li><strong>The system grant is wide.</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code> and <code translate="no">/opt</code> read-only is what lets a command run at all, and it also means every world-readable file under <code translate="no">/etc</code> can be read and every tool on the machine executed. <code translate="no">/etc</code> in particular holds a great deal of machine-identifying detail.</li>
+		<li><strong>The system access is wide.</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code> and <code translate="no">/opt</code> read-only is what lets a command run at all, and it also means every world-readable file under <code translate="no">/etc</code> can be read and every tool on the machine executed. <code translate="no">/etc</code> in particular holds a great deal of machine-identifying detail.</li>
 		<li><strong>The filter is a deny-list.</strong> It removes named capabilities from a command and is not a syscall sandbox. Anything it did not name is permitted, including a call a future kernel adds.</li>
 		<li><strong>A filter cannot follow a pointer.</strong> It sees a syscall number and six registers, never what they point at, so it sees no path, no address and no filename. A refused <code translate="no">chmod</code> is therefore refused everywhere and an allowed one allowed everywhere. <code translate="no">chmod 777</code> is refused, and <code translate="no">chmod 644</code> on a private key is not, because 644 adds no write and is the mode cargo sets on everything it unpacks.</li>
 		<li><strong>Timestamps are not protected anywhere.</strong> A command can rewrite any file's times, on any part of the machine, because cargo cannot unpack a crate from the registry without doing it. That is the clearest place where keeping builds working cost coverage.</li>

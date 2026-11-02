@@ -1,15 +1,16 @@
 /* ============================================================
-   Test — the reach-marks toggle resolves its link AUTHORITATIVELY.
+   Test — the paperclip's focus toggle resolves its link AUTHORITATIVELY.
    ------------------------------------------------------------
    Root fix for the folder-mark data-loss bug: seq 291 shipped a live
-   patch (a diamond-id guard in `toggleAttachHold`, refusing rather than
+   patch (a diamond-id guard in the toggle, refusing rather than
    repairing a stale cache row from another Diamond). This is the
    DURABLE fix that follows it -- the toggle no longer reads `attached`
    (the on-screen cache `loadAttached` fills) at all for its remove/add
    decision. It asks `linkTo` for the CURRENT diamond's own link, every
    time, so correctness never depends on the cache being fresh.
 
-   Two cases, driven against the REAL `toggleAttachHold` extracted from
+   Two cases, driven against the REAL `toggleFocus` (G2: focus only, it
+   grants nothing) extracted from
    www/js/daimond.js (no browser, no wasm -- a store and a spied
    `diamondApp()` stand in):
 
@@ -56,7 +57,7 @@ function check(name, cond, detail) {
 // ── Pull the body of `async function NAME(args) { ... }` out of the source ──
 //
 // Brace-matched from the opening `{`, exactly as workerfinish.test.mjs's
-// `funcBody` does for a plain one -- `toggleAttachHold` carries no
+// `funcBody` does for a plain one -- `toggleFocus` carries no
 // brace-bearing string or regex literal, so a naive count is exact.
 function asyncFuncBody(name) {
 	const head = new RegExp('async\\s+function\\s+' + name + '\\s*\\(([^)]*)\\)\\s*\\{');
@@ -73,40 +74,12 @@ function asyncFuncBody(name) {
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-// The body of a plain (non-async) `function NAME(args) { ... }`, brace-matched
-// the same way `asyncFuncBody` matches an async one -- `markWaiting` carries
-// no brace-bearing string or regex literal either.
-function funcBody(name) {
-	const head = new RegExp('function\\s+' + name + '\\s*\\(([^)]*)\\)\\s*\\{');
-	const m = head.exec(SRC);
-	if (!m) throw new Error('function not found: ' + name);
-	let i = m.index + m[0].length - 1, depth = 0, start = i;
-	for (; i < SRC.length; i++) {
-		const c = SRC[i];
-		if (c === '{') depth++;
-		else if (c === '}') { depth--; if (depth === 0) break; }
-	}
-	return { args: m[1], body: SRC.slice(start + 1, i) };
-}
-
-// The REAL `markWaiting`, added by `fix/delete-open-paths` to gate the
-// `toggleAttachHold` click on a mark not yet in force here. It reaches
-// `parseRef`/`refConfirmable`/`refReachable` only past its own early `rel`
-// guard, and every link this suite hands it fails that guard (none carries
-// `rel: 'holds'|'consulted'`) -- exactly the plain, already-in-force links
-// CASE A/B model -- so those three are never actually called and need no
-// stand-in; only `link` is a free name.
-function buildMarkWaiting() {
-	const { args, body } = funcBody('markWaiting');
-	return new Function(args, body);
-}
-
 // The BREAK: put the pre-root-fix code back -- the cache record `rec` decides
 // the link when present, guarded only by the diamond-id check seq 291 added.
 // `rec` and `attachedOf` are supplied as extra free variables, reached only
 // here; the fixed source never mentions either.
 function toggleBody() {
-	const body = asyncFuncBody('toggleAttachHold').body;
+	const body = asyncFuncBody('toggleFocus').body;
 	if (BREAK !== 'stale') return body;
 	return body.replace(
 		'var link = await linkTo(id, ref);',
@@ -116,31 +89,23 @@ function toggleBody() {
 	);
 }
 
-// Free names close over the module state `toggleAttachHold` reads in the real
-// file (`currentDiamond`) and the sibling functions it calls
-// (`rootedRef`, `linkTo`, `diamondApp`, `signalLinksChanged`); `attachedOf` is
-// passed through too, so the SAME build works under `--break stale`, which is
+// Free names close over the module state `toggleFocus` reads in the real file
+// (`currentDiamond`) and the sibling functions it calls (`rootedRef`, `linkTo`,
+// `removeLinkHere`, `dropRefused`, `focusAdd`, `signalLinksChanged`); `attachedOf`
+// is passed through too, so the SAME build works under `--break stale`, which is
 // the only path that ever calls it.
 function buildToggle() {
-	const args = asyncFuncBody('toggleAttachHold').args;
-	const freeNames = ['currentDiamond', 'rootedRef', 'linkTo', 'diamondApp', 'signalLinksChanged', 'attachedOf',
-		'markWaiting', 'confirmMarkHere', 'removeLinkHere', 'grantHoldHere'];
+	const args = asyncFuncBody('toggleFocus').args;
+	const freeNames = ['currentDiamond', 'rootedRef', 'linkTo', 'removeLinkHere', 'dropRefused', 'focusAdd',
+		'signalLinksChanged', 'attachedOf'];
 	const params = freeNames.concat(args.split(',').map(s => s.trim()).filter(Boolean));
 	return new AsyncFunction(...params, toggleBody());
 }
 
-// The REAL `grantHoldHere` (E2): the ◈'s add, shared with a yes to the write question.
-// Its free names are the same stand-ins `toggle` hands the toggle, plus `markForce`.
-function buildGrantHold() {
-	const { args, body } = asyncFuncBody('grantHoldHere');
-	const freeNames = ['rootedRef', 'linkTo', 'markForce', 'markHere', 'diamondApp'];
-	return new AsyncFunction(...freeNames, ...args.split(',').map(s => s.trim()).filter(Boolean), body);
-}
-
 // ── Source-level checks: the cache is gone from the resolution path ──────
 {
-	const body = asyncFuncBody('toggleAttachHold').body;
-	check('toggleAttachHold resolves the link with an unconditional linkTo call',
+	const body = asyncFuncBody('toggleFocus').body;
+	check('toggleFocus resolves the link with an unconditional linkTo call',
 		body.includes('var link = await linkTo(id, ref);'));
 	check('the old cache-trusting guard is gone from source',
 		!body.includes('rec.link.owner !== id') && !body.includes('attachedOf'));
@@ -161,43 +126,30 @@ function makeApp(state) {
 
 async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 	const run = buildToggle();
-	const state = { removed: [], added: [], marked: [] };
+	const state = { removed: [], added: [], refused: 0 };
 	const app = makeApp(state);
 	let signalled = false;
 	let attachedOfCalls = 0;
-	let confirmMarkHereCalls = 0;
 	const attachedOf = (ref) => { attachedOfCalls++; return attachedOfImpl ? attachedOfImpl(ref) : null; };
 	const linkTo = async (id, ref) => links[id] || null;
 	const rootedRef = (kind, p) => kind + ':' + p;
-	// The REAL markWaiting -- see buildMarkWaiting -- so `toggleAttachHold`'s own
-	// gate is exercised, not stubbed away. `confirmMarkHere` is never expected to
-	// run for any link this suite hands it (markWaiting fails its `rel` guard
-	// first), so it is a spy rather than the real door-opening act; a call to it
-	// would mean markWaiting answered YES for a plain, already-in-force link.
-	const markWaiting = buildMarkWaiting();
-	const confirmMarkHere = async () => { confirmMarkHereCalls++; return false; };
-	// Since R2 every removal on this device goes through `removeLinkHere` (the row
-	// and this device's entry) and every add is recorded by `markHere` from the id
-	// the add returned; the stand-ins keep the store calls this suite spies on.
+	// Every removal on this device goes through `removeLinkHere`, every add through
+	// `focusAdd`; the stand-ins keep the store calls this suite spies on.
 	const removeLinkHere = async (l) => app().remove_link(l.owner, l.id);
-	const markHere = async (id, linkId) => { state.marked.push({ id, linkId }); return true; };
-	// A row this suite hands the add is never in force here: the toggle adds only where linkTo found none.
-	const markForce = () => null;
-	const grant = buildGrantHold();
-	const grantHoldHere = (id, p, d) => grant(rootedRef, linkTo, markForce, markHere, app, id, p, d);
+	const focusAdd = async (id, p, d) => app().add_link(id, 'diamond:' + id, rootedRef(d ? 'dir' : 'file', p),
+		'holds', '', 'user');
+	const dropRefused = () => { state.refused++; };
 	await run(
 		{ id: diamondId },		// currentDiamond
 		rootedRef,
 		linkTo,
-		app,
+		removeLinkHere,
+		dropRefused,
+		focusAdd,
 		() => { signalled = true; },	// signalLinksChanged
 		attachedOf,
-		markWaiting,
-		confirmMarkHere,
-		removeLinkHere,
-		grantHoldHere,
 		path, dir);
-	return { state, signalled, attachedOfCalls, confirmMarkHereCalls };
+	return { state, signalled, attachedOfCalls };
 }
 
 // ── CASE A: a stale cache row for another Diamond must not steer this one ──
@@ -210,7 +162,7 @@ async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 	// naming the SAME reference -- exactly what a missed reload leaves.
 	const staleRec = () => ({ link: { owner: 'D-B', id: 'link-B1' } });
 
-	const { state, signalled, attachedOfCalls, confirmMarkHereCalls } =
+	const { state, signalled, attachedOfCalls } =
 		await toggle('D-A', links, staleRec, 'notes', true);
 
 	if (BREAK === 'stale') {
@@ -232,11 +184,6 @@ async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 		check('CASE A: nothing is added (A already held a link, so this is a remove)',
 			state.added.length === 0);
 		check('CASE A: the repaint signal still fires', signalled === true);
-		// The REAL markWaiting correctly reads a plain, already-in-force link as
-		// not waiting -- the toggle goes straight to remove_link, never through
-		// confirmMarkHere's door.
-		check('CASE A: markWaiting never routes a plain link to confirmMarkHere',
-			confirmMarkHereCalls === 0);
 	}
 }
 
@@ -251,22 +198,17 @@ if (BREAK !== 'stale') {
 			state.added[0].self === 'diamond:D-A' && state.added[0].rel === 'holds'
 				&& state.added[0].by === 'user' && state.added[0].ref === 'dir:plans');
 		check('CASE B add: nothing is removed', state.removed.length === 0);
-		check('CASE B add: the press is recorded here from the id the add returned',
-			state.marked.length === 1 && state.marked[0].id === 'D-A' && state.marked[0].linkId === 'new-D-A',
-			JSON.stringify(state.marked));
 		check('CASE B add: the repaint signal fires', signalled === true);
 	}
 	// Remove: the store now holds A's link from the add above.
 	{
 		const links = { 'D-A': { owner: 'D-A', id: 'link-A9' } };
-		const { state, signalled, confirmMarkHereCalls } = await toggle('D-A', links, () => null, 'plans', true);
+		const { state, signalled } = await toggle('D-A', links, () => null, 'plans', true);
 		check('CASE B remove: remove_link is called with the store\'s own link',
 			state.removed.length === 1 && state.removed[0].owner === 'D-A'
 				&& state.removed[0].id === 'link-A9', JSON.stringify(state.removed));
 		check('CASE B remove: nothing is added', state.added.length === 0);
 		check('CASE B remove: the repaint signal fires', signalled === true);
-		check('CASE B remove: markWaiting never routes a plain link to confirmMarkHere',
-			confirmMarkHereCalls === 0);
 	}
 }
 

@@ -134,6 +134,9 @@ pub struct TurnState {
     // A pending-only turn (`crate::agent::Agent::set_pending_only`), which alone may call
     // `pending_none`. A setting like `compound` beside it, written at the start of every turn.
     pub pending_only: bool,
+    // The engines and figures `file_read` and `ocr` read a PDF or a picture on (P2.5d), a
+    // setting like `compound`, written at the start of every turn from `Limits::ocr`.
+    pub ocr: super::OcrConf,
     // The turn's byte ledger
     //
     // Charged in one place, `ToolRegistry::dispatch`, where every tool result becomes content;
@@ -213,19 +216,8 @@ pub struct TurnState {
     // A chat and a dispatched worker each get a cache of their own, where the key is the empty
     // string and the map holds one entry.
     pub web_consent: HashMap<String, Verdict>,
-    // Toolkits the user granted in the consent door during this turn, keyed as the consents are.
-    // The yes is also written to the Diamond (`set_toolkits`), which the NEXT turn's bounds read;
-    // this carries it for the rest of this one, whose bounds were built before it.  Cleared by
-    // `begin_turn`, so a toolkit taken back in the panel is not kept alive here.  A no is never
-    // held (N2).
-    pub kits: HashMap<String, Vec<Toolkit>>,
-    // Places the user let this turn change in the consent door (E2), held as `kits` is.
-    pub places: HashMap<String, Vec<String>>,
-    // The first write a model's call was refused that the user could be asked about, taken by
-    // the dispatch that made the call (`ToolRegistry::try_dispatch_asking`).
-    pub place_ask: HashMap<String, PlaceAsk>,
-    // The kinds of refusal this turn has met, held as `kits` is, so a second of one kind tells
-    // the daimon to stop rather than look for another way round ([`ToolContext::refuse`]).
+    // The kinds of refusal this turn has met, keyed as the consents are, so a second of one kind
+    // tells the daimon to stop rather than look for another way round ([`ToolContext::refuse`]).
     pub refused: HashMap<String, Vec<&'static str>>,
     // The turns told by that second refusal to tell the person and stop, held as `kits` is, so the
     // end-of-turn guard ends them blocked rather than ordering another round (UNBLOCK-67).
@@ -392,7 +384,6 @@ pub enum Storage {
     Sandbox(String),    // this browser's own storage, by account namespace (empty: the primary)
     Folder(u64),        // a real folder, by this page's number for its handle
     Machine(String),    // the machine through the hand, by the root it was granted
-    Nowhere,            // the real folder addressed with none open: nothing is read or written
 }
 
 /// Where `path`, spelled against `root`, resolves: the one answer `opfs::resolve_root` takes the
@@ -411,8 +402,6 @@ pub fn storage_for(root: FileRoot, path: &str, folder: Option<u64>, ns: &str) ->
         (FileRoot::Workspace, Some(n))  => Storage::Folder(n),
         (FileRoot::Workspace, None)     => sandbox(),
         (FileRoot::Opfs, _)             => sandbox(),
-        (FileRoot::Machine, Some(n))    => Storage::Folder(n),
-        (FileRoot::Machine, None)       => Storage::Nowhere,
     }
 }
 
@@ -1325,14 +1314,6 @@ pub enum FileRoot {
     Workspace,
     /// The OPFS sandbox, always — never the FSA override.
     Opfs,
-    /// The FSA real folder, always — and an error when none is open.
-    ///
-    /// The mirror of [`FileRoot::Opfs`], and it exists for the one operation that has a foot in
-    /// both: bringing home Diamond files an earlier build stranded in the user's project folder.
-    /// A copy that crosses roots says so in its types rather than depending on which path happened
-    /// to be passed, and it must never quietly fall back to the sandbox — a fallback would make
-    /// that copy read OPFS onto itself and report a migration that never happened.
-    Machine,
 }
 
 /// The directory Daimond's own state lives in, under whichever root is active.
@@ -1540,18 +1521,19 @@ pub const STRANGER_ROOTS: &[&str] = &[
     "usr/mail",         // the same store when the granted folder was `~/usr`
     "Downloads",        // whatever a browser or a mail attachment saved: the likeliest carrier
     "mail-backup",      // a copy of a mail client's profile, every message in it a stranger's
+    ".thunderbird",     // Thunderbird's own profiles, its Mail and ImapMail stores
+    "snap/thunderbird", // the same, as the snap keeps it
+    ".local/share/evolution/mail", // Evolution's mail store
+    "Maildir",          // a Maildir store, as fetchmail, offlineimap or mbsync leave it
+    "mbox",             // an mbox store
 ];
-
-/// Where the runner's commands install a task's tools, relative to the home: the spelling of
-/// kimberlite's `home_fence::PREFIX`, which a test holds to it (U11 TOOL-PREFIX).
-pub const TOOL_PREFIX: &str = ".local/share/daimond-tools";
 
 /// Where an installed package's own text lives, relative to the granted folder (NF6, ruling
 /// l.293 (b)).  A package's README or source is anyone's text, so reading it taints the chat as
 /// [`STRANGER_ROOTS`] do; downloading it does not (the proxy's registry rule).  **Not denied** to a
-/// command that holds the proxy, unlike those rows: a build must execute its packages.
+/// command that holds the proxy, unlike those rows: a build must execute its packages.  The
+/// runner's tool prefix lies outside the home and is told apart (`web::set_registry_roots`).
 pub const REGISTRY_TREES: &[&str] = &[
-    TOOL_PREFIX,        // pip's user base, npm's prefix, cargo's home and their caches on a run
     ".cargo/registry",  // crates as cargo unpacked them
     ".cargo/git",       // git dependencies cargo checked out
 ];
@@ -3122,21 +3104,13 @@ pub fn diamond_of_path(path: &str) -> String {
     normalise(path).split('/').filter(|s| !s.is_empty()).nth(1).unwrap_or("").to_string()
 }
 
-/// The Diamond whose store owns `path` under `root`, or `None` (HL5a, lead ruling 3).
+/// The Diamond whose store owns the workspace-relative `path`, or `None` (HL5a, lead ruling 3).
 ///
-/// A path at or under `diamonds/<id>/` names the store's own area under every root but the
-/// machine's, as [`storage_for`] files it: a Diamond's files, its standing files and their
+/// A path at or under `diamonds/<id>/` names the store's own area under every root, as
+/// [`storage_for`] files it: a Diamond's files, its standing files and their
 /// `.daimond/` archive and touched record are one record, the store's.  On a run's child such a
-/// path is read from the store, never from the run's disk; the store's own reads keep the same
-/// rule, under [`FileRoot::Opfs`] alone.
-///
-/// # Arguments
-/// * `root` - The root the path is under.
-/// * `path` - A workspace-relative path.
-pub fn store_owned(root: FileRoot, path: &str) -> Option<String> {
-    if root == FileRoot::Machine {
-        return None;
-    }
+/// path is read from the store, never from the run's disk.
+pub fn store_owned(path: &str) -> Option<String> {
     let p = normalise(path);
     let mut segs = p.split('/');
     match (segs.next(), segs.next()) {

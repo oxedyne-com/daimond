@@ -1274,7 +1274,7 @@ async function main() {
 		// invisible until it cost a turn; `mayCommit` is the fact that says so, and
 		// `null` (the core is not up) is deliberately not `false`.
 		check('the beat says whether the tool surface exists', beat.tools === false);
-		check('the beat says whether a workspace folder is mounted', beat.folder === false);
+		check('the beat carries no folder field (the machine folder left the page)', !('folder' in beat));
 		check('the beat says mayCommit is UNKNOWN when the core is absent', beat.mayCommit === null);
 
 		// A context that falls by more than 30% between two rounds of one turn is a
@@ -1401,7 +1401,6 @@ async function main() {
 		const DS = env.win.DEBUG_SHARE;
 		// The three globals the triple is read off, as a capable device has them.
 		env.win.DaimondTools = { run: () => {} };
-		env.win.DaimondFiles = { folder: () => ({ name: 'workspace' }) };
 		env.win.DaimondCore  = { syncMayCommitChunks: () => true };
 		DS.setEnabled(true);
 		const BROWSER = { engine: 'Gecko', brand: 'Firefox', major: 131 };	// LENS-UA
@@ -1410,18 +1409,16 @@ async function main() {
 		check('boot carries the browser through the redactor unchanged',
 			JSON.stringify(boot.browser) === JSON.stringify(BROWSER));
 		check('boot carries tools', boot.tools === true);
-		check('boot carries folder', boot.folder === true);
+		check('boot carries no folder field', !('folder' in boot));
 		check('boot carries mayCommit', boot.mayCommit === true);
 		check('boot keeps its own payload beside them', boot.ua === 'desktop');
 
 		// A device that may NOT commit says so, and that is the state the addition
 		// exists for: false, not absent, and not null.
 		env.win.DaimondCore.syncMayCommitChunks = () => false;
-		env.win.DaimondFiles.folder = () => null;
 		DS._beatTick();
 		const beat2 = DS._outbox().filter((r) => r.tag === 'ev beat').map((r) => JSON.parse(r.data)).pop();
 		check('a beat reports mayCommit false when the device may not commit', beat2.mayCommit === false);
-		check('a beat reports folder false when nothing is mounted', beat2.folder === false);
 		check('a beat still reports tools true', beat2.tools === true);
 		// A core that throws is unknown, not false.
 		env.win.DaimondCore.syncMayCommitChunks = () => { throw new Error('not up'); };

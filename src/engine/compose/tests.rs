@@ -55,12 +55,11 @@ fn registry_holding(keeper: &str, files: &[(&str, &str)]) -> ToolRegistry<TestHo
         path_prefix: String::new(),
         root:        FileRoot::Workspace,
         read_seen:   new_read_cache(),
-        no_write:    crate::tools::diamond_bounds("diamonds/d1", &[], &[]),
+        no_write:    crate::tools::diamond_bounds("diamonds/d1"),
         daimon_of:   String::new(),
         turn:        String::new(),
         keeper:      keeper.to_string(),
-        unconfirmed: Vec::new(),
-        live:        None,
+        scope:       None,
         by_model:    false,
         restoring:   0,
         by:          None,
@@ -76,7 +75,7 @@ fn ask<'a>(keeper: &'a str, l: &'a TurnLimits) -> Ask<'a> {
         steer:          "",
         instructions:   "",
         today:          "",
-        reach:          None,
+        focus:          None,
         limits:         Limited::Page(l),
         liveness_ms:    45_000,
         words:          None,
@@ -90,6 +89,21 @@ async fn composed(keeper: &str) -> Composed {
         Ok(c)   => c,
         Err(e)  => panic!("compose_turn for {}: {}", keeper, e),
     }
+}
+
+/// P2.5d: a runner's turn composed on the page's limits reads PDFs and pictures on the page's
+/// OCR figures, as the tab's agent does.
+#[tokio::test]
+async fn p25d_page_ocr_figures_reach_the_agent() {
+    let mut l = limits();
+    l.ocr.relay_model = "relay/r".to_string();
+    l.ocr.empty_floor = 3;
+    let reg = registry("chat:c1");
+    let c = match compose_turn(crate::llm::tests::stub_client(1), &ask("chat:c1", &l), &reg).await {
+        Ok(c)   => c,
+        Err(e)  => panic!("compose_turn: {}", e),
+    };
+    assert_eq!(c.agent.limits().ocr, l.ocr, "the page's OCR figures did not reach the agent");
 }
 
 /// A Diamond's turn: the daimon, its crystal, standing files and objectives as blocks, the page's

@@ -69,9 +69,9 @@
 .attach-btn.on { visibility: visible; color: var(--accent-text); }
 .attach-btn.away { visibility: visible; color: var(--text-muted); }
 
-/* ── The focus section: what is in focus, its Recent, and what it can change ──
+/* ── The focus section: what is in focus and its Recent ──
    Mock r2. Roles, not surfaces: the focus name is a section head, Recent and
-   Can change are group labels, and a row is a file row. No rules and no
+   In focus are group labels, and a row is a file row. No rules and no
    outlines -- white space delineates the groups. The ◈ is the one mark: accent
    where the daimon can change the thing, ghost where it waits on this device.
    The heads and labels keep the file row's inline padding (10px; 12px on a phone, responsive.css),
@@ -86,7 +86,7 @@
 	display: block; padding: 8px 10px 2px;
 	font-size: var(--fs-xs); font-weight: var(--w-med); color: var(--text-muted);
 }
-/* Nothing added yet: where adding is, in one line under Can change. */
+/* Nothing added yet: where adding is, in one line under In focus. */
 .files-focus .files-focus-note { padding: 4px 10px 2px; }
 /* A focus row is a file row by role: it takes `.files-row`'s box (below), and only its parts are its own. */
 .files-focus .r[role="button"] { cursor: pointer; }
@@ -107,7 +107,7 @@
 	font-size: var(--fs-xs); color: var(--text-muted);
 	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* In a Can change row the place is a state word ("Gone", "Read only"), not a folder: the name gives way, never the word. */
+/* In an In focus row the place is a state word ("Gone", "Read only"), not a folder: the name gives way, never the word. */
 .files-focus .r .place { flex: none; }
 /* A marked path that is no longer there (WS-GONE): the name muted, "Gone" in its place. */
 .files-focus .r.gone .nm { color: var(--text-muted); }
@@ -125,16 +125,14 @@ button.dm { cursor: pointer; }
 .dm.ghost { opacity: 0.5; }
 button.dm.ghost:hover { opacity: 1; background: var(--accent-soft); }
 .dm.fixed { cursor: default; }
-/* Muted: the daimon may read this and not change it. */
-.dm.ro .mark-ic { filter: grayscale(1); opacity: 0.6; }
 /* `:focus`, not `:focus-visible`: `verify_a11y_keyboard` focuses these from script,
    and a ring that depends on the browser's guess at the modality is sometimes not there. */
 button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* N5, one per-row glyph at rest. On a tree row an unmarked ◈ is a ghost that comes
-   out on hover and on keyboard focus; a mark, given or waiting, is standing
-   information and is always drawn. The ⋯ beside it holds the rest of the row's
+/* N5, one per-row glyph at rest. On a tree row the ◈ of a row not in focus is a ghost that comes
+   out on hover and on keyboard focus; an in-focus ◈ is standing information and is
+   always drawn. The ⋯ beside it holds the rest of the row's
    actions and comes out the same way. */
-.files-row .dm.ghost:not(.wait), .files-row .files-more { visibility: hidden; }
+.files-row .dm.ghost, .files-row .files-more { visibility: hidden; }
 /* As specific as the rule above and after it, so it wins: an `:is(.dm, .files-more)`
    counts as one class and left the ghost hidden on hover and focus alike. */
 .files-row:is(:hover, :focus-within) .dm.ghost,
@@ -161,7 +159,7 @@ button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (max-width: 760px), (pointer: coarse) {
 	:is(.files-focus .r, .files-row) { min-height: 44px; }
 	.dm { width: 44px; height: 44px; }
-	.files-row .dm.ghost:not(.wait) { visibility: visible; }
+	.files-row .dm.ghost { visibility: visible; }
 	.files-row .files-more { display: none; }
 }
 

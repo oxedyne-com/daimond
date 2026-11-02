@@ -60,27 +60,27 @@
 	<p>Conforme o armazenamento enche, os arquivos há mais tempo sem uso voltam sozinhos para a nuvem. Liberar não é excluir, já que o arquivo continua listado e volta quando é pedido.</p>
 	<p>Um daimon é avisado com todas as letras quando um arquivo que ele quer está na nuvem, e tem de buscá-lo de propósito. Um teto limita quanto ele pode baixar por conta própria.</p>
 
-	<h2 id="s4">Entregando uma pasta</h2>
-	<p>Every row in the tree has a <span class="ui">◈</span> and a <span class="ui">⋯</span>. The ◈ adds the file or folder to what is in focus, or takes it out, and the ⋯ says the same in words: <span class="ui">Add to</span> the diamond by name, or <span class="ui">Add to this chat</span>, and <span class="ui">Remove from</span> once it is in. On a computer both appear when the pointer is over the row; on a phone the ◈ is always drawn and a long press opens the ⋯. A new diamond starts with nothing added, and its <span class="ui">Can change</span> list says where to add from.</p>
+	<h2 id="s4">Anexar um arquivo ou uma pasta</h2>
+	<p>Toda linha da árvore tem um <span class="ui">◈</span> e um <span class="ui">⋯</span>. O ◈ anexa o arquivo ou a pasta ao que está em foco, ou o retira de novo, e o ⋯ diz o mesmo em palavras: <span class="ui">Adicionar a</span> o diamond pelo nome, ou <span class="ui">Adicionar a este chat</span>, e <span class="ui">Remover de</span> quando já está dentro. No computador, os dois aparecem quando o ponteiro passa sobre a linha; no celular, o ◈ está sempre visível e um toque longo abre o ⋯. Um diamond novo começa sem nada anexado.</p>
 	<ul>
-		<li><strong>Um diamond está em foco.</strong> O arquivo ou a pasta entra no espaço de trabalho daquele diamond e fica até você tirá-lo.</li>
+		<li><strong>Um diamond está em foco.</strong> O arquivo ou a pasta fica anexado a esse diamond até você retirá-lo.</li>
 		<li><strong>Um chat está em foco.</strong> O anexo vale só para o próximo turno.</li>
 	</ul>
 	<p>Anexar não copia nada. O arquivo fica onde está, e o diamond aponta para ele, então anexar uma pasta a dois diamonds ainda deixa uma pasta só.</p>
 	<p>Cada anexo é ou <span class="ui">Nota</span>, significando que o caminho vale a pena saber e custa alguns tokens, ou <span class="ui">Ler</span>, significando que o conteúdo é desejado agora. Comece com Nota, que é bem mais barato. De um jeito ou de outro, o texto que isso gera vai para a caixa de mensagem na frente do que você digita, onde você pode editar ou apagar.</p>
-	<p>Marcar uma <em>pasta</em> no grupo do espaço de trabalho é a permissão, então este chat ou diamond pode então ler e mudar o que está dentro. Marcar um arquivo só o põe na frente do modelo. A linha <span class="ui">Alcance</span> de um diamond nomeia cada pasta em que ele pode escrever, e diz isso nas duas árvores.</p>
+	<p>Anexar só diz onde olhar. Não dá a um daimon nada que ele já não pudesse alcançar, e retirar um anexo não tira nada. O que um daimon alcança depende de onde o turno roda, como diz a próxima seção.</p>
 
 	<h3 id="s5">O que um daimon pode abrir</h3>
-	<p>Um daimon só pode abrir o que está no espaço de trabalho do diamond dele. Mais nada é legível ou gravável pelas ferramentas de arquivo, nem pelo daimon nem por qualquer ajudante que ele despache. A verificação está em código compilado na única porta por onde toda ferramenta de arquivo passa, e esse código está em um pacote que compila de forma reproduzível a partir de fonte pública, então não é uma instrução em um prompt.</p>
+	<p>No Kimberlite, um daimon alcança a sua pasta pessoal. O Daimond ainda deixa de fora os arquivos marcados como segredos, como suas chaves e senhas, e os registros dele próprio e do Kimberlite. No navegador, um daimon altera só os arquivos do próprio diamond, e um chat só a própria pasta. Nada mais pode ser escrito pelas ferramentas de arquivo, nem pelo daimon nem por qualquer ajudante que ele despache. A verificação está em código compilado, na única porta por onde passa toda ferramenta de arquivo, e esse código está num pacote que se compila de forma reprodutível a partir de código público, então não é uma instrução num prompt.</p>
 	<p>Essa regra decide o que um daimon pode alcançar e não diz nada sobre onde vai parar o que ele lê, porque o que quer que ele abra vai para o seu provedor de modelos junto com o resto do turno.</p>
-	<p>Deleting or wiping counts the same way. Past a limit you set under <span class="ui">Settings</span> — eight in a turn by default — the turn stops there and asks before it goes on. Wiping a file means writing over it so that less than half of it is left. Daimond keeps a copy of anything deleted or wiped for at least seven days.</p>
+	<p>Apagar ou esvaziar conta da mesma forma. Passado um limite que você define em <span class="ui">Configurações</span> — oito por turno, por padrão —, o turno para ali e pergunta antes de continuar. Esvaziar um arquivo significa sobrescrevê-lo de modo que reste menos da metade. O Daimond guarda uma cópia de tudo o que foi apagado ou esvaziado por pelo menos sete dias.</p>
 
 	<h3 id="s6">A lista de anexos</h3>
 	<p>As linhas trazem uma idade, <span class="ui">Adicionado {when}</span>. Um caminho que não existe mais é desenhado como <span class="ui">Sumiu</span> sem ação de abrir, então uma linha morta nunca se passa por uma viva.</p>
 	<p>Qualquer coisa que um daimon anexou para si mesmo, como a colheita de uma dobra ou um arquivo que um agente guardou, fica sob um único cabeçalho recolhido, <span class="ui">Adicionado pelo daimon</span>, com uma contagem e um <span class="ui">Remover todos</span>. Seus próprios anexos ficam onde estão.</p>
 
-	<h3 id="s7">Pastas adicionadas e seus outros dispositivos</h3>
-	<p>Adicionar uma pasta ou um arquivo a um diamond, ou uma pasta ao espaço de trabalho de uma conversa, sincroniza com seus outros dispositivos, mas só vale lá depois que você toca de novo naquele dispositivo. Abra o mesmo diamond em um segundo dispositivo e uma pasta adicionada em outro lugar aparece como ainda não em uso aqui, com <span class="ui">Usar aqui</span> para começar a usá-la lá, ou <span class="ui">Usar todas aqui</span> para tudo o que ainda não está em uso de uma vez. Remover uma pasta chega a todos os dispositivos sozinho; começar a usá-la não, então uma pasta adicionada só fica em uso num dispositivo onde foi adicionada ou tocada de novo.</p>
+	<h3 id="s7">Os anexos e seus outros dispositivos</h3>
+	<p>O que você anexa a um diamond sincroniza com seus outros dispositivos e lá aponta para os mesmos arquivos, sem nada para tocar de novo. Um anexo que fica em outra máquina diz onde fica, e um daimon neste dispositivo não consegue abri-lo daqui.</p>
 
 	<h3 id="s8">Compartilhando uma pasta com seus outros dispositivos</h3>
 	<p>Uma pasta no armazenamento próprio do navegador chega aos seus outros dispositivos sozinha, então não há nada para compartilhar à mão. Uma pasta no disco do seu computador fica a cargo do Kimberlite e permanece nesse computador.</p>
@@ -88,13 +88,13 @@
 	<h2 id="s9">Documentos, e livros</h2>
 	<p>Abra um arquivo <code>.typ</code> e o painel Doc ganha dois botões. <span class="ui">Compilar</span> compõe o documento na página e escreve um PDF de prévia ao lado da fonte, e enquanto essas páginas estão abertas, cada salvamento as reconstrói. Aperte-o em um capítulo, e ele compila o documento que inclui aquele capítulo, e então leva você até a página daquele capítulo.</p>
 	<p>Os dois painéis precisam estar na tela para o ciclo rodar. Onde a janela é estreita demais, o painel Doc avisa isso, e uma reconstrução se atualiza quando eles voltam.</p>
-	<p>O editor não precisa ser o do Daimond. Um salvamento de qualquer editor que escreva na pasta concedida é captado em cerca de um segundo.</p>
+	<p>O editor não precisa ser o do Daimond. Um salvamento de qualquer editor que escreva na mesma pasta é captado em cerca de um segundo.</p>
 	<p>Um telefone não consegue guardar os arquivos de um livro nem arcar com a memória que uma diagramação custa, então ele entrega a compilação a um computador pareado que consegue, selada para a sua conta exatamente como um turno é, e as páginas diagramadas voltam.</p>
 
 	<h2 id="s10">Qualquer tipo de arquivo</h2>
 	<p>Qualquer arquivo é guardado e viaja, até um gigabyte cada. Um documento ou uma planilha abre como uma <strong>visão de leitura</strong>, que mostra o que ele diz e não como ele imprime. Os valores são como estão guardados, as fórmulas não são recalculadas, e as macros não são executadas nem lidas. <span class="ui">Salvar uma cópia</span> grava uma no seu próprio dispositivo e deixa o arquivo aqui intocado.</p>
 	<p>Onde nada reconhece um arquivo, os bytes dele são mostrados, e o painel avisa isso.</p>
-	<p>A scan or picture saved as BMP, TIFF, HEIC or ICO is turned into a PNG or JPEG as it is opened, so a daimon can look at it, read the text in it, or place it in a document, with nothing to convert first. The text is read from every page of a TIFF that has several; looking at one shows its first page.</p>
+	<p>Uma digitalização ou imagem salva como BMP, TIFF, HEIC ou ICO é convertida em PNG ou JPEG ao ser aberta, então um daimon pode olhá-la, ler o texto nela ou colocá-la num documento sem converter nada antes. O texto é lido de todas as páginas de um TIFF que tenha várias; olhar para ele mostra a primeira página.</p>
 
 	<h2 id="s11">E-mail</h2>
 	<p>Um navegador não consegue abrir uma conexão de correio, então o Daimond se conecta pelo gateway, que devolve a mensagem bruta e esquece a sua credencial. Seu correio é escrito no espaço de trabalho como arquivos comuns.</p>

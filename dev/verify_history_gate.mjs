@@ -17,9 +17,9 @@
 //   P5.  THE ANSWER IS THE ENGINE'S: on the open ticket, before he answers, a put-back over his
 //        flagged edit is refused, with `over` or without; and Keep keeps it.                  (F2)
 //   P6.  ONE RESTORE A DIAMOND, across failed opens, a double press, a closed tab and a reload.
-//   P7.  THE MARK AS IT IS AT THE ACT: withdrawn (P7) or made read-only (P7r) while the question
+//   P7.  THE MARK AS IT IS AT THE ACT: withdrawn (P7) while the question
 //        is open, then yes: his file is untouched and in the refused list.             (HIST-SAFE U2)
-//   P8.  FAIL CLOSED: this device's record of the marks damaged (P8) or the account locked (P8L)
+//   P8.  FAIL CLOSED: the account locked (P8L)
 //        while the question is open, then yes: refused in the UNREAD sentence, disk unchanged.
 //
 // Seeded test Diamonds only; a world with no owner data:
@@ -506,20 +506,12 @@ try {
 		const pathOf = (to) => String(to).replace(/^(file|dir):(\[[^\]]*\])?/, '').trim();
 		const row = ls.find((l) => l.owner === a.id && l.from === 'diamond:' + a.id && l.rel === 'holds' && pathOf(l.to) === a.dir);
 		if (!row) return 'no row';
-		if (a.how === 'readonly') {
-			// `setReadOnly`: a `consulted` row pressed here, then the `holds` row removed.
-			const lid = await eng.add_link(a.id, 'diamond:' + a.id, row.to, 'consulted', '', 'user');
-			const ls2 = JSON.parse(await eng.links_touching('diamond:' + a.id) || '[]');
-			const c = ls2.find((l) => l.id === lid && l.owner === a.id);
-			if (!c || !DaimondMarksHere.grant(a.id, c, DaimondAttach.root(), { share: false })) return 'consulted not pressed';
-		}
-		// `removeLinkHere`: the press dropped, then the row.
-		DaimondMarksHere.drop(a.id, row.id, row.to);
+		// `removeLinkHere`: the row goes (a mark is focus only, GRANT-G2).
 		await eng.remove_link(a.id, row.id);
 		const b = await DaimondDiamond.bounds(a.id);
 		return JSON.stringify([b.attached || [], b.read_only || []]);
 	}, { id, dir, how });
-	for (const [arm, how] of [['P7', 'withdraw'], ['P7r', 'readonly']]) {
+	for (const [arm, how] of [['P7', 'withdraw']]) {
 		if (!want(arm)) continue;
 		const dir = arm.toLowerCase();
 		const rel = dir + '/f.txt';
@@ -541,11 +533,11 @@ try {
 		const e = refusedOf(out, rel);
 		check(arm + ': and the file is in the refused list', !!e, JSON.stringify(out.refused).slice(0, 300));
 	}
-	for (const [arm, how] of [['P8', 'damaged'], ['P8L', 'locked']]) {
+	for (const [arm, how] of [['P8L', 'locked']]) {
 		if (!want(arm)) continue;
 		const dir = arm.toLowerCase();
 		const rel = dir + '/f.txt';
-		console.log('\n' + arm + '. this device\'s record ' + (how === 'locked' ? 'locked away' : 'damaged') + ' while the question is open, then yes');
+		console.log('\n' + arm + '. the account locked away while the question is open, then yes');
 		const { id, clipped } = await folderFile('QA ' + arm, dir);
 		const v = await steerWrite(id, rel, 'daimon ' + arm);
 		check(arm + ' setup', clipped && wrote(v, rel));
@@ -555,22 +547,14 @@ try {
 		const held = await waitAsk(page);
 		// Broken the way the engine meets it: the record's own key holding no record (through the
 		// page's Storage, so the account prefix applies), or the identity saying it is locked.
-		const broke = await page.evaluate((h) => {
-			if (h === 'locked') {
-				window.__origUnlocked = DaimondIdentity.isUnlocked;
-				DaimondIdentity.isUnlocked = () => false;
-				return DaimondIdentity.isUnlocked() === false;
-			}
-			window.__origMarks = localStorage.getItem('daimond-marks-here');
-			localStorage.setItem('daimond-marks-here', '{"v":1,"d":');
-			return window.__origMarks !== null;
-		}, how);
+		const broke = await page.evaluate(() => {
+			window.__origUnlocked = DaimondIdentity.isUnlocked;
+			DaimondIdentity.isUnlocked = () => false;
+			return DaimondIdentity.isUnlocked() === false;
+		});
 		const lone = await door(page, id, 'file_write', { path: rel, content: 'LONE WHILE BROKEN' }, undefined);
 		const out = await releaseRefused(page, true);
-		await page.evaluate((h) => {
-			if (h === 'locked') DaimondIdentity.isUnlocked = window.__origUnlocked;
-			else localStorage.setItem('daimond-marks-here', window.__origMarks);
-		}, how);
+		await page.evaluate(() => { DaimondIdentity.isUnlocked = window.__origUnlocked; });
 		check(arm + ': the question was open, and the record ' + how + ' while it was', held.length > 0 && broke,
 			`held ${JSON.stringify(held)} broke ${broke}`);
 		const UNREAD = /record of the folders marked here could not be read/;

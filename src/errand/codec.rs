@@ -62,9 +62,6 @@ pub const HANDED_BACK: &str = "undeliverable";
 /// A hand-back's cause for a refusal before the run (RUN-HIST E): peer.js keeps it, and the
 /// sender's "not run" row names it.
 pub const CAUSE_REFUSED: &str = "refused";
-/// A hand-back's cause for a turn rooted in a machine folder its runner cannot work in
-/// (UNBLOCK-32 F2b): never run in the home instead; the sender ends it "not run" with Retry.
-pub const CAUSE_PLACE: &str = "place";
 /// A hand-back's cause for a turn whose answer alone was over the run pipe's ceiling (PIPE_MAX):
 /// it cannot reach the sender whole, so it is never sent cut; the "not run" row says why, in the
 /// runner's own words.
@@ -96,8 +93,9 @@ pub const T_UNDONE: &str = "undone";
 /// Every tag peer.js `peerType` accepts.
 pub const PEER_TYPES: [&str; 8] = ["errand", "report", "consent-ask", "consent-grant", "compile", "built",
     "undo-turn", "undone"];
-/// peer.js `PERMIT_ASKS`, the permit kinds an errand's `asks` may name.
-pub const PERMIT_ASKS: [&str; 3] = ["place", "toolkit", "run"];
+/// peer.js `PERMIT_ASKS`, the permit kinds an errand's `asks` may name.  No toolchain or place is
+/// a grant (R2), so neither is an ask; peer.js drops its `place` and `toolkit` with G2.
+pub const PERMIT_ASKS: [&str; 1] = ["run"];
 /// peer.js `NOTE_HOLD_MS` (`DISPATCH_DEADLINE_MS + LEASE_TTL_MS`).
 pub const NOTE_HOLD_MS: i64 = 15 * 60 * 1000 + 90_000;
 /// peer.js `LEASE_TTL_MS`.
@@ -209,6 +207,8 @@ pub struct Errand {
     pub asks:           Vec<String>,
     pub auto:           bool,
     pub pending_only:   bool,       // a mail trigger's turn, reported on the Pending panel alone
+    pub turn_n:         u32,        // `turnN`: the turn's number (TURN-NUM), 0 for none
+    pub turn_nums:      Vec<(String, u32)>, // `turnNums`: rows' `[mid, n]` since the chat's fold
     /// Has the chat read nothing from outside (U4 ERRAND-TAINT)?  True only for a tab's
     /// `"clean":true`; absent, null, false, a string or a number all read as tainted, so every
     /// tab built before the field fails closed.  It NARROWS ONLY: a run reads it to withhold
@@ -223,10 +223,10 @@ pub struct Errand {
     /// names), kept as the tab wrote them, as `model` is; `Null` from a tab built before the
     /// field, whose turn the runner hands back rather than guess the model's window.
     pub limits:         Js,
-    /// What the page's marks put in reach for the turn (KT-4, engine `Reach` under its own
-    /// names), kept as the tab wrote it; `Null` where it sent none, and the turn then carries no
-    /// `Attached` block.
-    pub reach:          Js,
+    /// The paths the user attached to the turn, a list of strings to look at first (KT-4,
+    /// D-20261031-11: focus, never reach), kept as the tab wrote it; `Null` where it sent none,
+    /// and the turn then carries no `Attached` block.
+    pub focus:          Js,
     pub today:          String,     // the page's `Today` block, '' where it sent none (KT-4)
     /// The page's reference to an engine session too large for the relay door (KT-4b),
     /// `{chat, sig, upto}`: the chat, its thread's `sig`, and the session's `upto`, which a runner
@@ -284,6 +284,12 @@ impl Errand {
             ("ts".into(),           Js::int(self.ts)),
         ];
         // Written only when set, so an older asker's errand is the bytes it always was.
+        if self.turn_n > 0 {
+            kv.push(("turnN".into(), Js::int(i64::from(self.turn_n))));
+        }
+        if !self.turn_nums.is_empty() {
+            kv.push(("turnNums".into(), turn_nums_js(&self.turn_nums)));
+        }
         if self.clean {
             kv.push(("clean".into(), Js::Bool(true)));
         }
@@ -293,9 +299,9 @@ impl Errand {
         if let Js::Obj(_) = &self.limits {
             kv.push(("limits".into(), self.limits.clone()));
         }
-        // The page's reach and today line (KT-4) close the errand, after the limits.
-        if let Js::Obj(_) = &self.reach {
-            kv.push(("reach".into(), self.reach.clone()));
+        // The page's focus and today line (KT-4) close the errand, after the limits.
+        if let Js::Arr(_) = &self.focus {
+            kv.push(("focus".into(), self.focus.clone()));
         }
         if !self.today.is_empty() {
             kv.push(("today".into(), Js::str(&self.today)));
@@ -351,14 +357,16 @@ impl Errand {
             asks:           ask_list(&texts(o, "asks")),
             auto:           matches!(o.get("auto"), Some(Js::Bool(true))),
             pending_only:   matches!(o.get("pendingOnly"), Some(Js::Bool(true))),
+            turn_n:         u32::try_from(whole(o, "turnN").max(0)).unwrap_or(0),
+            turn_nums:      turn_nums_of(o),
             clean:          matches!(o.get("clean"), Some(Js::Bool(true))) || rule_off("errand_clean"),
             locked:         locked_list(o),
             limits:         match o.get("limits") {
                 Some(v @ Js::Obj(_))    => v.clone(),
                 _                       => Js::Null,
             },
-            reach:          match o.get("reach") {
-                Some(v @ Js::Obj(_))    => v.clone(),
+            focus:          match o.get("focus") {
+                Some(v @ Js::Arr(_))    => v.clone(),
                 _                       => Js::Null,
             },
             today:          text(o, "today"),
@@ -403,9 +411,14 @@ pub struct Report {
     pub interrupted:    i64,
     pub cut:            String,
     /// The ids of the sender's mid-turn words the model heard (UNBLOCK-27 R7, `heard`), which
-    /// peer.js `makeReport` always writes.  A runner hears no mid-turn words, so its own report
-    /// says `[]`: the sender then queues every word it said as the next turn.
+    /// peer.js `makeReport` always writes.  A runner hears them at the turn's next step
+    /// (UNBLOCK-59): what the turn ended before reaching a step for is not here, and the sender
+    /// queues it as the next turn.
     pub heard:          Vec<String>,
+    /// For each id in `heard`, the 1-based model request (step) the words joined (UNBLOCK-59,
+    /// `heardStep`, an object of id to step).  Written last and only when set, so a report that
+    /// heard nothing is the one an older asker always read.
+    pub heard_step:     Vec<(String, i64)>,
     pub ts:             i64,
     /// The turn's own row for the asker's History (RUN-HIST K2, `turnRec`), or `Null`: written
     /// only when set, so an old asker reads the report it always read.
@@ -560,10 +573,10 @@ fn alerts_of(o: &Js) -> Vec<Js> {
     }
 }
 
-/// A hand-back cause peer.js reads: [`CAUSE_THREAD`], [`CAUSE_REFUSED`], [`CAUSE_PLACE`],
+/// A hand-back cause peer.js reads: [`CAUSE_THREAD`], [`CAUSE_REFUSED`],
 /// [`CAUSE_LIMITS`], [`CAUSE_ABI`], [`CAUSE_KEYS`], [`CAUSE_OVERSIZE`] or [`CAUSE_SIZE`].
 fn known_cause(c: &str) -> bool {
-    c == CAUSE_THREAD || c == CAUSE_REFUSED || c == CAUSE_PLACE || c == CAUSE_LIMITS || c == CAUSE_ABI
+    c == CAUSE_THREAD || c == CAUSE_REFUSED || c == CAUSE_LIMITS || c == CAUSE_ABI
         || c == CAUSE_KEYS || c == CAUSE_OVERSIZE || c == CAUSE_SIZE
 }
 
@@ -608,6 +621,7 @@ impl Report {
             interrupted:    0,
             cut:            String::new(),
             heard:          Vec::new(),
+            heard_step:     Vec::new(),
             ts,
             turn_rec:       Js::Null,
             tainted_at:     0,
@@ -675,6 +689,11 @@ impl Report {
         if self.ask != Js::Null {
             o.push(("ask".into(), self.ask.clone()));
         }
+        // UNBLOCK-59: after `ask`, the last key, and only when the run heard any of his words.
+        if !self.heard_step.is_empty() {
+            o.push(("heardStep".into(), Js::Obj(self.heard_step.iter()
+                .map(|(id, n)| (id.clone(), Js::int(*n))).collect())));
+        }
         Js::Obj(o)
     }
 
@@ -699,6 +718,13 @@ impl Report {
             interrupted:    whole(o, "interrupted"),
             cut:            text(o, "cut"),
             heard:          texts(o, "heard"),
+            heard_step:     match o.get("heardStep") {
+                Some(Js::Obj(kv))   => kv.iter().filter_map(|(k, v)| match v {
+                    Js::Num(n)  => n.parse::<i64>().ok().filter(|n| *n >= 1).map(|n| (k.clone(), n)),
+                    _           => None,
+                }).collect(),
+                _                   => Vec::new(),
+            },
             ts:             whole(o, "ts"),
             turn_rec:       opaque(o, "turnRec"),
             tainted_at:     u64::try_from(whole(o, "taintedAt")).unwrap_or(0),
@@ -836,6 +862,35 @@ fn through_of(o: &Js) -> Js {
 }
 
 /// A whole number field; a fraction is cut toward zero, anything else is 0.
+/// Rows' turn numbers as `[["mid", n], …]` (TURN-NUM), as the errand and the turn's ask carry them.
+pub fn turn_nums_js(v: &[(String, u32)]) -> Js {
+    Js::Arr(v.iter().map(|(m, n)| Js::Arr(vec![Js::str(m), Js::int(i64::from(*n))])).collect())
+}
+
+/// An errand's `turnNums`: each `[mid, n]` with a mid and a whole `n` from 1 up, in order; none
+/// from an older asker.
+fn turn_nums_of(o: &Js) -> Vec<(String, u32)> {
+    let mut out = Vec::new();
+    if let Some(Js::Arr(rows)) = o.get("turnNums") {
+        for r in rows.iter() {
+            if let Js::Arr(p) = r {
+                let mid = match p.first() {
+                    Some(Js::Str(s))    => s.clone(),
+                    _                   => String::new(),
+                };
+                let n = match p.get(1) {
+                    Some(Js::Num(t))    => t.parse::<f64>().map(crate::turn_num::n_of).unwrap_or(0),
+                    _                   => 0,
+                };
+                if !mid.is_empty() && n > 0 {
+                    out.push((mid, n));
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn whole(o: &Js, key: &str) -> i64 {
     match o.get(key) {
         Some(Js::Num(n)) => match n.parse::<i64>() {

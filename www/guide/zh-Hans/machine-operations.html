@@ -44,7 +44,7 @@
 	<div class="note stop"><strong>一个 snap 或 flatpak 版的浏览器做不到这件事，也没法被强行改成能做到。</strong> 安装脚本会检测到这种情况，宁可拒绝也不往里面写，所以这是你会遇到的第一件事——而且在 Ubuntu 上，默认的 Chromium 就是一个 snap。 <a href="#s2">为什么，以及该装什么来代替</a>.</div>
 
 	<h2 id="s1">它给你什么</h2>
-	<p>装好 hand 之后，一个 daimon 就可以对你授权的文件夹运行一次构建、一套测试、一个检查工具或一个脚本，并读取结果。这台机器上别的任何东西都够不到。</p>
+	<p>装好 hand 之后，daimon 可以在你选定的文件夹上运行构建、测试套件、代码检查或脚本，并读取结果。机器上的其他东西都够不到。</p>
 	<p>它用到的工具，点在 <span class="ui">工具</span> 面板里，其中四个值得记住名字。</p>
 	<ul>
 		<li><strong>run</strong> 运行一条命令——以一份参数列表的形式给出——并给出退出码、输出的尾部，以及花了多长时间。</li>
@@ -86,9 +86,9 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 			<p>用 <code translate="no">--manifest-path</code> 而不是 <code translate="no">-p</code>，因为 hand 是它自己的一个 cargo 工作区，所以 <code translate="no">-p</code> 会报告没有这个包，什么都不会构建。</p>
 		</li>
 		<li>
-			<h3 id="s8">授权一个文件夹，并注册 hand</h3>
+			<h3 id="s8">选一个文件夹，并注册 hand</h3>
 			<pre><code translate="no">hand/install/install.sh --workspace ~/work</code></pre>
-			<p>把你自己的文件夹换到 <code translate="no">~/work</code>的位置。这个文件夹框定了任何命令能读写的全部范围，所以要选一个用来干活的文件夹。这个脚本会直接拒绝你的主目录，也拒绝 <code>/</code> ，因为授权其中任何一个都等于授权一切。这个文件夹必须已经存在。</p>
+			<p>把你自己的文件夹换到 <code translate="no">~/work</code>的位置。这个文件夹框定了任何命令能读写的全部范围，所以要选一个用来干活的文件夹。这个脚本会直接拒绝你的主目录，也拒绝 <code>/</code> ，因为任何一个都会打开一切。该文件夹必须已经存在。</p>
 			<p>运行这一次，会做三件事，每一件不做好，你迟早都会撞上一个失败。</p>
 			<ul>
 				<li><strong>把你的文件夹写进 <code translate="no">root.txt</code></strong>，位置在 <code translate="no">~/.local/share/daimond/hand/journal/root.txt</code>。hand 在被告知这个文件夹之前，不会为任何页面服务，而且它从不猜测，因为猜一个文件夹，就是在猜一条命令可以碰什么。以后要改，就用一个不同的文件夹再运行一次同样的命令。</li>
@@ -139,7 +139,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<h3 id="s16">问这个扩展</h3>
 	<p>在浏览器里，在 Daimond 标签页上，打开开发者控制台，运行：</p>
 	<pre><code translate="no">await DaimondHand.status()</code></pre>
-	<p>这个扩展会用 JSON 回答：是否配对了一个 hand、它说自己被授权了哪个文件夹、它能强制执行什么，以及在答案是否的地方，一个 <code translate="no">reason</code> 写成一整句话的原因。Daimond 会把同一句话给模型看，所以这份 JSON 解释的，正是这个 daimon 被告知了什么。</p>
+	<p>扩展会用 JSON 回答：是否已配对 hand、它自称在哪个文件夹里工作、它能强制什么，以及在答案为否时的 <code translate="no">reason</code> 写成一整句话的原因。Daimond 会把同一句话给模型看，所以这份 JSON 解释的，正是这个 daimon 被告知了什么。</p>
 
 	<h2 id="s17">它实际上是什么</h2>
 	<p>一条命令就是一个普通的进程，属于你，跑在你自己的内核上，针对你自己的文件，只是先被拿掉了一些能力。没有虚拟机，没有容器，没有模拟，所以什么都不是模拟出来的，什么都不是复制进来的。四个部分各司其职。</p>
@@ -155,9 +155,9 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<h3 id="s18">Daimond 不实现任何工具</h3>
 	<p>没有内置的 <code translate="no">ls</code>，也没有内置的 <code translate="no">grep</code>，没有捆绑的工具箱，也没有 shell。 <code translate="no">ls</code> 就是 <code translate="no">/usr/bin/ls</code>，就是你机器上已经有的那个，版本是你装的那个版本。</p>
 
-	<p>系统目录下的每一个程序都够得到，因为隔离舱把它们加进了授权里， <strong>只读</strong>: <code translate="no">/usr</code>, <code translate="no">/bin</code>, <code translate="no">/sbin</code>, <code translate="no">/lib</code>, <code translate="no">/lib32</code>, <code translate="no">/lib64</code>, <code translate="no">/libx32</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code>，以及那些无害的设备 <code translate="no">/dev/null</code>, <code translate="no">/dev/zero</code>, <code translate="no">/dev/full</code>, <code translate="no">/dev/random</code> 和 <code translate="no">/dev/urandom</code>。没有它们，什么都启动不了，连 <code translate="no">cat</code>都不行，因为加载器得读共享对象，进程也得为标准流打开点什么。</p>
+	<p>系统目录下的每个程序都够得到，因为隔间把它们以 <strong>只读</strong>: <code translate="no">/usr</code>, <code translate="no">/bin</code>, <code translate="no">/sbin</code>, <code translate="no">/lib</code>, <code translate="no">/lib32</code>, <code translate="no">/lib64</code>, <code translate="no">/libx32</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code>，以及那些无害的设备 <code translate="no">/dev/null</code>, <code translate="no">/dev/zero</code>, <code translate="no">/dev/full</code>, <code translate="no">/dev/random</code> 和 <code translate="no">/dev/urandom</code>。没有它们，什么都启动不了，连 <code translate="no">cat</code>都不行，因为加载器得读共享对象，进程也得为标准流打开点什么。</p>
 
-	<p>一个光秃秃的名字，会在 <code translate="no">PATH</code>上查找，也就是 <code translate="no">/usr/local/bin:/usr/bin:/bin</code> ，除非一个被授权的工具链往里面加了东西。查到的结果会被解析成一个绝对路径，像别的任何东西一样接受隔离舱的检查，所以查到不等于被允许。一个指向外部的 <code translate="no">PATH</code> ，会找到一个这条命令不可以运行的程序，拒绝会点出它的名字。</p>
+	<p>一个光秃秃的名字，会在 <code translate="no">PATH</code>上查找，也就是 <code translate="no">/usr/local/bin:/usr/bin:/bin</code>。找到的东西会被解析成绝对路径，并像其他东西一样对照隔间检查，所以找到并不等于允许。 <code translate="no">PATH</code> ，会找到一个这条命令不可以运行的程序，拒绝会点出它的名字。</p>
 
 	<div class="note"><strong>没有 shell，所以也没有 shell 语法。</strong> 一条命令是一份列表（<code translate="no">["cargo", "test", "--lib"]</code>），一个分号、管道、重定向、反引号， <code>$(…)</code> 或者 <code translate="no">&amp;&amp;</code> 到达程序时都只是一个字面意义上的参数。要串联两条命令，daimon 会把这个工具运行两次，反正这样更好，因为它可以先读第一次的结果，再决定第二次。</div>
 
@@ -165,30 +165,23 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 
 	<h3 id="s20">文件</h3>
 	<ul>
-		<li><strong>在被授权的文件夹里读写。</strong> 那个文件夹，减去 Daimond 自己的 <code translate="no">.daimond</code> 目录，就是可写的整个世界。</li>
+		<li><strong>在你的文件夹里读写。</strong> 那个文件夹，减去 Daimond 自己的 <code translate="no">.daimond</code> 目录，就是可写的整个世界。</li>
 		<li><strong>一个私有的临时目录。</strong> 它是可写的， <code translate="no">TMPDIR</code> 指向它；运行结束就删掉；别的任何一次运行都够不到它；它是你文件夹之外，一条命令唯一可以写的地方。 <code translate="no">/tmp</code> 在隔离舱之外，一次连临时文件都写不了的构建，会半途而废，而且没有人能读懂原因。</li>
 		<li><strong>系统，只读。</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code> ，以及上面那份列表里的其余部分。</li>
-		<li><strong>别的一切都被内核拒绝</strong>，而不是被某人写的一个检查拒绝。一个在授权范围之外一层的文件，返回的是 <code>Permission denied</code>，daimon 看到的是这个拒绝，而不是这个文件。</li>
+		<li><strong>别的一切都被内核拒绝</strong>，而不是某人写的检查。位于它外面一层的文件会返回 <code>Permission denied</code>，daimon 看到的是这个拒绝，而不是这个文件。</li>
 	</ul>
-	<p>有一个后果值得先知道，免得它看起来像个坏掉的工具。当整个被授权的文件夹都可写时，这个文件夹 <em>本身</em> 却没法被列出来，也没法直接在里面新建一个文件，因为 Landlock 没法只授权一个目录、又扣下它的一部分，所以是一个一个地授权它的子项。往下一层的任何东西都正常工作。</p>
+	<p>有一个后果值得先知道，免得它看起来像工具坏了。整个文件夹可写时，那个文件夹 <em>本身</em> 却没法被列出来，也没法直接在里面新建一个文件，因为 Landlock 没法只授权一个目录、又扣下它的一部分，所以是一个一个地授权它的子项。往下一层的任何东西都正常工作。</p>
 
 	<h3 id="s21">命名的本地套接字，永远被拒绝</h3>
 	<p>不管别的方面被允许什么，一条命令都没法建一个 unix 套接字。这会牺牲掉一个走套接字文件的本地数据库、 <code translate="no">docker</code>、任何要用 X11 的东西，以及 <code translate="no">ssh-agent</code>. <code translate="no">socketpair</code>——一次构建用来和自己的子进程说话的配对套接字——不受影响，所以 <code translate="no">cargo build</code> 不受影响。</p>
 	<p>在 Landlock ABI 9（Linux 7.1）以下，这个隔离舱完全不管连接一个套接字文件这件事。我们实测过：围栏生效、网络被拒绝的情况下，给桌面的会话总线发一条消息，就能启动一个从没被围住的进程，读到一个围栏本该拒绝的文件。这是一条走出隔离舱的路，不是边缘上的一丝渗漏，所以它被无条件关闭。</p>
 
 	<h3 id="s22"><code translate="no">ssh</code> 不管用</h3>
-	<p>有两个各自独立的原因拦着它，只堵上其中一个都不够。 <code translate="no">~/.ssh</code> 不在这个隔离舱里，因为每一条路径都是从你授权的那个文件夹搭出来的。而代理套接字是一个 unix 套接字，已经在上面被拒绝了。 <code translate="no">git push</code> 走 SSH 会同时因为这两个原因失败。授权你的主目录能消掉第一个原因，但也消掉了这个隔离舱大半的意义，这就是安装脚本拒绝它的原因。</p>
-	<p>只碰这个仓库本身的操作是能用的。 <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> ，以及一次本地的 <code translate="no">commit</code> ，都是你授权的文件夹里普普通通的文件操作。</p>
+	<p>有两个各自独立的原因拦着它，只堵上其中一个都不够。 <code translate="no">~/.ssh</code> 不在隔间里，因为每条路径都从你选定的文件夹构建。而 agent 套接字是 unix 套接字，上面已说过会被拒绝。 <code translate="no">git push</code> 通过 SSH 会同时因两个原因失败。选你的主目录会消除第一个原因，但也会让隔间几乎失去意义，所以安装程序拒绝这样做。</p>
+	<p>只碰这个仓库本身的操作是能用的。 <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> ，以及一次本地的 <code translate="no">commit</code> 都是你选定的文件夹里的普通文件操作。</p>
 
-	<h3 id="s23">一个工具链需要一次授权</h3>
-	<p>打开一个 diamond，工作区面板会显示一个 <strong>工具链</strong> 行，带五个按钮： <span class="ui" translate="no">Rust</span>, <span class="ui" translate="no">Node</span>, <span class="ui" translate="no">Python</span>, <span class="ui" translate="no">Go</span>, <span class="ui" translate="no">Git</span>。这五个默认都是关的，所以 <code translate="no">cargo</code> 会被拒绝，直到你打开 Rust，因为 <code translate="no">~/.cargo</code> 和 <code translate="no">~/.rustup</code> 都在你的主目录下面，而你的主目录不在这个隔离舱里。</p>
-	<p><span class="ui" translate="no">Git</span> 是个例外。 <code translate="no">git</code> 已经在那份只读的基础清单里，这就是为什么 <code translate="no">git status</code> 和一次本地提交不用任何授权就能用。这个按钮加的是你自己的配置，只读——也就是你的名字、你的邮箱，以及 <code translate="no">core.hooksPath</code> 点名的那些钩子。你存的密码，还有 <code translate="no">~/.ssh</code> ，都被点名拒绝。</p>
-	<p>这里有三件事是刻意为之的。</p>
-	<ul>
-		<li><strong>它绝不会从被要求运行的东西反推出来。</strong> 一个会为了迁就被请求的二进制文件而自己变宽的隔离舱，就成了一个由模型选择的隔离舱，而这整套安排，靠的正是这个隔离舱是模型没法选择的东西。 <code translate="no">cargo</code> 够得到，是因为你授权了 Rust 工具链，没有别的原因。</li>
-		<li><strong>它是按 diamond 来的。</strong> 一次授权属于一个 diamond，和那个 diamond 持有的文件夹一样，也用同样的方式收回。</li>
-		<li><strong>它是一份点了名的目录短清单，从来不是主目录。</strong> Rust 授权 <code translate="no">~/.cargo/bin</code> 和 <code translate="no">~/.rustup</code> 只读，把注册表和缓存改成可写，因为 cargo 不写这些就没法构建，而且它会 <em>拒绝访问</em> <code translate="no">~/.cargo/credentials.toml</code>——你的 crates.io 令牌写在这里。另外四个工具链都是照同样的方式画出来的，各自都漏掉了那个装着秘密的文件。</li>
-	</ul>
+	<h3 id="s23">主目录下的程序</h3>
+	<p><code translate="no">~/.cargo</code>, <code translate="no">~/.rustup</code> 之类都在你的主目录下，而主目录不在隔间里，所以 <code translate="no">cargo</code> 在这里会被拒绝。 <code translate="no">git</code> 在只读的基础部分里，所以 <code translate="no">git status</code> 和本地提交可以用。需要主目录下工具链的构建在 Kimberlite 上运行，它能触及你的主文件夹，但仍会挡住保存机密的文件，比如 <code translate="no">~/.cargo/credentials.toml</code>.</p>
 
 	<h3 id="s24">网络</h3>
 	<p>一条命令能不能碰到网络，取决于权限模式，也取决于这一轮已经读过什么。在 <strong>每次都问</strong> 和 <strong>有防护</strong>档下，只要一轮吸收过外部内容——它读过或抓取过的一个网页、一封邮件、更早一条命令的输出——那一轮里的每一条命令都会在 TCP 被拒绝的情况下运行，daimon 会被告知原因，所以它报出的是原因，而不是一个坏掉的项目。在 <strong>跳过</strong> 档下，不管这一轮读过什么，网络都保留着。</p>
@@ -216,7 +209,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 		</div>
 	</div>
 
-	<p><strong>任何一档都不会改变可能做到什么。</strong> 一条命令运行所在的隔离舱、它下面的系统调用过滤器、一个 diamond 被限定的文件夹范围、一个被授权的工具链、给外部内容打的标记，以及日志，这三档全都一样。一档改变的，只是你会被问到什么。</p>
+	<p><strong>任何一档都不会改变可能做到什么。</strong> 命令运行的隔间、其下的系统调用过滤器、它工作的文件夹、外来内容上的标记，以及日志，在三者上都相同。一个档位只改变问你什么。</p>
 	<p>这一档是聊天标题栏里、模型旁边的一个词，因为一个你得自己记住的模式，就是一个你迟早会弄错的模式。点它可以改，或者按 <kbd>Ctrl</kbd> <kbd>K</kbd> (<kbd>Cmd</kbd> <kbd>K</kbd> （Mac 上是 Cmd K），然后打这一档的名字。</p>
 
 	<h2 id="s30">非常规系统</h2>
@@ -224,7 +217,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 
 	<h3 id="s31">不会管用</h3>
 	<ul>
-		<li><strong>NixOS 和 Guix。</strong> 程序住在 <code translate="no">/nix/store</code> 或者 <code translate="no">/gnu/store</code>，两者都没被授权，而 <code translate="no">/usr/bin</code> 里几乎什么都没有。一个光秃秃的名字，经 <code translate="no">PATH</code> 解析出来的，是一个在隔离舱之外的 store 路径，命令会被点名拒绝。这个应用目前没法把它拓宽。</li>
+		<li><strong>NixOS 和 Guix。</strong> 程序住在 <code translate="no">/nix/store</code> 或者 <code translate="no">/gnu/store</code>里，两者都不在隔间里，而且 <code translate="no">/usr/bin</code> 里几乎什么都没有。一个光秃秃的名字，经 <code translate="no">PATH</code> 解析出来的，是一个在隔离舱之外的 store 路径，命令会被点名拒绝。这个应用目前没法把它拓宽。</li>
 		<li><strong>一个没有 Landlock 的内核。</strong> 意思是低于 Linux 5.13，或者编译时被去掉了，或者不在生效的 LSM 列表里，或者被一个加固补丁移除了。hand 会报告 <code translate="no">fence:none</code> ，Daimond 会拒绝每一条命令，而不是运行一条没有围栏的。检查一下 <code translate="no">landlock</code> 有没有出现在 <code translate="no">/sys/kernel/security/lsm</code>.</li>
 		<li><strong>一种既不是 x86-64 也不是 aarch64 的架构。</strong> 过滤器的系统调用编号是按架构分别写出来的，没有第三份表。hand 不会去猜一份，所以没有过滤器；没有过滤器，就没有命令能运行。</li>
 	</ul>
@@ -232,8 +225,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<h3 id="s32">部分管用</h3>
 	<ul>
 		<li><strong>Linux 5.13 到 6.6。</strong> 文件被围住了，但 Landlock 在 Linux 6.7 之前没有网络规则，所以一条本该在网络被扣住的情况下运行的命令，会被直接拒绝，并附一句话说明，而不是带着它本该失去的网络运行。「跳过」档能用，「有防护」档在这一轮读到什么之前也能用。</li>
-		<li><strong>Linux 上的 Homebrew、Flatpak 和 Snap。</strong> 无论是 <code translate="no">/home/linuxbrew/.linuxbrew</code>、Flatpak 的目录树，还是 <code translate="no">/snap</code> ，没有一个被授权，所以那样装的程序会被拒绝，而你的发行版放在 <code translate="no">/usr</code> 下面的东西，在同一个会话里够得到。这说的是一条命令运行的程序。一个用那种方式打包的浏览器是另一个问题，而且是致命的，讲在 <a href="#s2">开始之前</a>.</li>
-		<li><strong>已知的那两个之外的版本管理器。</strong> 工具链路径是一份固定的清单，而 <code translate="no">~/.nvm</code> 和 <code translate="no">~/.pyenv</code> 是清单上仅有的两个版本管理器。 <code translate="no">asdf</code>, <code translate="no">mise</code>, <code translate="no">volta</code>, <code translate="no">rbenv</code> 和 <code translate="no">sdkman</code> ，装在 <code translate="no">~/.asdf</code>, <code translate="no">~/.local/share</code>, <code translate="no">~/.volta</code>, <code translate="no">~/.rbenv</code> 和 <code translate="no">~/.sdkman</code>下面，而这些一个都没被授权。Python 的授权涵盖 <code translate="no">~/.local/bin</code> 和 <code translate="no">~/.local/lib</code> ，并且刻意漏掉了 <code translate="no">~/.local/share</code>.</li>
+		<li><strong>Linux 上的 Homebrew、Flatpak 和 Snap。</strong> 无论是 <code translate="no">/home/linuxbrew/.linuxbrew</code>、Flatpak 的目录树，还是 <code translate="no">/snap</code> 在隔间里，所以那样安装的程序会被拒绝，而你的发行版放在 <code translate="no">/usr</code> 下面的东西，在同一个会话里够得到。这说的是一条命令运行的程序。一个用那种方式打包的浏览器是另一个问题，而且是致命的，讲在 <a href="#s2">开始之前</a>.</li>
 	</ul>
 
 	<h3 id="s33">没问题</h3>
@@ -253,7 +245,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<p><code translate="no">--report</code> 会打印两份列表，第二份才是运行它的理由。里面的每一条，都是在一个正在运行的内核上实测出来的，不是推断的，而且会随你的内核变化，所以要读你自己那份。这些条目大致分成几组。</p>
 	<ul>
 		<li><strong>打听一个文件，不等于打开它。</strong> <code translate="no">stat</code> 仍然会在隔离舱之外回答，所以大小、时间戳、所有者，以及一个文件在不在，都是可读的。隔离舱管的是打开这件事。</li>
-		<li><strong>系统这份授权很宽。</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code> 和 <code translate="no">/opt</code> 只读，是让一条命令能运行起来的前提，但这也意味着 <code translate="no">/etc</code> 下面每一个所有人可读的文件都能被读到，这台机器上的每一个工具都能被执行。 <code translate="no">/etc</code> 尤其装着大量能识别出这台机器的细节。</li>
+		<li><strong>对系统的访问很宽。</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code> 和 <code translate="no">/opt</code> 只读，是让一条命令能运行起来的前提，但这也意味着 <code translate="no">/etc</code> 下面每一个所有人可读的文件都能被读到，这台机器上的每一个工具都能被执行。 <code translate="no">/etc</code> 尤其装着大量能识别出这台机器的细节。</li>
 		<li><strong>这个过滤器是一份拒绝名单。</strong> 它从一条命令身上拿掉点了名的能力，不是一个系统调用沙盒。任何它没点名的东西都是允许的，包括一个未来内核才会加进去的调用。</li>
 		<li><strong>一个过滤器没法跟踪一个指针。</strong> 它看到的是一个系统调用编号和六个寄存器，从不是它们指向的东西，所以它看不到路径、地址或文件名。一个被拒绝的 <code translate="no">chmod</code> ，因此在任何地方都被拒绝；一个被允许的，在任何地方都被允许。 <code translate="no">chmod 777</code> 被拒绝，而 <code translate="no">chmod 644</code> 对一把私钥不会被拒绝，因为 644 不加写权限，而且这正是 cargo 解包任何东西时设的模式。</li>
 		<li><strong>时间戳在任何地方都没有被保护。</strong> 一条命令可以改写这台机器上任何部分、任何文件的时间，因为 cargo 不这样做就没法从注册表解包一个 crate。这是「让构建能跑起来」牺牲掉覆盖范围最明显的地方。</li>

@@ -252,6 +252,40 @@ check('A LEGACY ATTACHMENT CAN STILL BE TAKEN OFF',
 	after.n === before - 1 && !after.refs.some(r => /legacy\/notes/.test(r)),
 	`${before} → ${after.n}: ${JSON.stringify(after.refs)}`);
 
+// ── 4. The paperclip only focuses (D-20261031-11) ────────────────────
+// The Doc panel's paperclip on an open file writes ONE `holds` row for the Diamond in
+// focus, by the user, and nothing else: no grant, no permit, no share flag, and no
+// stored key that would widen where a write may land.
+const linksNow = () => page.evaluate(async (did) => {
+	const m = await import('/pkg/oxedyne_daimond.js');
+	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	return JSON.parse(await app.links_touching('diamond:' + did) || '[]');
+}, id);
+const reachKeys = () => page.evaluate(() => Object.keys(localStorage).filter(k => /grant|permit|share-root|foldershare-flag|write-reach/i.test(k)));
+const clipBefore = await linksNow(), keysBefore = await reachKeys();
+await page.evaluate(() => DaimondPanels.show('work'));
+await page.waitForTimeout(500);
+await page.fill('.files-filter-input', 'one');
+await page.waitForTimeout(800);
+for (const row of await page.$$('#panel-work .files-row')) {
+	const nm = await row.$eval('.files-name', e => e.textContent).catch(() => '');
+	if (nm.includes('one.md')) { await row.click({ force: true }); break; }
+}
+let clipped = false;
+try { await page.waitForSelector('[data-act="attach"]', { timeout: 8000 }); await page.click('[data-act="attach"]', { force: true }); clipped = true; }
+catch (e) { /* reported below */ }
+await page.waitForTimeout(1200);
+const clipAfter = await linksNow(), keysAfter = await reachKeys();
+const fresh = clipAfter.filter(l => !clipBefore.some(b => JSON.stringify(b) === JSON.stringify(l)));
+check('the paperclip could be pressed on an open file', clipped);
+check('THE PAPERCLIP ADDS ONE FOCUS ROW: a `holds` link to the file, by the user',
+	fresh.length === 1 && /one\.md/.test(fresh[0].other || fresh[0].to || '')
+		&& (fresh[0].rel === undefined || fresh[0].rel === 'holds') && (fresh[0].by === undefined || fresh[0].by === 'user'),
+	JSON.stringify(fresh));
+check('and nothing else: no other link kind appears', clipAfter.every(l => l.rel === undefined || l.rel === 'holds'),
+	JSON.stringify(clipAfter.map(l => l.rel)));
+check('and no grant, permit or write reach is stored', keysAfter.length === keysBefore.length, JSON.stringify(keysAfter));
+
 await shot(s, 'attachroot');
 console.log(`\n${ok} ok, ${bad} failed`);
 await s.browser.close();

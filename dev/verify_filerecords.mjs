@@ -50,14 +50,12 @@ try {
 		try { const f = await DaimondCloud.fileAt(p); return f ? await f.text() : null; } catch (e) { return null; }
 	}, p);
 	const collect = () => page.evaluate(async () => {
-		try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older build */ }
 		const st = await DaimondCore.collectSync();
 		return { files: Object.keys(st.files || {}), old: st.fileTombs || {}, recs: st.chunkedTombs || {},
 			stamped: st.fileTombsStamped === true };
 	});
 	// A landing: the fork point becomes what this device holds now (in the Browser).
 	const land = () => page.evaluate(async () => {
-		try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older build */ }
 		await DaimondCore.syncCommitBaseline();
 	});
 	const fork = () => page.evaluate(() => { try { return JSON.parse(localStorage.getItem('daimond-sync-filebase') || '{}'); } catch (e) { return {}; } });
@@ -65,7 +63,6 @@ try {
 	// has the set for offloaded files alone, so its checks fail one by one rather than at load).
 	const rec = (p) => page.evaluate((p) => { const t = DaimondCloud.tombs()[p]; return t ? { d: t.d, h: t.h, s: t.s } : null; }, p);
 	const apply = (parcel) => page.evaluate(async (parcel) => {
-		try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older build */ }
 		const r = await DaimondCore.applySync(Object.assign({ v: 3, chats: [], tombs: {}, msgTombs: {}, diamonds: [],
 			diamondTombs: {}, chunked: {} }, parcel));
 		return r && r.failed ? r.failed : [];

@@ -2,11 +2,11 @@
    Test -- NO "MARK" FOR A FOLDER ADDED TO A DIAMOND OR A CHAT
    (D-20261006-25; specs/daimond_mark_terms_20261006.md, ruled 6 Oct 19:24).
    ------------------------------------------------------------
-   The owner ruled one vocabulary for putting a folder on this machine into
-   a Diamond's or a chat's scope: "Add" for the act, "Workspace" for the
-   place, "not yet in use here" for a folder no press has confirmed on this
-   device, and the banner "{n} folders here need one more press". "Mark"
-   survives only as a code name (`markshere.js`, the `marks.*` keys).
+   The owner ruled one vocabulary for putting a folder into a Diamond's or a
+   chat's scope: "Add" for the act, "Workspace" for the place. Since G2
+   (D-20261031-11) that scope is focus alone: the "not yet in use here"
+   folder, its banner and "Use here" went with the marks model, and no
+   `marks.*` key is left in any locale.
 
    Three surfaces are checked, because the word reaches him through all of
    them:
@@ -44,15 +44,9 @@ const MARK = {
 	'zh-Hans': /标记/,
 };
 
-// The scope family: every string that names a folder added to a Diamond or a chat.
-const KEYS = [
-	'attach.ws_mark', 'attach.ws_add', 'attach.add_mark', 'attach.pick_mark_title',
-	'attach.mark_note', 'attach.mark_focus', 'attach.ws_help', 'attach.ws_empty',
-	'dws.confirm_here', 'dws.confirm_old',	// ws2 removed dws.mark_here(_help) with the scope tree
-	'marks.waiting.one', 'marks.waiting.other', 'marks.waiting_why', 'marks.no_record',
-	'marks.not_saved', 'marks.made_before', 'marks.use_here', 'marks.use_all',
-	'marks.use_help', 'marks.use_ask',
-];
+// The scope family: every string that names a folder put in a Diamond's or a chat's focus,
+// the Workspace panel's (`dws.*`) and the paperclip's (`attach.*`).
+const FAMILY = /^(attach|dws)\./;
 
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
@@ -75,21 +69,18 @@ function tableOf(code) {
 // ── 1. The app's strings ────────────────────────────────────
 const T = {};
 for (const c of LOCALES) T[c] = tableOf(c);
+const KEYS = Object.keys(T.en).filter((k) => FAMILY.test(k));
+check('en: the scope family has strings', KEYS.length > 0);
 for (const c of LOCALES) {
 	const missing = KEYS.filter((k) => !(k in T[c]));
 	check(c + ': every key of the scope family is present', missing.length === 0, missing.join(' '));
 	const said = KEYS.filter((k) => k in T[c] && MARK[c].test(T[c][k]));
 	check(c + ': no string of the scope family says "mark"', said.length === 0,
 		said.map((k) => k + '=' + JSON.stringify(T[c][k])).join(' '));
+	// The marks model's strings went with it (G2): a folder waiting for "Use here" is no state.
+	const left = Object.keys(T[c]).filter((k) => /^marks\./.test(k));
+	check(c + ': no marks.* string is left', left.length === 0, left.join(' '));
 }
-// The ruled English words, verbatim.
-check('en: the banner counts folders that need one more press',
-	T.en['marks.waiting.other'] === '{n} folders here need one more press.', T.en['marks.waiting.other']);
-check('en: a waiting folder is "not yet in use here"',
-	/not yet in use here/.test(T.en['dws.confirm_here']) && /not yet in use here/.test(T.en['dws.confirm_old']),
-	T.en['dws.confirm_here'] + ' | ' + T.en['dws.confirm_old']);
-check('en: "Use here" and "Use all here" are kept',
-	T.en['marks.use_here'] === 'Use here' && T.en['marks.use_all'] === 'Use all here');
 
 // ── 2. The guide's §7 ───────────────────────────────────────
 function section7(code) {
@@ -102,7 +93,7 @@ function section7(code) {
 	return html.slice(at, end < 0 ? undefined : end).replace(/<[^>]+>/g, ' ');
 }
 const en7 = section7('en');
-check('guide en: §7 is "Added folders and your other devices"', /Added folders and your other devices/.test(en7),
+check('guide en: §7 is "Attachments and your other devices"', /Attachments and your other devices/.test(en7),
 	en7.slice(0, 80));
 for (const c of LOCALES) {
 	const s = section7(c);

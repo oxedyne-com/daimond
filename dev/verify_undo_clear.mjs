@@ -6,14 +6,14 @@
 // reverts the turn's files.
 // - r545: at a fixed 96px it stood over Send on a phone.
 // - r547 F1: measured above the input bar, it stood over the workspace strip's "+" and
-//   "Nothing kept here", and over the band above the composer (mark notice, Retry, Edit).
+//   "Nothing kept here", and over the band above the composer (then the mark notice; Retry, Edit).
 // - r547 F2: at z-index 9999 it stood over a tall dialog's buttons, and over the Bypass
 //   confirm at 360x400.
 // - r547 F3: a chat's offer stayed up over another chat, and Undo there reverted the first.
 //
 // At 6 sizes x 2 themes, in each engine (this file runs itself once per engine): raise the
-// window, draw every control the band above the composer can hold (the strip, the mark
-// notice, the last message's Retry and Edit, a question card's answers, the phone's ask bar,
+// window, draw every control the band above the composer can hold (the strip, the last
+// message's Retry and Edit, a question card's answers, the phone's ask bar,
 // email compose's Send), then open the Bypass confirm, the same card made long, and Settings.
 // In every state a press at the centre and the four inset corners of every visible control
 // must land on that control, never on Undo. Then the F3 arm: switch chats with a real turn's
@@ -109,16 +109,11 @@ async function sweep(page) {
 	});
 }
 
-// The band above the composer, drawn whole: the mark notice with its press, and the
-// transcript's last row (a question card's answers, a last message's Retry and Edit, drawn
-// as the hover draws them). The workspace strip and Send are the app's own.
+// The band above the composer, drawn whole: the transcript's last row (a question card's answers, a last message's Retry and Edit, drawn
+// as the hover draws them). The workspace strip and Send are the app's own. The mark notice
+// went with marks (UNBLOCK-82, D-20261031-11): `markless` asserts the band holds none.
 async function drawBand(page) {
 	return page.evaluate(() => {
-		const mn = document.getElementById('mark-notice');
-		if (mn && !mn.querySelector('.qa-mark')) {
-			mn.innerHTML = '<p class="mark-notice-head">1 mark is not in force here</p><button type="button" class="qa-mark">Use here</button>';
-			mn.hidden = false;
-		}
 		const out = document.getElementById('chat-output');
 		if (out && !out.querySelector('.qa-ask')) {
 			const c = document.createElement('div'); c.className = 'ask-card qa-ask';
@@ -131,7 +126,7 @@ async function drawBand(page) {
 		}
 		if (out) out.scrollTop = out.scrollHeight;
 		const has = (q) => { const el = document.querySelector(q); if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-		return { strip: has('#chat-attachments button'), mark: has('#mark-notice .qa-mark'), ask: has('.qa-ask button'),
+		return { strip: has('#chat-attachments button'), markless: !document.querySelector('#mark-notice, .mark-notice'), ask: has('.qa-ask button'), // keeps: mark-notice absence check: the band must hold none (UNBLOCK-82)
 			retry: has('.qa-last .ctile-retry') && has('.qa-last .ctile-edit'), send: has('#chat-send') };
 	});
 }
@@ -168,7 +163,7 @@ for (const kind of ['phone', 'desk']) {
 				await raise(page);
 				const band = await drawBand(page);
 				await page.waitForTimeout(400);
-				for (const k of ['strip', 'mark', 'ask', 'retry', 'send'])
+				for (const k of ['strip', 'markless', 'ask', 'retry', 'send'])
 					check(tag + ': the band draws ' + k, band[k]);
 				judge(tag + ' composer', await sweep(page), true);
 				// The phone's ask bar and email compose's Send, through the panel itself.

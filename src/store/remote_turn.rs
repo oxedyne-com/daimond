@@ -134,7 +134,7 @@ impl<L: StoreLink> RemoteStore<L> {
 
 /// Is `path` store-owned ([`store_owned`](crate::tools::store_owned)), so that the turn end
 /// stages no read of it: the store reads its own, and the run's disk copy is never its record.
-fn owned(path: &str) -> bool { crate::tools::store_owned(FileRoot::Workspace, path).is_some() }
+fn owned(path: &str) -> bool { crate::tools::store_owned(path).is_some() }
 
 /// Does `now` stand as the capture the store names by `seen` left it?  The store's own rule,
 /// [`versions::stands_as_left`], asked of the `after` the entry names: a `Large` one by the

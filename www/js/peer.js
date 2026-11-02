@@ -364,10 +364,11 @@
 		// hands the turn back rather than run it on a guessed window.
 		var lim = limitsOf(o.limits);
 		if (lim) e.limits = lim;
-		// THE PAGE'S REACH AND TODAY LINE (KT-4): the `Attached` block and the `Today` line the
-		// runner composes from, as this page reads them. Written only when present, so a runner
-		// reads an older sender as having neither, as before.
-		if (o.reach && typeof o.reach === 'object') e.reach = o.reach;
+		// THE PAGE'S FOCUS AND TODAY LINE (KT-4): the attached paths the runner composes its
+		// `Attached` block from (a list of strings: focus, never reach, D-20261031-11) and the
+		// `Today` line, as this page reads them. Written only when present, so a runner reads an
+		// older sender as having neither, as before.
+		if (Array.isArray(o.focus)) e.focus = o.focus.map(String);
 		if (typeof o.today === 'string' && o.today !== '') e.today = o.today;
 		// THE OVER-DOOR SESSION'S REFERENCE (KT-4b), `{chat, sig, upto}`, in place of a session the
 		// relay door would not take: a runner holding the chat reads it there, checking `upto`, or
@@ -480,7 +481,15 @@
 		function whole(v) { var n = +v; return (isFinite(n) && n > 0) ? Math.trunc(n) : 0; }
 		function real(v)  { var n = +v; return (isFinite(n) && n > 0) ? n : 0; }
 		function text(v)  { return typeof v === 'string' ? v : ''; }
-		return {
+		// The gateway's OCR figures (P2.5d), under `OcrConf::of_dat`'s names, carried only where
+		// the page was served some: an errand with none runs on the engine's own.
+		function ocrOf(o) {
+			return { pdfFree: text(o.pdfFree), pdfOcr: text(o.pdfOcr), mistralModel: text(o.mistralModel),
+				relayModel: text(o.relayModel), visionModel: text(o.visionModel),
+				usdPerPage: real(o.usdPerPage), emptyFloor: whole(o.emptyFloor) };
+		}
+		var ocr = (l.ocr && typeof l.ocr === 'object' && !Array.isArray(l.ocr)) ? ocrOf(l.ocr) : null;
+		var out = {
 			window:     whole(l.window),
 			foldAt:     real(l.foldAt),
 			contextCap: whole(l.contextCap),
@@ -490,6 +499,8 @@
 			foldPrompt: text(l.foldPrompt),
 			tune:       text(l.tune),
 		};
+		if (ocr) out.ocr = ocr;
+		return out;
 	}
 
 	/// Build a report envelope object (not yet sealed). §4.4: the report is the
@@ -548,8 +559,6 @@
 			// whose hand-back reads as a hand-off that did not finish.
 			// 'refused' when a runner refused the turn before its run (RUN-HIST E: Kimberlite's no model
 			// key, clamp, credits and spawn refusals), which the sender also ends "not run" with Retry.
-			// 'place' when the machine folder the turn is rooted in is not one it can work in
-			// (UNBLOCK-32 F2b): never run in its home instead; the sender ends it "not run" with Retry.
 			// 'limits' when the errand carried no limits the runner could apply (KT-2): a page older
 			// than the runner; never run on a guessed window, and the sender ends it "not run" with Retry.
 			// 'keys' when a sealed key the errand carries would not open there (OWNKEY): a
@@ -558,7 +567,7 @@
 			// 'size' when the errand was larger than the runner reads (NOTRUN-WHY, BOX-HOT), and
 			// 'oversize' when its answer was too large to send back whole: each ended "not run" with Retry.
 			cause:   (o.cause === 'thread' || o.cause === 'models' || o.cause === 'models-behind'
-				|| o.cause === 'refused' || o.cause === 'place' || o.cause === 'limits'
+				|| o.cause === 'refused' || o.cause === 'limits'
 				|| o.cause === 'keys' || o.cause === 'abi' || o.cause === 'size' || o.cause === 'oversize') ? o.cause : '',
 			// A `done` that ran nothing: a reload here cut the turn's run short, and the
 			// final frame carries what it had done, badged (r545 F-C2-1). 0 elsewhere.
@@ -1870,7 +1879,7 @@
 					seed: seed, thread: thread, tried: tried, asks: PERMIT_ASKS,
 					gone: gone, to: to, behind: behind, through: through, ids: ids,
 					auto: o.auto === true, pendingOnly: o.pendingOnly === true, clean: o.clean === true,
-					locked: o.locked, limits: o.limits, reach: o.reach, today: o.today, sessionRef: o.sessionRef,
+					locked: o.locked, limits: o.limits, focus: o.focus, today: o.today, sessionRef: o.sessionRef,
 				});
 			},
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
@@ -2603,7 +2612,7 @@
 	/// unlike the posture: it is a boot-time fact about the machine, so a beat that cannot
 	/// say keeps what the device already said rather than unsaying it.
 	function presenceBeat(deviceId, name, now, attended, servicing, build, runner, mobile,
-		hand, folder, busy, busyChats) {
+		hand, busy, busyChats) {
 		var id = String(deviceId || '');
 		if (!id) return false;
 		var n = now == null ? Date.now() : now;
@@ -2627,18 +2636,15 @@
 		// mean "fall back to the old inference", never "desktop".
 		if (mobile != null) _presence[id].mobile = !!mobile;
 		else if (prev && typeof prev.mobile === 'boolean') _presence[id].mobile = prev.mobile;
-		// THE TWO PLACEMENT FIELDS. `hand` is whether this machine can reach a machine
-		// hand at all; `folder` whether it holds the real, mounted workspace rather than
-		// a browser replica. LIVE, not sticky like `mobile`: a hand unplugged and a
-		// folder grant withdrawn must both stop reading as present on the very next beat,
+		// THE PLACEMENT FIELD. `hand` is whether this machine can reach a machine
+		// hand at all. LIVE, not sticky like `mobile`: a hand unplugged must stop
+		// reading as present on the very next beat,
 		// so an explicit false is carried through and only ABSENCE keeps the last answer
 		// (a beat that could not ask is not the device saying no).
 		if (hand != null)   _presence[id].hand = !!hand;
 		else if (prev && typeof prev.hand === 'boolean') _presence[id].hand = prev.hand;
-		if (folder != null) _presence[id].folder = !!folder;
-		else if (prev && typeof prev.folder === 'boolean') _presence[id].folder = prev.folder;
 		// HOW MANY TURNS THIS MACHINE IS RUNNING OR HOLDING, 0 when idle (H1). LIVE like the
-		// placement pair, and absent when the beat cannot say: the election reads absence
+		// placement field, and absent when the beat cannot say: the election reads absence
 		// as "not known to be busy", and the runner's own busy answer to an errand covers it.
 		// The chats that load is in ride with it, so they never disagree.
 		if (busy != null) {
@@ -2687,13 +2693,11 @@
 				// "desktop" about a device that never said.
 				if (typeof inc.mobile === 'boolean') adopted.mobile = inc.mobile;
 				else if (cur && typeof cur.mobile === 'boolean') adopted.mobile = cur.mobile;
-				// The placement pair, preserved ABSENT the same way -- the election skips a
+				// The placement field, preserved ABSENT the same way -- the election skips a
 				// peer that cannot say rather than striking it out, so absence has to survive
 				// the merge as absence.
 				if (typeof inc.hand === 'boolean') adopted.hand = inc.hand;
 				else if (cur && typeof cur.hand === 'boolean') adopted.hand = cur.hand;
-				if (typeof inc.folder === 'boolean') adopted.folder = inc.folder;
-				else if (cur && typeof cur.folder === 'boolean') adopted.folder = cur.folder;
 				// Busy rides the freshest line, LIVE: a line that cannot say keeps the last
 				// answer only while it is the same device speaking.
 				if (inc.busy != null) adopted.busy = busyDepth(inc.busy);
@@ -2820,13 +2824,12 @@
 			// from "says desktop". Coercing absent to false would seat a phone on an old
 			// build; coercing it to true would strand a fleet mid-rollout.
 			if (typeof rec.mobile === 'boolean') recOut.mobile = rec.mobile;
-			// The placement pair, relayed verbatim (booleans, no clock in them). LEFT
+			// The placement field, relayed verbatim (booleans, no clock in them). LEFT
 			// ABSENT when the gateway or the peer does not send them, because the election
 			// must be able to tell "cannot say" from "has not got it": the first is named
 			// as a maybe, the second is struck out, and a fleet mid-rollout is full of the
 			// first. Coercing absent to false is how seq 217 struck a live runner out.
 			if (typeof rec.hand === 'boolean')   recOut.hand   = rec.hand;
-			if (typeof rec.folder === 'boolean') recOut.folder = rec.folder;
 			// The turns that machine is running or holding (H1), relayed verbatim. LEFT
 			// ABSENT when the gateway or the peer does not send it: unknown is not idle,
 			// but neither is it busy, and the runner answers a busy errand itself.
@@ -3373,9 +3376,8 @@
 	/// Does this presence record MEET the caller's requirement -- a beat field that must
 	/// be explicitly true for this peer to be seated at all?
 	///
-	/// `placeTask` uses it for `hand` and `folder`: only a machine that holds the machine
-	/// hand may be seated for a `run`, and only one that holds the real folder is worth
-	/// handing a compile to. ABSENT IS NOT FALSE, and that distinction is the seq-218
+	/// `placeTask` uses it for `hand`: only a machine that holds the machine
+	/// hand may be seated for a `run`. ABSENT IS NOT FALSE, and that distinction is the seq-218
 	/// rollout rule applied here: a peer on a build that predates the field cannot say,
 	/// so it is skipped from the LIVE pass (nothing is dispatched on a guess) and named
 	/// by `nobody()` as unknown rather than struck out as lacking it.
@@ -3541,8 +3543,7 @@
 	}
 
 	/// May the election seat this peer at all: REACHABLE (rulings §1, design 2.5) -- not
-	/// a phone, meeting the caller's requirement (`require`: `hand`, or `folder` for a chat
-	/// whose folder is rooted on the asker, F4c), able to run this page's engine and the
+	/// a phone, meeting the caller's requirement (`require`: `hand`), able to run this page's engine and the
 	/// chat's provider (`recEngineOk`, a native runner only), stated and listening (`recGenuine`, the
 	/// gateway's `listening` where it derives it, else the beat within `w`). Busy is asked
 	/// apart (`busyHere`), so a busy peer is named in `passed`. The one test every seat
@@ -3554,7 +3555,7 @@
 
 	/// Does `rec` serve a task of kind `task` at all (F2-FIX M2)? A capability, not a beat field
 	/// read for another purpose: a paired native runner (Kimberlite, `kind: 'runner'`) serves turns
-	/// and nothing else -- it has no compile server -- so its `folder` (F2a) must never seat it for
+	/// and nothing else -- it has no compile server -- so it must never be seated for
 	/// a compile, which it would never take. A tab serves every kind. '' or 'turn' asks nothing.
 	function servesTask(rec, task) {
 		if (!task || task === 'turn') return true;
@@ -3735,10 +3736,6 @@
 			// Every source the turn pays with across its halves (OWNKEY §2.2, daimond.js
 			// electSources): the runner is offered only when it can use each one.
 			sources:                o.sources,
-			// A chat whose folder is rooted on this device runs only where a folder is
-			// rooted too (F4c, UNBLOCK-32): a runner without one would reach none of it, and
-			// a switch that offers a runner which then cannot do the turn is a fault (§1).
-			require:                o.needFolder ? 'folder' : '',
 		}, n);
 		box.passed = res.passed || [];
 		var target = res.target;
@@ -3981,16 +3978,13 @@
 			// RUNNER-DOOR: no rule above, yet not offered: it is not listening (no live door).
 			if (!why && !recGenuine(nrec, now, o.freshWindowMs || DISPATCH_FRESH_MS)) why = silentWhy(o);
 			// SEATWHY-ALL: listening, yet passed over: the seating rule that kept it (reachable,
-			// busyHere). No source at all, a phone, without the chat's folder, an engine this page
-			// cannot yet check (its id unknown), or busy with another chat.
+			// busyHere). No source at all, a phone, an engine this page cannot yet check (its
+			// id unknown), or busy with another chat.
 			if (!why) {
-				var req = o.needFolder ? 'folder' : '';
 				why = !srcs.length ? 'runner-nosource'
 					: recMobileView(nrec) ? 'runner-phone'
-					: !meetsRequire(nrec, req) ? 'runner-require'
 					: !recEngineOk(nrec, eo) ? 'runner-unchecked'
 					: recBusy(nrec, nomId, eo) ? 'runner-busy' : '';
-				if (why === 'runner-require') out.require = req;
 			}
 			if (why) { out.why = why; out.runnerId = nomId; }
 		} else if (!runner && nomId && !nrec && !o.presenceUnknown && nomId !== String(o.selfId || '')
@@ -4080,9 +4074,11 @@
 			if (!rec || rec.mobile === true) continue;		// a phone is never the answer here
 			if (!servesTask(rec, task)) continue;			// nor one that never takes the task
 			var when = leaseMs(rec.lastSeen);
-			if (rec[field] === true) {
+			// No field: every machine that serves the task is known to qualify.
+			var has = field ? rec[field] : true;
+			if (has === true) {
 				if (!sure || when > leaseMs(sure.lastSeen)) sure = { id: id, rec: rec, lastSeen: when };
-			} else if (rec[field] == null) {
+			} else if (has == null) {
 				if (!maybe || when > leaseMs(maybe.lastSeen)) maybe = { id: id, rec: rec, lastSeen: when };
 			}
 		}
@@ -4194,14 +4190,13 @@
 			if (!miss.length && (want === 0 || want <= room)) return here('here');
 			var why = miss.length ? 'missing-files' : 'too-large';
 			var more = { n: miss.length, needMB: want, roomMB: room };
-			// A runner that HOLDS THE FOLDER, so the book it lays out is the real one and
-			// the PDF it writes lands beside the source rather than in a replica.
-			// A compile server, too: a native runner holds the folder but compiles nothing (M2).
-			var co = withRequire(o, 'folder');
+			// A COMPILE SERVER: a native runner compiles nothing (M2). No beat field is
+			// required, since the folder grant is gone and no device holds a folder (D-20261031-11).
+			var co = withRequire(o, null);
 			co.task = 'compile';
 			var r = handoffTarget(p, co, t);
 			if (r.target) return onRunner(r, why, more);
-			return nobody('folder', why, more, 'compile');
+			return nobody(null, why, more, 'compile');
 		}
 
 		// Every other kind is local until it declares a need.
@@ -5528,21 +5523,20 @@
 	//                Report-only; the turn is handed back.
 	// ════════════════════════════════════════════════════════════
 
-	var BLOCKER_KINDS = ['consent', 'ask', 'lock', 'provider', 'place', 'toolkit', 'run', 'change'];
+	var BLOCKER_KINDS = ['consent', 'ask', 'lock', 'provider', 'run', 'change'];
 
-	// ── Permits: the three engine questions a hand-off routes home ──
+	// ── Permits: the engine questions a hand-off routes home ──
 	//
-	// CONSENT-ROUTE (10 Oct). A write outside the Diamond (`place`), a toolkit on first use
-	// (`toolkit`) and a command in the ask mode (`run`) were asked as a dialog on the RUNNER,
-	// a machine nobody is at, so a handed-off turn sat there until B's own deadline or for
-	// ever. They are now asked on the device the turn was sent from, through the consent
-	// relay, and answered allow/deny under their own kind. A yes grants THIS TURN only: the
-	// engine's turn-scoped allow, never a mark (a mark is in force only where it was pressed,
-	// markshere.js R2), save the toolkit, which the answering device writes to the Diamond.
+	// CONSENT-ROUTE (10 Oct). A command in the ask mode (`run`) was asked as a dialog on the
+	// RUNNER, a machine nobody is at, so a handed-off turn sat there until B's own deadline or
+	// for ever. It is now asked on the device the turn was sent from, through the consent
+	// relay, and answered allow/deny under its own kind. A yes grants THIS TURN only: the
+	// engine's turn-scoped allow. No place or toolchain is a grant any more (D-20261031-11),
+	// so neither is asked.
 	// UNBLOCK-26 U5: `change` -- an edit, delete or move of a file he made, shown as a
 	// diff and asked of him alone; the autonomous setting never answers it.
-	var PERMIT_ASKS = ['place', 'toolkit', 'run', 'change'];
-	var PERMIT_YES = { place: 'allow-place', toolkit: 'allow-kit', run: 'allow', change: 'allow-change' };
+	var PERMIT_ASKS = ['run', 'change'];
+	var PERMIT_YES = { run: 'allow', change: 'allow-change' };
 	// Why a permit was not granted, as the asking device is told it.
 	var PERMIT_WHYS = ['refused', 'timeout', 'unsupported'];
 	// The engine's word for each, so the model is told the same reason the person is
@@ -5556,7 +5550,7 @@
 	/// The engine's word for a permit not granted for `why`; an unknown reason is a plain no.
 	function permitNoWord(why) { return PERMIT_NO_WORD[String(why || '')] || 'deny'; }
 
-	/// Is `k` one of the three permit questions?
+	/// Is `k` one of the permit questions?
 	function permitAsk(k) { return PERMIT_ASKS.indexOf(String(k || '')) >= 0; }
 
 	/// The permit kinds named in `a`, known ones only, each once.

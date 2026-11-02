@@ -93,12 +93,12 @@ console.log('\n— A: `busy` is a depth, tri-state end to end —');
 {
 	const now = Date.now();
 	Pr.forget();
-	Pr.beat(NOM,  'argonaut', now, false, true, 'b1', true, false, null, null, 2);
+	Pr.beat(NOM,  'argonaut', now, false, true, 'b1', true, false, null, 2);
 	Pr.beat(DESK, 'oldbox',   now, false, true, 'b0', true, false);
 	let snap = Pr.snapshot();
 	check('A1 a beat that says busy carries its depth', snap[NOM] && snap[NOM].busy === 2, JSON.stringify(snap[NOM]));
 	check('A1 a beat that cannot say carries NO busy field', snap[DESK] && !('busy' in snap[DESK]), JSON.stringify(snap[DESK]));
-	Pr.beat(NOM, 'argonaut', now + 1000, false, true, 'b1', true, false, null, null, 0);
+	Pr.beat(NOM, 'argonaut', now + 1000, false, true, 'b1', true, false, null, 0);
 	check('A2 an explicit 0 unsays busy', Pr.snapshot()[NOM].busy === 0);
 	check('A3 busyDepth reads an old boolean true as one, junk as zero',
 		typeof P.busyDepth === 'function' && P.busyDepth(true) === 1 && P.busyDepth('3') === 3 && P.busyDepth(-1) === 0 && P.busyDepth('x') === 0);

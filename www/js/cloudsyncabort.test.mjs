@@ -5,13 +5,13 @@
    browser's do: `write` goes to a swap buffer, `close` COMMITS it over the file, `abort`
    discards it and leaves the file as it was.
 
-   THE BUG (FIRE sync-abort, OPFS-LOCK check defect 1, 16 Oct 2026). `materialiseTo` and
-   `fetchDown` called `close()` when a chunk was missing or a write threw, committing the
-   partial bytes over the file, then removed the file. A sync merge into the open folder
-   over a file the user already had, cut short by a network blip, emptied his file and
-   deleted it.
+   THE BUG (FIRE sync-abort, OPFS-LOCK check defect 1, 16 Oct 2026). `fetchDown` called
+   `close()` when a chunk was missing or a write threw, committing the partial bytes over
+   the file, then removed the file. A download over a file the user already had, cut short
+   by a network blip, emptied his file and deleted it. (The folder door, `materialiseTo`,
+   went with the shared folder, UNBLOCK-82 G2, 1 Nov 2026.)
 
-   Asserted, for both doors, with a manifest whose 2nd chunk is missing: an EXISTING file
+   Asserted, with a manifest whose 2nd chunk is missing: an EXISTING file
    keeps its exact bytes and still exists; a NEW path leaves no file behind; and a whole
    download still writes the file as before. The error text is the one the caller saw.
 
@@ -20,10 +20,8 @@
    and `evict` removes only under the lock, and only the File it judged: a write that
    landed after the judgement is kept.
 
-   And (OPFS-LOCK3): `materialiseTo`'s older whole-file (v1) branch keeps an existing file and
-   leaves no new one when storage has lost it or the fetch throws; an `abort()` that throws
-   still ends as the same error, the existing file untouched, a new path's empty file removed
-   under the lock, and the lock given back; a failed fetch of a new path whose name has a
+   And (OPFS-LOCK3): an `abort()` that throws still ends as the same error, the existing file
+   untouched, a new path's empty file removed under the lock, and the lock given back; a failed fetch of a new path whose name has a
    reserved character removes the file by the name it is stored under.
 
    Round 2 (FIRE sync-abort r2, 17 Oct 2026). (d) `fetchDown` removed a STALE copy before downloading its
@@ -166,67 +164,11 @@ function fakeLocks(onAsk) {
 	};
 }
 const said = async (p) => { try { return await p; } catch (e) { return 'THREW ' + (e && e.message); } };
-const GAP_TO = /^Error: gap\.txt could not be written; cloud storage no longer holds all of its parts\.$/;
 const GAP_DOWN = /^Error: gap\.txt could not be fetched; cloud storage no longer holds all of its parts\.$/;
-
-console.log('\nmaterialiseTo: a merge into the open folder\n');
-{
-	const folder = dir(new Map([['gap.txt', enc(MINE)]]));
-	const r = await said(tab(dir(new Map())).materialiseTo(folder, 'gap.txt'));
-	check('(a) a missing chunk over an EXISTING file is the same error', GAP_TO.test(r), r);
-	check('(a) and the file is still there', folder.files.has('gap.txt'));
-	check('(a) with its exact bytes', folder.files.has('gap.txt') && dec(folder.files.get('gap.txt')) === MINE,
-		folder.files.has('gap.txt') ? JSON.stringify(dec(folder.files.get('gap.txt'))) : 'deleted');
-}
-{
-	const folder = dir(new Map());
-	const r = await said(tab(dir(new Map())).materialiseTo(folder, 'gap.txt'));
-	check('(b) a missing chunk on a NEW path is the same error', GAP_TO.test(r), r);
-	check('(b) and leaves no file behind', !folder.files.has('gap.txt'), [...folder.files.keys()].join(','));
-}
-{
-	const folder = dir(new Map([['full.txt', enc(MINE)]]));
-	const r = await said(tab(dir(new Map())).materialiseTo(folder, 'full.txt'));
-	check('(c) a whole download over a file writes it', /^OK: wrote full\.txt \(22 bytes\)/.test(r), r);
-	check('(c) with the cloud bytes', dec(folder.files.get('full.txt') || new Uint8Array(0)) === 'first half second half');
-	const n = dir(new Map());
-	const r2 = await said(tab(dir(new Map())).materialiseTo(n, 'full.txt', 'full (copy).txt'));
-	check('(c) and onto a new path', /^OK: wrote full \(copy\)\.txt/.test(r2) && dec(n.files.get('full (copy).txt') || new Uint8Array(0)) === 'first half second half', r2);
-}
-
-{
-	const folder = dir(new Map([['boom.txt', enc(MINE)]]));
-	const r = await said(tab(dir(new Map())).materialiseTo(folder, 'boom.txt'));
-	check('(a) a fetch that THROWS mid-file over an existing file is an error', /^Error: boom\.txt could not be written/.test(r), r);
-	check('(a) and leaves its exact bytes', dec(folder.files.get('boom.txt') || enc('deleted')) === MINE);
-}
-
-console.log('\nmaterialiseTo: an older whole-file (v1) manifest\n');
-{
-	const V1 = { 'v1gone.txt': { v: 1, size: 9, key: 'k1g', chunks: ['c'] }, 'v1boom.txt': { v: 1, size: 9, key: 'k1b', chunks: ['c'], v1: 'throw' },
-		'v1ok.txt': { v: 1, size: 9, key: 'k1o', chunks: ['c'], v1: 'old words' } };
-	for (const name of ['v1gone.txt', 'v1boom.txt']) {
-		const folder = dir(new Map([[name, enc(MINE)]]));
-		const r = await said(tab(dir(new Map()), null, V1).materialiseTo(folder, name));
-		check('(v1) ' + name + ' over an EXISTING file is an error', new RegExp('^Error: ' + name.replace('.', '\\.') + ' could not be written').test(r), r);
-		check('(v1) ' + name + ' leaves its exact bytes', dec(folder.files.get(name) || enc('deleted')) === MINE);
-		const fresh = dir(new Map());
-		const r2 = await said(tab(dir(new Map()), null, V1).materialiseTo(fresh, name));
-		check('(v1) ' + name + ' on a NEW path is an error and leaves no file', /could not be written/.test(r2) && fresh.files.size === 0,
-			r2 + ' / ' + [...fresh.files.keys()].join(','));
-	}
-	const folder = dir(new Map([['v1ok.txt', enc(MINE)]]));
-	const r = await said(tab(dir(new Map()), null, V1).materialiseTo(folder, 'v1ok.txt'));
-	check('(v1) a whole old file still writes', /^OK: wrote v1ok\.txt \(9 bytes\)/.test(r) && dec(folder.files.get('v1ok.txt')) === 'old words', r);
-}
 
 console.log('\nan abort() that throws\n');
 {
 	for (const name of ['gap.txt', 'boom.txt']) {
-		const folder = dir(new Map([[name, enc(MINE)]]), {}, null, { abortThrows: true });
-		const r = await said(tab(dir(new Map())).materialiseTo(folder, name));
-		check('(abort) materialiseTo ' + name + ': an error, not a throw', /^Error: /.test(r), r);
-		check('(abort) materialiseTo ' + name + ': the existing file keeps its exact bytes', dec(folder.files.get(name) || enc('deleted')) === MINE);
 		// A file that appears at a path not on this device is not written over (OPFS-LOCK5),
 		// so a failing download only reaches an existing file through a stale copy of it.
 		const opfs = dir(new Map([[name, enc(MINE)]]), { [name]: 1 }, null, { abortThrows: true });
@@ -242,29 +184,11 @@ console.log('\nan abort() that throws\n');
 		check('(abort) fetchDown ' + name + ' over a stale copy: it keeps its exact bytes',
 			dec(stale.files.get(name) || enc('deleted')) === 'first half second half');
 	}
-	let locks, heldAt = null;
-	const fresh = dir(new Map(), {}, () => { heldAt = locks.holding('daimond-file:folder:gap.txt'); }, { abortThrows: true });
-	locks = fakeLocks();
-	const r = await said(tab(dir(new Map()), locks).materialiseTo(fresh, 'gap.txt'));
-	check('(abort) on a NEW path, under the lock: the same error', GAP_TO.test(r), r);
-	check('(abort) the empty file still goes, while the lock is held', heldAt === true && fresh.files.size === 0,
-		String(heldAt) + ' / ' + [...fresh.files.keys()].join(','));
-	check('(abort) and the lock is given back', !locks.holding('daimond-file:folder:gap.txt'));
 	const opfs = dir(new Map(), {}, null, { abortThrows: true });
 	const locks2 = fakeLocks();
 	const r2 = await said(tab(opfs, locks2).fetch('gap.txt', false));
 	check('(abort) fetchDown on a NEW path, under the lock: the same error, no file, lock back',
 		GAP_DOWN.test(r2) && opfs.files.size === 0 && !locks2.holding('daimond-file:sandbox:gap.txt'), r2);
-}
-
-{
-	// The user saves the file at that path while a long merge of it is failing.
-	const folder = dir(new Map());
-	midway = () => { folder.files.set('save.txt', enc(MINE)); };
-	const r = await said(tab(dir(new Map())).materialiseTo(folder, 'save.txt'));
-	midway = null;
-	check('(e) a file saved at the path DURING a failing merge is an error', /^Error: save\.txt could not be written/.test(r), r);
-	check('(e) and his saved file survives with its bytes', dec(folder.files.get('save.txt') || enc('deleted')) === MINE);
 }
 
 console.log('\nfetchDown: a file pulled onto this device\n');
@@ -309,16 +233,6 @@ console.log('\nfetchDown: a file pulled onto this device\n');
 }
 
 console.log('\nunder the file lock (filelock.js)\n');
-{
-	let locks, heldAt = null;
-	const folder = dir(new Map(), {}, (n) => { heldAt = locks.holding('daimond-file:folder:gap.txt'); });
-	locks = fakeLocks();
-	const r = await said(tab(dir(new Map()), locks).materialiseTo(folder, 'gap.txt'));
-	check('(D1) materialiseTo: the same error', GAP_TO.test(r), r);
-	check('(D1) materialiseTo: the stub goes while the file lock is held', heldAt === true, String(heldAt));
-	check('(D1) materialiseTo: and no file is left', !folder.files.has('gap.txt'));
-	check('(D1) materialiseTo: the lock is given back', !locks.holding('daimond-file:folder:gap.txt'));
-}
 {
 	let locks, heldAt = null;
 	const opfs = dir(new Map(), {}, (n) => { heldAt = locks.holding('daimond-file:sandbox:gap.txt'); });
@@ -389,14 +303,12 @@ console.log('\nround 2: a stale copy, and a save during a failing download\n');
 console.log('\nround 2 under the file lock (filelock.js)\n');
 {
 	// (e) under the lock: the placeholder check runs inside the lock, with the removal.
-	for (const door of ['folder', 'sandbox']) {
+	for (const door of ['sandbox']) {
 		let locks, removed = 0;
 		const target = dir(new Map(), {}, () => { removed++; });
 		locks = fakeLocks();
 		midway = () => { target.files.set('save.txt', enc(MINE)); };
-		const r = door === 'folder'
-			? await said(tab(dir(new Map()), locks).materialiseTo(target, 'save.txt'))
-			: await said(tab(target, locks).fetch('save.txt', false));
+		const r = await said(tab(target, locks).fetch('save.txt', false));
 		midway = null;
 		check('(e/lock) ' + door + ': a save DURING a failing download is an error', /^Error: save\.txt could not be/.test(r), r);
 		check('(e/lock) ' + door + ': his saved file survives with its bytes, nothing removed',
@@ -404,13 +316,11 @@ console.log('\nround 2 under the file lock (filelock.js)\n');
 		check('(e/lock) ' + door + ': and the lock is given back', !locks.holding('daimond-file:' + door + ':save.txt'));
 	}
 	// (b) under the lock: with no save, the empty placeholder still goes, while the lock is held.
-	for (const door of ['folder', 'sandbox']) {
+	for (const door of ['sandbox']) {
 		let locks, heldAt = null;
 		const target = dir(new Map(), {}, () => { heldAt = locks.holding('daimond-file:' + door + ':save.txt'); });
 		locks = fakeLocks();
-		const r = door === 'folder'
-			? await said(tab(dir(new Map()), locks).materialiseTo(target, 'save.txt'))
-			: await said(tab(target, locks).fetch('save.txt', false));
+		const r = await said(tab(target, locks).fetch('save.txt', false));
 		check('(b/lock) ' + door + ': the placeholder goes under the lock', /^Error: /.test(r) && heldAt === true && target.files.size === 0,
 			r + ' / ' + String(heldAt) + ' / ' + [...target.files.keys()].join(','));
 	}
@@ -479,74 +389,6 @@ for (const locked of [true, false]) {
 	const r2 = await said(tab(clean, locked ? fakeLocks() : null, { 'v1.txt': M_V1 }).fetch('v1.txt', false));
 	check('(absent/v1) ' + how + ': with nothing there the file is fetched', /^OK: fetched v1\.txt/.test(r2)
 		&& dec(clean.files.get('v1.txt') || enc('none')) === 'CLOUD V1!', r2);
-}
-
-console.log('\nqr2 (release QA): the folder merge never writes over a save it did not judge\n');
-{
-	// The merge (daimond.js settleAdopted / materialiseShared) judged the folder's copy of
-	// full.txt stale and called materialiseTo. A Doc Save (or a daimon file_write, both under
-	// 'daimond-file:folder:full.txt') holds the file as materialiseTo asks for it, and closes
-	// the person's bytes. materialiseTo is then granted the lock and writes the cloud version
-	// over them: bytes nobody judged, in his real folder, kept in no version row.
-	const folder = dir(new Map([['full.txt', enc('old stale copy')]]));
-	const locks = fakeLocks((n) => {
-		if (n !== 'daimond-file:folder:full.txt') return;
-		return folder.getFileHandle('full.txt').then((h) => h.createWritable()).then(async (w) => { await w.write(enc(MINE)); await w.close(); });
-	});
-	const r = await said(tab(dir(new Map()), locks).materialiseTo(folder, 'full.txt'));
-	check('qr2 (folder/judged) a save that closed while the merge waited for the lock is kept',
-		dec(folder.files.get('full.txt') || enc('deleted')) === MINE,
-		r + ' / ' + (folder.files.has('full.txt') ? dec(folder.files.get('full.txt')) : 'deleted'));
-	check('qr2 (folder/judged) and the lock is given back', !locks.holding('daimond-file:folder:full.txt'));
-}
-{
-	// The same for a path the merge found absent from the folder (materialiseShared's f === null):
-	// a file the person creates there before the lock is granted is written over.
-	const folder = dir(new Map());
-	const locks = fakeLocks((n) => {
-		if (n !== 'daimond-file:folder:full.txt') return;
-		return folder.getFileHandle('full.txt', { create: true }).then((h) => h.createWritable()).then(async (w) => { await w.write(enc(MINE)); await w.close(); });
-	});
-	const r = await said(tab(dir(new Map()), locks).materialiseTo(folder, 'full.txt'));
-	check('qr2 (folder/absent) a file created at a path the merge found absent is kept',
-		dec(folder.files.get('full.txt') || enc('deleted')) === MINE,
-		r + ' / ' + (folder.files.has('full.txt') ? dec(folder.files.get('full.txt')) : 'deleted'));
-}
-
-console.log('\nSA3 on the lock line: the close re-check is held, and a small file is compared byte for byte\n');
-{
-	// A disk with a coarse clock (FAT, a network share): another program saves the same number
-	// of bytes in the same tick while the merge's download of the file is open. Size and time
-	// say nothing moved; only the bytes do. The re-check runs inside the writable's hold.
-	const M_V1 = { v: 1, size: 9, bytes: 9, key: 'k1', v1: 'CLOUD V1!', chunks: [] };
-	const theirs = 'THEIRS V1';
-	const folder = dir(new Map([['v1.txt', enc('older v1!')]]));
-	const locks = fakeLocks();
-	let heldThen = null;
-	midway = () => { heldThen = locks.holding('daimond-file:folder:v1.txt'); folder.files.set('v1.txt', enc(theirs)); };
-	const r = await said(tab(dir(new Map()), locks, { 'v1.txt': M_V1 }).materialiseTo(folder, 'v1.txt'));
-	check('sa3 (coarse/close) a same-size, same-tick save mid-download is kept', dec(folder.files.get('v1.txt')) === theirs && /^kept: /.test(r),
-		r + ' / ' + dec(folder.files.get('v1.txt')));
-	check('sa3 (coarse/close) the download held the file\'s lock across it', heldThen === true, String(heldThen));
-	check('sa3 (coarse/close) and gave the lock back', !locks.holding('daimond-file:folder:v1.txt'));
-}
-{
-	// The same tick between the merge's judgement and the lock: the judged File's bytes are not
-	// the ones at the path when the write opens, so it is refused before a byte is written.
-	const folder = dir(new Map([['full.txt', enc('older copy, 22 bytes!!')]]));
-	const judged = await (await folder.getFileHandle('full.txt')).getFile();
-	folder.files.set('full.txt', enc('their save, 22 bytes!!'));
-	const locks = fakeLocks();
-	const r = await said(tab(dir(new Map()), locks).materialiseTo(folder, 'full.txt', undefined, undefined, judged));
-	check('sa3 (coarse/open) a same-size, same-tick save after the judgement is kept', dec(folder.files.get('full.txt')) === 'their save, 22 bytes!!' && /^kept: /.test(r),
-		r + ' / ' + dec(folder.files.get('full.txt')));
-}
-{
-	// And the judged bytes, still there, are written over: the compare refuses only a change.
-	const folder = dir(new Map([['full.txt', enc('older copy, 22 bytes!!')]]));
-	const judged = await (await folder.getFileHandle('full.txt')).getFile();
-	const r = await said(tab(dir(new Map()), fakeLocks()).materialiseTo(folder, 'full.txt', undefined, undefined, judged));
-	check('sa3 (coarse) an unchanged judged copy is written over', dec(folder.files.get('full.txt')) === 'first half second half', r);
 }
 
 console.log('\n' + (failures ? failures + ' FAILED' : 'ALL PASS'));

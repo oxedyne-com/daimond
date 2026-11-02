@@ -60,18 +60,18 @@
 	<p>As storage fills, the files longest unused go back to the cloud on their own. Freeing is not deleting, since the file is still listed and comes back when asked for.</p>
 	<p>A daimon is told plainly when a file it wants is in the cloud, and has to fetch it deliberately. A cap limits how much it may bring down on its own.</p>
 
-	<h2 id="s4">Handing a folder over</h2>
-	<p>Every row in the tree has a <span class="ui">◈</span> and a <span class="ui">⋯</span>. The ◈ adds the file or folder to what is in focus, or takes it out, and the ⋯ says the same in words: <span class="ui">Add to</span> the diamond by name, or <span class="ui">Add to this chat</span>, and <span class="ui">Remove from</span> once it is in. On a computer both appear when the pointer is over the row; on a phone the ◈ is always drawn and a long press opens the ⋯. A new diamond starts with nothing added, and its <span class="ui">Can change</span> list says where to add from.</p>
+	<h2 id="s4">Attaching a file or folder</h2>
+	<p>Every row in the tree has a <span class="ui">◈</span> and a <span class="ui">⋯</span>. The ◈ attaches the file or folder to what is in focus, or takes it off again, and the ⋯ says the same in words: <span class="ui">Add to</span> the diamond by name, or <span class="ui">Add to this chat</span>, and <span class="ui">Remove from</span> once it is in. On a computer both appear when the pointer is over the row; on a phone the ◈ is always drawn and a long press opens the ⋯. A new diamond starts with nothing attached.</p>
 	<ul>
-		<li><strong>A diamond is in focus.</strong> The file or folder joins that diamond's workspace and stays until you take it out.</li>
+		<li><strong>A diamond is in focus.</strong> The file or folder stays attached to that diamond until you take it off.</li>
 		<li><strong>A chat is in focus.</strong> The attachment is for the next turn only.</li>
 	</ul>
 	<p>Attaching copies nothing. The file stays where it is and the diamond points at it, so attaching one folder to two diamonds still leaves one folder.</p>
 	<p>Each attachment is either <span class="ui">Note</span>, meaning the path is worth knowing and costs a few tokens, or <span class="ui">Read</span>, meaning the contents are wanted now. Start with Note, which is much the cheaper. Either way the text it generates goes into the message box in front of what you type, where you can edit or delete it.</p>
-	<p>Ticking a <em>folder</em> in the workspace group is the permission, so this chat or diamond may then read and change what is inside. Ticking a file only puts it in front of the model. A diamond's <span class="ui">Reach</span> row names every folder it may write in, and says so in both trees.</p>
+	<p>Attaching only says where to look. It gives a daimon nothing it could not reach already, and taking an attachment off takes nothing away. What a daimon can reach depends on where the turn runs, as the next section says.</p>
 
 	<h3 id="s5">What a daimon can open</h3>
-	<p>A daimon can open only what is in its diamond's workspace. Nothing else is readable or writable through the file tools, by the daimon or by any helper it dispatches. The check is in compiled code at the one door every file tool passes, and that code is in a bundle that builds reproducibly from public source, so it is not an instruction in a prompt.</p>
+	<p>On Kimberlite, a daimon reaches your home folder. Daimond still keeps out the files named as secrets, such as your keys and passwords, and its own and Kimberlite's records. In the browser, a daimon changes only its diamond's own files, and a chat only its own folder. Nothing else is writable through the file tools, by the daimon or by any helper it dispatches. The check is in compiled code at the one door every file tool passes, and that code is in a bundle that builds reproducibly from public source, so it is not an instruction in a prompt.</p>
 	<p>That rule settles what a daimon can reach and says nothing about where what it reads ends up, because whatever it opens goes to your model provider with the rest of the turn.</p>
 	<p>Deleting or wiping counts the same way. Past a limit you set under <span class="ui">Settings</span> — eight in a turn by default — the turn stops there and asks before it goes on. Wiping a file means writing over it so that less than half of it is left. Daimond keeps a copy of anything deleted or wiped for at least seven days.</p>
 
@@ -79,8 +79,8 @@
 	<p>Rows carry an age, <span class="ui">Added {when}</span>. A path that is no longer there is drawn as <span class="ui">Gone</span> with no open action, so a dead row never poses as a live one.</p>
 	<p>Anything a daimon attached for itself, such as a fold's harvest or a file an agent kept, sits under one collapsed heading, <span class="ui">Added by the daimon</span>, with a count and a <span class="ui">Drop all</span>. Your own attachments stay where they are.</p>
 
-	<h3 id="s7">Added folders and your other devices</h3>
-	<p>Adding a folder or a file to a diamond, or a folder to a chat&rsquo;s workspace, syncs to your other devices, but it does not take effect there until you press it again on that device. Open the same diamond on a second device and a folder added elsewhere reads as not yet in use here, with <span class="ui">Use here</span> to start using it there, or <span class="ui">Use all here</span> for everything not yet in use at once. Removing a folder reaches every device on its own; starting to use one does not, so an added folder is in use only on a device where it was added or pressed again.</p>
+	<h3 id="s7">Attachments and your other devices</h3>
+	<p>What you attach to a diamond syncs to your other devices and points at the same files there, with nothing to press again. An attachment that lives on another machine says where it lives, and a daimon on this device cannot open it from here.</p>
 
 	<h3 id="s8">Sharing a folder to your other devices</h3>
 	<p>A folder in the browser's own storage reaches your other devices on its own, so there is nothing to share by hand. A folder on your computer's disk is Kimberlite's to work on, and stays on that computer.</p>
@@ -88,7 +88,7 @@
 	<h2 id="s9">Documents, and books</h2>
 	<p>Open a <code>.typ</code> file and the Doc panel gains two buttons. <span class="ui">Compile</span> lays the document out in the page and writes a preview PDF beside the source, and while those pages are up, every save rebuilds them. Press it on a chapter and it compiles the document that includes the chapter, then takes you to that chapter's page.</p>
 	<p>Both panels have to be on screen for the loop to run. Where the window is too narrow, the Doc panel says so, and one rebuild catches up when they return.</p>
-	<p>The editor need not be Daimond's. A save from any editor writing into the granted folder is picked up within about a second.</p>
+	<p>The editor need not be Daimond's. A save from any editor writing into the same folder is picked up within about a second.</p>
 	<p>A phone cannot hold a book's files or afford the memory a layout costs, so it hands the compile to a paired computer that can, sealed to your account exactly as a turn is, and the laid-out pages come back.</p>
 
 	<h2 id="s10">Any kind of file</h2>

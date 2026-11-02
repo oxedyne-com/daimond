@@ -67,7 +67,7 @@ test('B3: every page call says whether the row opens a turn', () => {
 // What the engine does with `opens` is pinned by behaviour in Rust
 // (protocol.rs `of_row_opening_marks_only_a_row_a_turn_was_run_on`), not by its spelling here.
 test('B3: the engine takes opens, and the prose restore reads the interjection', () => {
-	assert.match(APP, /pub fn append_message\(&self, role: String, content: String, pre: Option<String>,\s+mid: Option<String>, opens: bool\)/);
+	assert.match(APP, /pub fn append_message\(&self, role: String, content: String, pre: Option<String>,\s+mid: Option<String>, opens: bool, n: Option<u32>\)/);
 	const a = APP.indexOf('pub fn append_message(');
 	const body = APP.slice(a, APP.indexOf('\n    }\n', a));
 	assert.doesNotMatch(body, /\.opening\(\)/);

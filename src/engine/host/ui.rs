@@ -34,8 +34,21 @@ pub enum AskShown {
     Refused(String),
 }
 
+/// An act the ui port does for a tool, which a host without a page cannot (UNBLOCK-51).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiAct {
+    Show,       // `file_show`: a file on the page
+    Capture,    // `capture`: a picture of the page
+    Look,       // `crystal_look`: a model looking at a capture
+    Social,     // `social_read`, `social_send`
+    Mail,       // the mail tools
+}
+
 #[allow(async_fn_in_trait)]
 pub trait HostUi {
+    /// Can this host do `act` at all?  A tool needing an act its host cannot do is not offered,
+    /// so the model never meets "not available on this build" (UNBLOCK-51).
+    fn can(&self, _act: UiAct) -> bool { true }
     async fn put(&self, payload: &str) -> Outcome<()>;
     /// Put the `ask` tool's checked question before the person.  By default it is [`put`]'s, drawn
     /// on the page; a host with no page of its own (the runner) carries it home and says so.

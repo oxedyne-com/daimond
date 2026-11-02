@@ -43,11 +43,9 @@ async function paired(lead, name, label, extra = {}) {
 	return d;
 }
 const push = (s) => s.page.evaluate(async () => {
-	try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older build */ }
 	return window.DaimondSync.flush ? await DaimondSync.flush() : await DaimondSync.push();
 }).then(async () => { await sleep(400); }).catch(() => {});
 const pull = (s) => s.page.evaluate(async () => {
-	try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older build */ }
 	return DaimondSync.pull();
 }).then(() => sleep(400)).catch(() => {});
 async function rounds(devs, k) {

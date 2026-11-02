@@ -33,7 +33,7 @@ const fileOf = (text) => ({ size: Buffer.byteLength(text), text: async () => tex
 /// One merge of `remote` (inline files) and `theirIx` (the sender's index) into a device that holds
 /// `held` off its inline section (none of it in `local`), `base` its fork point, `ix` its own index;
 /// `same` the paths whose bytes are the sender's manifest's content; `refuse` the writes that fail.
-async function merge({ held = {}, local = {}, base = {}, remote, theirIx = {}, ix = {}, same = [], refuse = [], folder = false }) {
+async function merge({ held = {}, local = {}, base = {}, remote, theirIx = {}, ix = {}, same = [], refuse = [] }) {
 	const w = makeWindow({});
 	w.DaimondCloud = {
 		manifest: (p) => ix[p] || null,
@@ -41,7 +41,7 @@ async function merge({ held = {}, local = {}, base = {}, remote, theirIx = {}, i
 		localState: async (p) => ({ state: same.includes(p) ? 'same' : 'unknown' }),
 	};
 	const writes = [], committed = [];
-	const plan = { folder, roots: [''], app: {} };
+	const plan = { roots: [''], app: {} };
 	const stub = {
 		syncWalkPlan:      async () => plan,
 		collectFiles:      async () => ({ files: Object.assign({}, local), plan }),
@@ -54,7 +54,6 @@ async function merge({ held = {}, local = {}, base = {}, remote, theirIx = {}, i
 		withoutAppState:   (m) => m,
 		syncAppState:      () => false,
 		ownHere:           () => false,
-		withinShare:       () => true,
 		deleteSyncFile:    async () => true,
 		conflictName:      (p) => p + '.conflict',
 		heldLoc:           () => false,
@@ -78,11 +77,6 @@ const V1 = 'v1 '.repeat(50), V2 = 'phone edit '.repeat(40), VD = 'desk edit '.re
 	check('an edit held here is not written over by another device\'s concurrent edit', !r.writes.includes('p.md=' + VD), JSON.stringify(r.writes));
 	check('and theirs is kept beside it, under a name of its own (not the index\'s `.synced` slot)', r.writes.includes('p.md.conflict=' + VD), JSON.stringify(r.writes));
 	check('and the path is not agreed', !r.agreed.includes('p.md') && r.threw === null, JSON.stringify(r));
-}
-// ── The same in a machine folder: a conflict copy ──
-{
-	const r = await merge({ folder: true, held: { 'p.md': V2 }, remote: { 'p.md': VD } });
-	check('in a folder the disk stands and theirs lands beside it', !r.writes.includes('p.md=' + VD) && r.writes.includes('p.md.conflict=' + VD), JSON.stringify(r.writes));
 }
 // ── Met again on the next pull: the copy beside it is not written twice ──
 {

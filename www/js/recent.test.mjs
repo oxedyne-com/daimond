@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 
 const require = createRequire(import.meta.url);
 const R = require('./recent.js');
-const M = require('./markshere.js');
+const M = require('./apppaths.js');
 
 test('pathOf names the written file for the three write tools only', () => {
 	assert.equal(R.pathOf('file_write', JSON.stringify({ path: 'docs/plan.md', content: 'x' })), 'docs/plan.md');
@@ -89,26 +89,3 @@ test('when: just now, minutes, hours, then a day through the one formatter (week
 	assert.equal(R.when(now - 40 * 86400e3, now, 'en', just, fl), 'dayMonth@' + (now - 40 * 86400e3));
 });
 
-// N1: the rows ARE the fence's inputs, set-equal both ways.
-test('N1: Can change rows equal own_dir, marks, kits and waiting marks', () => {
-	const b = {
-		own_dir: 'diamonds/d1',
-		attached: ['docs', 'stories'],
-		read_only: ['stories'],
-		toolkits: ['rust'],
-		unconfirmed: ['notes'],
-	};
-	const rows = R.canChange(b);
-	assert.deepEqual(rows.map((r) => r.kind), ['own', 'mark', 'mark', 'ghost', 'kit']);
-	assert.equal(rows[2].ro, true);
-	assert.equal(rows[1].ro, false);
-	assert.deepEqual(R.rowKeys(rows), R.boundsKeys(b));
-	// Both ways: a row the fence lacks, or a grant with no row, breaks equality.
-	assert.notDeepEqual(R.rowKeys(rows.slice(1)), R.boundsKeys(b));
-	assert.notDeepEqual(R.rowKeys(rows), R.boundsKeys({ ...b, toolkits: ['rust', 'node'] }));
-	// No focus, no rows.
-	assert.deepEqual(R.canChange({ own_dir: '', attached: [], read_only: [], toolkits: [], unconfirmed: [] }), []);
-	assert.deepEqual(R.canChange(null), []);
-	// A chat has no own_dir row only when it has no scratch folder.
-	assert.deepEqual(R.canChange({ own_dir: 'chats/c1', attached: [] }).map((r) => r.kind), ['own']);
-});

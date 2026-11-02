@@ -49,10 +49,6 @@ pub trait HostFs {
     async fn delete_licensed(&self, root: FileRoot, lic: &Licence) -> Outcome<()>;
     async fn move_licensed(&self, root: FileRoot, from: &Licence, to: &Licence) -> Outcome<()>;
     fn storage_of(&self, root: FileRoot, path: &str) -> Storage;
-    fn thrown(&self) -> String;
-    fn take_thrown(&self) -> String;
-    fn arm_folder_watch(&self);
-    fn notify_folder_lost(&self);
     fn children_of(&self, dir: &str) -> Vec<(String, bool, u64)>;
     async fn cloud_fetch(&self, path: &str) -> Outcome<String>;
     async fn cloud_forget_licensed(&self, lic: &Licence) -> Outcome<String>;

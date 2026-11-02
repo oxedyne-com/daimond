@@ -3260,7 +3260,7 @@
 	/// The posture statement a beat sends, from `beatPresence`'s arguments. One place, so
 	/// the statement sent and the statement compared (`postureDue`) cannot drift apart.
 	function postureBody(deviceId, name, attended, servicing, runner, mobile,
-		hand, folder, busy, busyChats) {
+		hand, busy, busyChats) {
 		var body = { device_id: String(deviceId || ''), name: String(name || ''), attended: !!attended };
 		// SENT BOTH WAYS (UNBLOCK-1). Omitted when false, a runner that stopped listening
 		// said nothing, the gateway left `serviced_at` out, and `recGenuine` fell back to
@@ -3279,19 +3279,15 @@
 		// Omitted only when this device genuinely cannot say, which a gateway relays as
 		// absent so the peer falls back to the old inference rather than to "desktop".
 		if (typeof mobile === 'boolean') body.mobile = mobile;
-		// THE TWO PLACEMENT FIELDS: can this machine reach a machine hand, and does it
-		// hold the real mounted folder rather than a browser replica. They are what
-		// lets another device place a compile or a publish without asking -- a phone
-		// that cannot hold a book's files hands the layout to a machine that can.
+		// THE PLACEMENT FIELD: can this machine reach a machine hand. It is what lets
+		// another device place a publish without asking.
 		//
 		// Sent EXPLICITLY, both ways, and NOT sticky at the gateway. A hand unplugged
-		// and a folder grant withdrawn are both live changes, and only an explicit
-		// false can say so; absence then genuinely means "this build cannot say", which
+		// is a live change, and only an explicit false can say so; absence then genuinely means "this build cannot say", which
 		// the election reads as unknown and NAMES rather than striking out. `runner`'s
 		// send-only-when-true shape would leave a withdrawn hand reading as present for
 		// as long as the device kept beating.
 		if (typeof hand === 'boolean')   body.hand = hand;
-		if (typeof folder === 'boolean') body.folder = folder;
 		// The turns this machine is running or holding, 0 when idle (H1). Sent EXPLICITLY,
 		// 0 included, because an idle machine must be able to unsay a busy one.
 		if (typeof busy === 'number') body.busy = Math.max(0, busy | 0);
@@ -3315,11 +3311,11 @@
 	}
 
 	async function beatOnce(deviceId, name, attended, servicing, runner, mobile,
-		hand, folder, busy, busyChats) {
+		hand, busy, busyChats) {
 		if (!canBeat()) return null;
 		try {
 			var body = postureBody(deviceId, name, attended, servicing, runner, mobile,
-				hand, folder, busy, busyChats);
+				hand, busy, busyChats);
 			postureNoteSent(body);
 			var res = await call('POST', body, '?presence=1');
 			// REMOVED. The beat is the door a removed device meets first and most often,
@@ -3409,7 +3405,7 @@
 		if (!s) return;
 		if (!mine || typeof mine !== 'object') { postureFull = true; return; }
 		var same = !!mine.attended === !!s.attended && !!mine.runner === !!s.runner;
-		['mobile', 'hand', 'folder'].forEach(function (k) {
+		['mobile', 'hand'].forEach(function (k) {
 			if (typeof s[k] === 'boolean' && mine[k] !== s[k]) same = false;
 		});
 		if (typeof s.busy === 'number' && (Number(mine.busy) || 0) !== s.busy) same = false;
@@ -3447,11 +3443,11 @@
 	/// Against any other: the beat as before, every `BEAT_MS`, at once on a busy edge,
 	/// and at once when one was owed while the door was shut.
 	function postureDue(deviceId, name, attended, servicing, runner, mobile,
-		hand, folder, busy, busyChats) {
+		hand, busy, busyChats) {
 		if (!canBeat()) { postureOwed = true; return false; }
 		var now = Date.now();
 		var body = postureBody(deviceId, name, attended, servicing, runner, mobile,
-			hand, folder, busy, busyChats);
+			hand, busy, busyChats);
 		if (presDerived) {
 			if (now < postureHold) return false;
 			return postureFull || postureOwed || JSON.stringify(body) !== postureSent;

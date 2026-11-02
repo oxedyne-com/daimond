@@ -14,25 +14,19 @@
 // commit goes through the real chunk door, so argonaut's pulls, merges, pushes and commits are the
 // page's own. Every commit the page makes is recorded from its request body.
 //
-//   L  the 09-13 shape: argonaut in a folder merges the phone's parcel, pushes, loses the handle,
-//      offloads its sandbox files, pushes. Red: a commit that does not name the phone's chunks.
-//      Then the phone pushes (a whole parcel); argonaut merges it and its next commit names them.
-//   S  FB3's shape: the same, left by the Browser chip, pushing before any pull.
-//   A  alone on an account: a sandbox device that goes to a folder and back is still whole,
-//      and still commits (clearing the mark on every switch would stop it for ever). Its parcel
-//      does not change while an index write is in flight (lane CMG3: verify_sync's flip).
+//   L S A G and U2 RETIRED (D-20261031-11): each picked a machine folder, and the page mounts none now.
+//   F  (QA82-ARM, U2's successor; `--arms=F`, run by verify_folderbehind) the upgrade of a former folder
+//      desktop: its folder record seeded as an older build leaves it (the `daimond-fsa` handle database,
+//      or the folder-ever mark), no folder mounted. It is not seeded and waits for a whole parcel;
+//      then it commits naming the phone's chunks, and the gateway keeps them all.
 //   U  the upgrade: a device with no mark (the first load of this build) that synced before in
-//      the sandbox and remembers no folder is seeded and commits; one that remembers a folder is
-//      not, and waits for a whole parcel.
+//      the sandbox is seeded and commits.
 //   K  the phone asleep (lane CMG2): argonaut in a folder pushes twice while the phone sleeps. K1:
 //      the versions it skipped are all argonaut's own, so it is still whole and still commits.
 //      K2: a third device's version is among them, merged by argonaut in its folder: no commit
 //      without that device's chunks.
 //   E  (inside K) QCMG2's E1: a phone that may not commit does not free its only copy of an upload
 //      (nothing the gateway keeps names it); a whole one does.
-//   G  the upgrade crossed while the phone slept (QCMG2's G4), with a REAL writer: argonaut, a second
-//      page on the account, pushes once as 5.2.1 would, then loads this build and pushes twice; the
-//      phone, whole before and asleep throughout, wakes onto chunkedOld and is re-seeded.
 //   T  two tabs of one device (lane CMG2, QCMG's S6): a tab that pushes over a foreign version its
 //      sibling took says so in its `chunkedFrom`, rather than vouching for it as its own.
 //   R  a rollback and re-upgrade (lane CMG3b, QCMG3b's R): the build before wrote the cursor bare over this
@@ -41,7 +35,7 @@
 //      gateway): a 5.2.1 page and this page on one account, either one first (M2: the old page's
 //      files already in the mailbox; this page waits while new, and is re-seeded after a reload).
 import fs from 'node:fs';
-import { open, scratch, markHere, signInAs, APP, workMenu } from './harness.mjs';
+import { open, scratch, signInAs, APP } from './harness.mjs';
 import { makePagePro, GW_URL } from './pro.mjs';
 import { GWDIR } from './gwbin.mjs';
 import { guardRan } from './verdict.mjs';
@@ -52,7 +46,118 @@ const check = (name, pass, detail) => {
 	console.log(`  ${pass ? 'ok  ' : 'FAIL'} ${name}${detail ? ' -- ' + detail : ''}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const ONLY = (process.argv.find((a) => a.startsWith('--arms=')) || '--arms=LSAUKTGR').slice(7);
+const ONLY = (process.argv.find((a) => a.startsWith('--arms=')) || '--arms=UKTR').slice(7);
+
+/// The instruments, installed in the page (again after a reload: arm F): every commit the page makes,
+/// recorded from its request body, and the stand-in devices.
+const instrument = () => {
+	window.__commits = [];
+	const real = window.fetch;
+	window.fetch = async function (u, o) {
+		const r = await real.apply(this, arguments);
+		try {
+			const url = String(u && u.url || u);
+			if (/\/api\/chunk/.test(url) && o && typeof o.body === 'string' && /"op":"commit"/.test(o.body)) {
+				const b = JSON.parse(o.body), j = await r.clone().json().catch(() => ({}));
+				window.__commits.push({ at: b.blob_version, addrs: (b.chunks || []).map((c) => c.addr),
+					token: !!b.sweep_token, swept: j.swept, held: j.sweep_held_back || 0, phone: !!window.__asPhone });
+			}
+		} catch (e) { /* the instrument never breaks a request */ }
+		return r;
+	};
+	// The phone, standing in: its chunks through the real door, its parcel sealed under this
+	// account's key onto the real mailbox, its commit under its own name.
+	const hex = (n) => [...crypto.getRandomValues(new Uint8Array(n))].map((b) => b.toString(16).padStart(2, '0')).join('');
+	window.__phone = { id: hex(16), ix: {} };
+	window.__phoneFiles = async function (n, tag) {
+		for (let i = 0; i < n; i++) {
+			const bytes = new TextEncoder().encode(tag + ' ' + i + ' ' + hex(64) + '\n'.repeat(3000));
+			const m = await DaimondChunks.offloadBytes('phone/' + tag + i + '.bin', bytes);
+			__phone.ix['phone/' + tag + i + '.bin'] = { v: m.v, size: m.size, bytes: m.size, mtime: 0,
+				hash: m.key, key: m.key, chunks: m.chunks, at: 0 };
+		}
+		return Object.values(__phone.ix).flatMap((m) => m.chunks.map((c) => c.addr));
+	};
+	// `x-cmg-standin` lets a stand-in's call through while the page's own sync is held (arm K).
+	async function mailbox(method, body) {
+		const r = await DaimondGateway.gwFetch('/api/sync', { method, credentials: 'same-origin',
+			headers: { 'x-daimond-api': String(DaimondGateway.clientApi()), 'content-type': 'application/json',
+				'x-cmg-standin': '1' },
+			body: body ? JSON.stringify(body) : undefined });
+		return { status: r.status, json: await r.json().catch(() => null) };
+	}
+	// Other devices standing in (arm K): each its own files, parcel and commit. `from` is the
+	// parcel's `chunkedFrom` as a 5.3 page sends it: the last version its writer took from
+	// another device, so every version after it up to this parcel is the writer's own.
+	window.__ix = {};
+	window.__standFiles = async function (who, n, tag) {
+		const ix = (__ix[who] = __ix[who] || {});
+		const out = [];
+		for (let i = 0; i < n; i++) {
+			const bytes = new TextEncoder().encode(who + tag + ' ' + i + ' ' + hex(64) + '\n'.repeat(3000));
+			const m = await DaimondChunks.offloadBytes(who + '/' + tag + i + '.bin', bytes);
+			ix[who + '/' + tag + i + '.bin'] = { v: m.v, size: m.size, bytes: m.size, mtime: 0,
+				hash: m.key, key: m.key, chunks: m.chunks, at: 0 };
+			m.chunks.forEach((c) => out.push(c.addr));
+		}
+		return out;
+	};
+	// `o.theirs`: the writer merged the page's index whole (a sandbox device), so its parcel and
+	// commit carry the page's own files too, as a real whole device's would.
+	window.__standPush = async function (who, o) {
+		const ix = Object.assign({}, __ix[who] || {});
+		if (o.theirs) {
+			const t = DaimondCloud.index();
+			Object.keys(t).forEach((k) => { if (!/^@/.test(k) && !t[k].peer && !ix[k]) ix[k] = t[k]; });
+		}
+		for (let i = 0; i < 12; i++) {
+			const g = await mailbox('GET');
+			const base = (g.json && g.json.version) | 0;
+			const parcel = { v: 3, chats: [], tombs: {}, msgTombs: {}, files: {}, filesComplete: false,
+				fileTombs: {}, chunked: ix, chunkedTombs: {}, diamonds: [], diamondsComplete: false, diamondTombs: {},
+				chunkedFull: !!o.full };
+			if (o.from !== undefined) parcel.chunkedFrom = (o.from === 'base') ? base : o.from;
+			const blob = await DaimondIdentity.wrap(JSON.stringify(parcel));
+			const r = await mailbox('POST', { base_version: base, device: who, blob });
+			if (r.status === 200 && r.json && r.json.ok) {
+				if (o.commit) {
+					window.__asPhone = true;
+					try { await DaimondChunks.commit(ix, r.json.version | 0, null); }
+					finally { window.__asPhone = false; }
+				}
+				return r.json.version | 0;
+			}
+			await new Promise((q) => setTimeout(q, 300));
+		}
+		return -1;
+	};
+	// A whole device's parcel: its own files, and (as a whole device would after merging
+	// argonaut's) argonaut's own file manifests. `full` is what a 5.3 page sends.
+	window.__phonePush = async function (withTheirs, full) {
+		const ix = Object.assign({}, __phone.ix);
+		if (withTheirs) {
+			const theirs = DaimondCloud.index();
+			Object.keys(theirs).forEach((k) => { if (!/^@/.test(k) && !theirs[k].peer && !ix[k]) ix[k] = theirs[k]; });
+		}
+		const parcel = { v: 3, chats: [], tombs: {}, msgTombs: {}, files: {}, filesComplete: false,
+			fileTombs: {}, chunked: ix, chunkedTombs: {}, diamonds: [], diamondsComplete: false, diamondTombs: {} };
+		if (full) parcel.chunkedFull = true;
+		const blob = await DaimondIdentity.wrap(JSON.stringify(parcel));
+		for (let i = 0; i < 12; i++) {
+			const g = await mailbox('GET');
+			const base = (g.json && g.json.version) | 0;
+			const r = await mailbox('POST', { base_version: base, device: 'phone', blob });
+			if (r.status === 200 && r.json && r.json.ok) {
+				window.__asPhone = true;
+				try { await DaimondChunks.commit(ix, r.json.version | 0, null); }
+				finally { window.__asPhone = false; }
+				return r.json.version | 0;
+			}
+			await new Promise((q) => setTimeout(q, 300));
+		}
+		return -1;
+	};
+};
 
 /// Bring a page up signed in, with Pro (the chunk store accepts uploads) and the instruments.
 /// `o.app` serves it from another build's origin (arm M: a 5.2.1 page); `o.pairWith` makes it a
@@ -77,114 +182,7 @@ async function device(name, o = {}) {
 		const lic = await makePagePro(p, GWDIR, GW_URL);
 		if (!lic.pro) throw new Error('no Pro for ' + name + ': ' + JSON.stringify(lic));
 	}
-	await p.evaluate(() => {
-		window.__commits = [];
-		const real = window.fetch;
-		window.fetch = async function (u, o) {
-			const r = await real.apply(this, arguments);
-			try {
-				const url = String(u && u.url || u);
-				if (/\/api\/chunk/.test(url) && o && typeof o.body === 'string' && /"op":"commit"/.test(o.body)) {
-					const b = JSON.parse(o.body), j = await r.clone().json().catch(() => ({}));
-					window.__commits.push({ at: b.blob_version, addrs: (b.chunks || []).map((c) => c.addr),
-						token: !!b.sweep_token, swept: j.swept, held: j.sweep_held_back || 0, phone: !!window.__asPhone });
-				}
-			} catch (e) { /* the instrument never breaks a request */ }
-			return r;
-		};
-		// The phone, standing in: its chunks through the real door, its parcel sealed under this
-		// account's key onto the real mailbox, its commit under its own name.
-		const hex = (n) => [...crypto.getRandomValues(new Uint8Array(n))].map((b) => b.toString(16).padStart(2, '0')).join('');
-		window.__phone = { id: hex(16), ix: {} };
-		window.__phoneFiles = async function (n, tag) {
-			for (let i = 0; i < n; i++) {
-				const bytes = new TextEncoder().encode(tag + ' ' + i + ' ' + hex(64) + '\n'.repeat(3000));
-				const m = await DaimondChunks.offloadBytes('phone/' + tag + i + '.bin', bytes);
-				__phone.ix['phone/' + tag + i + '.bin'] = { v: m.v, size: m.size, bytes: m.size, mtime: 0,
-					hash: m.key, key: m.key, chunks: m.chunks, at: 0 };
-			}
-			return Object.values(__phone.ix).flatMap((m) => m.chunks.map((c) => c.addr));
-		};
-		// `x-cmg-standin` lets a stand-in's call through while the page's own sync is held (arm K).
-		async function mailbox(method, body) {
-			const r = await DaimondGateway.gwFetch('/api/sync', { method, credentials: 'same-origin',
-				headers: { 'x-daimond-api': String(DaimondGateway.clientApi()), 'content-type': 'application/json',
-					'x-cmg-standin': '1' },
-				body: body ? JSON.stringify(body) : undefined });
-			return { status: r.status, json: await r.json().catch(() => null) };
-		}
-		// Other devices standing in (arm K): each its own files, parcel and commit. `from` is the
-		// parcel's `chunkedFrom` as a 5.3 page sends it: the last version its writer took from
-		// another device, so every version after it up to this parcel is the writer's own.
-		window.__ix = {};
-		window.__standFiles = async function (who, n, tag) {
-			const ix = (__ix[who] = __ix[who] || {});
-			const out = [];
-			for (let i = 0; i < n; i++) {
-				const bytes = new TextEncoder().encode(who + tag + ' ' + i + ' ' + hex(64) + '\n'.repeat(3000));
-				const m = await DaimondChunks.offloadBytes(who + '/' + tag + i + '.bin', bytes);
-				ix[who + '/' + tag + i + '.bin'] = { v: m.v, size: m.size, bytes: m.size, mtime: 0,
-					hash: m.key, key: m.key, chunks: m.chunks, at: 0 };
-				m.chunks.forEach((c) => out.push(c.addr));
-			}
-			return out;
-		};
-		// `o.theirs`: the writer merged the page's index whole (a sandbox device), so its parcel and
-		// commit carry the page's own files too, as a real whole device's would.
-		window.__standPush = async function (who, o) {
-			const ix = Object.assign({}, __ix[who] || {});
-			if (o.theirs) {
-				const t = DaimondCloud.index();
-				Object.keys(t).forEach((k) => { if (!/^@/.test(k) && !t[k].peer && !ix[k]) ix[k] = t[k]; });
-			}
-			for (let i = 0; i < 12; i++) {
-				const g = await mailbox('GET');
-				const base = (g.json && g.json.version) | 0;
-				const parcel = { v: 3, chats: [], tombs: {}, msgTombs: {}, files: {}, filesComplete: false,
-					fileTombs: {}, chunked: ix, chunkedTombs: {}, diamonds: [], diamondsComplete: false, diamondTombs: {},
-					chunkedFull: !!o.full };
-				if (o.from !== undefined) parcel.chunkedFrom = (o.from === 'base') ? base : o.from;
-				const blob = await DaimondIdentity.wrap(JSON.stringify(parcel));
-				const r = await mailbox('POST', { base_version: base, device: who, blob });
-				if (r.status === 200 && r.json && r.json.ok) {
-					if (o.commit) {
-						window.__asPhone = true;
-						try { await DaimondChunks.commit(ix, r.json.version | 0, null); }
-						finally { window.__asPhone = false; }
-					}
-					return r.json.version | 0;
-				}
-				await new Promise((q) => setTimeout(q, 300));
-			}
-			return -1;
-		};
-		// A whole device's parcel: its own files, and (as a whole device would after merging
-		// argonaut's) argonaut's own file manifests. `full` is what a 5.3 page sends.
-		window.__phonePush = async function (withTheirs, full) {
-			const ix = Object.assign({}, __phone.ix);
-			if (withTheirs) {
-				const theirs = DaimondCloud.index();
-				Object.keys(theirs).forEach((k) => { if (!/^@/.test(k) && !theirs[k].peer && !ix[k]) ix[k] = theirs[k]; });
-			}
-			const parcel = { v: 3, chats: [], tombs: {}, msgTombs: {}, files: {}, filesComplete: false,
-				fileTombs: {}, chunked: ix, chunkedTombs: {}, diamonds: [], diamondsComplete: false, diamondTombs: {} };
-			if (full) parcel.chunkedFull = true;
-			const blob = await DaimondIdentity.wrap(JSON.stringify(parcel));
-			for (let i = 0; i < 12; i++) {
-				const g = await mailbox('GET');
-				const base = (g.json && g.json.version) | 0;
-				const r = await mailbox('POST', { base_version: base, device: 'phone', blob });
-				if (r.status === 200 && r.json && r.json.ok) {
-					window.__asPhone = true;
-					try { await DaimondChunks.commit(ix, r.json.version | 0, null); }
-					finally { window.__asPhone = false; }
-					return r.json.version | 0;
-				}
-				await new Promise((q) => setTimeout(q, 300));
-			}
-			return -1;
-		};
-	});
+	await p.evaluate(instrument);
 	return s;
 }
 
@@ -211,158 +209,41 @@ const commits = (p) => p.evaluate(() => window.__commits.filter((c) => !c.phone)
 const names = (c, addrs) => addrs.every((a) => c.addrs.includes(a));
 const why = (p) => p.evaluate(() => DaimondCore.syncCommitBlockedReason ? DaimondCore.syncCommitBlockedReason() : '?');
 
-/// Open a machine folder (an OPFS directory standing in for it) and flag a share in it.
-async function pickFolder(s, share) {
-	const p = s.page;
-	await p.evaluate(async () => {
-		const root = await navigator.storage.getDirectory();
-		const dir  = await root.getDirectoryHandle('picked', { create: true });
-		dir.queryPermission   = async () => 'granted';
-		dir.requestPermission = async () => 'granted';
-		window.showDirectoryPicker = async () => dir;
-	});
-	await p.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
-	await sleep(600);
-	await workMenu(p, 'head', 'machine');
-	await p.waitForFunction(() => !!(window.Files ? Files.folder() : DaimondCore.syncFolderShare), null, { timeout: 5000 }).catch(() => {});
-	await sleep(1200);
-	if (!share) return;
-	const m = await p.evaluate(async () => {
-		const mod = await import('/pkg/oxedyne_daimond.js');
-		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-		await app.run_tool_outcome('dir_create', JSON.stringify({ path: 'work' }));
-		await app.run_tool_outcome('file_write', JSON.stringify({ path: 'work/note.md', content: 'in the folder\n' }));
-		const id = await app.create_diamond('Shared');
-		const ref = window.DaimondAttach.ref('dir', 'work');
-		const linkId = await app.add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
-		return { id, ref, linkId };
-	});
-	await markHere(s, m.id, m.ref, { linkId: m.linkId, share: true });
-	await p.evaluate(async () => { await DaimondCore.loadDiamonds(); DaimondCore.syncClearWalkCache(); });
-}
-const mode = (p) => p.evaluate(async () => (await import('/pkg/oxedyne_daimond.js')).workspace_mode());
 /// Files over the inline ceiling in the browser sandbox, which offload on the next collect.
 const sandboxFiles = (p, tag, n) => p.evaluate(async ({ tag, n }) => {
 	for (let i = 0; i < n; i++) await DaimondCloud.writeText('argo/' + tag + i + '.txt', (tag + i + ' ').repeat(60000));
 }, { tag, n });
 
-async function armLostOrSwitched(arm, how) {
-	console.log(`\n── ${arm}: a folder device ${how === 'lost' ? 'loses its handle' : 'goes back to the Browser'} and pushes ──`);
-	const s = await device(arm.toLowerCase());
-	const p = s.page;
-	try {
-		await round(p);
-		await pickFolder(s, true);
-		console.log('  note mode=' + await mode(p));
-		const phone = await p.evaluate(() => __phoneFiles(4, 'p'));
-		const v1 = await p.evaluate(() => __phonePush(false, true));
-		check(`${arm}: the phone's parcel and commit landed`, v1 > 0, 'v' + v1 + ', ' + phone.length + ' chunks');
-		await round(p);			// merged in the folder (shares only), and argonaut's own parcel pushed
-		const n0 = (await commits(p)).length;
-		if (how === 'lost') await p.evaluate(() => window.dispatchEvent(new Event('daimond:folder-lost')));
-		else await workMenu(p, 'head', 'browser');
-		await sleep(1500);
-		console.log('  note mode=' + await mode(p) + ' after the ' + how);
-		await sandboxFiles(p, arm.toLowerCase(), 2);
-		// Push before any pull (FB3's shape), then an ordinary round.
-		await p.evaluate(() => DaimondSync.flush());
-		await quiet(p, 20000);
-		await round(p);
-		const after = (await commits(p)).slice(n0);
-		const blind = after.filter((c) => !names(c, phone));
-		console.log('  note commits after the ' + how + ': ' + after.map((c) => 'v' + c.at + ':' + c.addrs.length
-			+ (names(c, phone) ? '+phone' : '-phone') + (c.swept ? ' swept ' + c.swept : '') + (c.held ? ' held ' + c.held : '')).join(', ')
-			+ ' | blocked=' + await why(p));
-		check(`${arm}: no commit declares a live set without the phone's chunks`, blind.length === 0,
-			blind.length + ' of ' + after.length + ' commits left them out');
-		check(`${arm}: it says why it does not commit (index-not-merged)`, after.length > 0 || (await why(p)) === 'index-not-merged',
-			'reason ' + await why(p));
-		// The phone pushes: a whole parcel. Merged whole in the sandbox, it makes argonaut whole.
-		const n1 = (await commits(p)).length;
-		const v2 = await p.evaluate(() => __phonePush(true, true));
-		await round(p);
-		await sandboxFiles(p, arm.toLowerCase() + 'x', 1);		// something to push
-		await round(p);
-		const later = (await commits(p)).slice(n1);
-		console.log('  note after the phone\'s v' + v2 + ': ' + later.map((c) => 'v' + c.at + ':' + c.addrs.length
-			+ (names(c, phone) ? '+phone' : '-phone')).join(', ') + ' | blocked=' + (await why(p) || 'none'));
-		check(`${arm}: after a whole parcel it commits, naming the phone's chunks`,
-			later.length > 0 && later.every((c) => names(c, phone)), later.length + ' commits');
-		// What the phone would find: its chunks still in the store, or swept.
-		const gone = await p.evaluate(async (a) => { const r = await DaimondChunks.presence(a); return r && r.ok ? r.missing.length : -1; }, phone);
-		check(`${arm}: the gateway still holds every one of the phone's chunks`, gone === 0, gone + ' of ' + phone.length + ' missing');
-	} finally { await s.close(); }
-}
-
-async function armAlone() {
-	console.log('\n── A: alone on the account, sandbox → folder → Browser ──');
-	const s = await device('a');
-	const p = s.page;
-	try {
-		await sandboxFiles(p, 'a', 1);
-		await round(p);
-		const c0 = await commits(p);
-		check('A: a lone sandbox device commits', c0.length > 0, c0.length + ' commits, blocked=' + (await why(p) || 'none'));
-		// The parcel is a fixed point of its own collect: `chunkedFrom` is masked out of the push's
-		// comparison key, so a value that flipped while an index write was in flight would stay in
-		// the mailbox, and no later collect would give it (verify_sync's "a push reached the mailbox").
-		const fx = await p.evaluate(async () => {
-			const a = JSON.parse(JSON.stringify(await DaimondSync.parcel()));
-			const was = DaimondCloud.indexDurable;
-			DaimondCloud.indexDurable = () => false;
-			let b;
-			try { b = JSON.parse(JSON.stringify(await DaimondSync.parcel())); } finally { DaimondCloud.indexDurable = was; }
-			const diff = Object.keys(Object.assign({}, a, b)).filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k]));
-			return { diff, from: [a.chunkedFrom, b.chunkedFrom], v: DaimondSync.version(), f: DaimondSync.foreignAt() };
-		});
-		check('A: an index write in flight changes nothing the parcel says', fx.diff.length === 0,
-			'differs in [' + fx.diff.join(', ') + '], chunkedFrom ' + fx.from.join(' -> ') + ' at v' + fx.v + ', foreignAt ' + fx.f);
-		await pickFolder(s, false);
-		await round(p);
-		await workMenu(p, 'head', 'browser');
-		await sleep(1500);
-		const n = (await commits(p)).length;
-		await sandboxFiles(p, 'b', 1);
-		await round(p);
-		const c1 = (await commits(p)).slice(n);
-		check('A: back in the Browser, still whole, it commits again', c1.length > 0,
-			c1.length + ' commits, blocked=' + (await why(p) || 'none'));
-	} finally { await s.close(); }
-}
+/// The mailbox as a build before this one leaves it: its head parcel reposted with no `chunkedFull` or
+/// `chunkedFrom` (an old page sends neither), so no device can learn wholeness from its own last push.
+const asOldPage = (p) => p.evaluate(async () => {
+	const call = async (method, body) => {
+		const r = await DaimondGateway.gwFetch('/api/sync', { method, credentials: 'same-origin',
+			headers: { 'x-daimond-api': String(DaimondGateway.clientApi()), 'content-type': 'application/json', 'x-cmg-standin': '1' },
+			body: body ? JSON.stringify(body) : undefined });
+		return r.json().catch(() => null);
+	};
+	const g = await call('GET');
+	const st = JSON.parse(await DaimondIdentity.unwrap(g.blob));
+	const had = st.chunkedFull;
+	delete st.chunkedFull;
+	delete st.chunkedFrom;
+	const r = await call('POST', { base_version: g.version | 0, device: 'old page', blob: await DaimondIdentity.wrap(JSON.stringify(st)) });
+	return { had, ok: !!(r && r.ok), v: r && r.version };
+});
 
 async function armUpgrade() {
 	console.log('\n── U: the first load of this build (no mark) ──');
-	for (const folder of [false, true]) {
-		const tag = folder ? 'U2' : 'U1';
+	{
+		const tag = 'U1';
 		const s = await device(tag.toLowerCase());
 		const p = s.page;
 		try {
 			await sandboxFiles(p, tag.toLowerCase(), 1);
 			await round(p);
-			if (folder) {
-				// A folder remembered here, as argonaut's was after 09-13: picked, then left for
-				// the sandbox without forgetting it.
-				await pickFolder(s, false);
-				await workMenu(p, 'head', 'browser');
-				await sleep(1200);
-			}
 			// The mailbox as a build before this one leaves it: this device's own parcel, with no
 			// `chunkedFull` or `chunkedFrom` (an old page sends neither).
-			const stripped = await p.evaluate(async () => {
-				const call = async (method, body) => {
-					const r = await DaimondGateway.gwFetch('/api/sync', { method, credentials: 'same-origin',
-						headers: { 'x-daimond-api': String(DaimondGateway.clientApi()), 'content-type': 'application/json' },
-						body: body ? JSON.stringify(body) : undefined });
-					return r.json().catch(() => null);
-				};
-				const g = await call('GET');
-				const st = JSON.parse(await DaimondIdentity.unwrap(g.blob));
-				const had = st.chunkedFull;
-				delete st.chunkedFull;
-				delete st.chunkedFrom;
-				const r = await call('POST', { base_version: g.version | 0, device: 'old page', blob: await DaimondIdentity.wrap(JSON.stringify(st)) });
-				return { had, ok: !!(r && r.ok), v: r && r.version };
-			});
+			const stripped = await asOldPage(p);
 			await quiet(p, 15000);
 			// And the mark as that build leaves it: none, and never written.
 			await p.evaluate(async () => {
@@ -374,13 +255,6 @@ async function armUpgrade() {
 			await signInAs(s, s.name);
 			await p.waitForFunction(() => !!(window.DaimondCore && window.DaimondSync && window.DaimondGateway
 				&& DaimondGateway.state().authed), null, { timeout: 30000 });
-			if (folder) {
-				// Back to the sandbox after the boot reconnect, the folder remembered: argonaut after 09-13.
-				await p.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
-				await sleep(800);
-				await workMenu(p, 'head', 'browser');
-				await sleep(1200);
-			}
 			await p.evaluate(() => { window.__commits = []; const real = window.fetch; window.fetch = async function (u, o) {
 				const r = await real.apply(this, arguments);
 				try { if (/\/api\/chunk/.test(String(u && u.url || u)) && o && /"op":"commit"/.test(String(o.body))) window.__commits.push({ at: 0, addrs: [] }); } catch (e) {}
@@ -391,8 +265,97 @@ async function armUpgrade() {
 			const c = await commits(p);
 			const w = await why(p);
 			console.log(`  note ${tag}: the old page's parcel v${stripped.v} (flag was ${stripped.had}, now none), mark at load=${had}, commits=${c.length}, blocked=${w || 'none'}`);
-			if (folder) check('U2: a device that remembers a folder is not seeded, and waits', c.length === 0 && w === 'index-not-merged', 'commits ' + c.length);
-			else check('U1: a sandbox device that synced before is seeded, and commits', c.length > 0, 'commits ' + c.length);
+			check('U1: a sandbox device that synced before is seeded, and commits', c.length > 0, 'commits ' + c.length);
+		} finally { await s.close(); }
+	}
+}
+
+/// Arm F: the upgrade of a former folder desktop (argonaut on 09-13), with no folder feature to pick one.
+/// The record of the folder behind this device is seeded the way an older build leaves it: `fsa`, the
+/// account's `daimond-fsa` handle database holding a handle row (what every desktop that last opened a
+/// folder under a build before R1 carries; boot retires it into the history); `ever`, the
+/// `daimond-sync-folder-ever` mark a 5.2.2+ folder collect wrote. Either way the first load of this
+/// build must not seed the device as a committer: no commit until a whole parcel is merged, and then
+/// one that names the phone's chunks, all of which the gateway still holds.
+async function armFolderBehind() {
+	console.log('\n── F: the first load of this build on a device with a machine folder behind it ──');
+	for (const how of ['fsa', 'ever']) {
+		const tag = 'F-' + how;
+		const s = await device('f' + how);
+		const p = s.page;
+		try {
+			await sandboxFiles(p, 'f' + how, 1);
+			await round(p);
+			// The phone, as an old page: its files, its parcel with neither flag, its commit.
+			const phone = await p.evaluate(() => __phoneFiles(4, 'p'));
+			const v1 = await p.evaluate(() => __phonePush(false, false));
+			check(`${tag}: the phone's parcel and commit landed`, v1 > 0, 'v' + v1 + ', ' + phone.length + ' chunks');
+			await round(p);
+			const phoneIx = await p.evaluate(() => __phone.ix);
+			// The build before is the last writer: this page's own sync is held from here until the
+			// reload has replaced it, or it would push a `chunkedFull` parcel over the old page's (or
+			// merge it and write the mark back) and the load would be whole by right.
+			let holding = true;
+			const hold = (route) => (holding && !route.request().headers()['x-cmg-standin'] ? route.abort() : route.continue());
+			await p.route('**/api/sync**', hold);
+			const stripped = await asOldPage(p);
+			// The record of the folder behind it, as the build before leaves it; and no mark, as U1.
+			const seeded = await p.evaluate(async (how) => {
+				if (how === 'ever') localStorage.setItem('daimond-sync-folder-ever', '1');
+				else {
+					const ns = (window.DaimondAccounts && DaimondAccounts.opfsNs()) ? '-' + DaimondAccounts.opfsNs() : '';
+					await new Promise((res, rej) => {
+						const q = indexedDB.open('daimond-fsa' + ns, 1);
+						q.onupgradeneeded = () => q.result.createObjectStore('handles');
+						q.onerror = () => rej(q.error);
+						q.onsuccess = () => {
+							const db = q.result, tx = db.transaction('handles', 'readwrite');
+							tx.objectStore('handles').put({ kind: 'directory', name: 'argonaut' }, 'sandbox');
+							tx.oncomplete = () => { db.close(); res(); };
+							tx.onerror = () => rej(tx.error);
+						};
+					});
+				}
+				await DaimondDurable.del('daimond-cloud-merged');
+				localStorage.removeItem('daimond-cloud-merged');
+				localStorage.removeItem('daimond-cloud-merged-seen');
+				return { ever: localStorage.getItem('daimond-sync-folder-ever'),
+					dbs: ((await indexedDB.databases()) || []).map((d) => d.name).filter((n) => /^daimond-(fsa|folders)/.test(n)) };
+			}, how);
+			check(`${tag}: [ctl] the record is seeded`, how === 'ever' ? seeded.ever === '1' : seeded.dbs.length === 1, JSON.stringify(seeded));
+			await p.reload({ waitUntil: 'domcontentloaded' });
+			holding = false;
+			await p.unroute('**/api/sync**', hold);
+			await signInAs(s, s.name);
+			await p.waitForFunction(() => !!(window.DaimondCore && window.DaimondSync && window.DaimondChunks
+				&& window.DaimondCloud && window.DaimondGateway && DaimondGateway.state().authed), null, { timeout: 30000 });
+			await p.evaluate(instrument);
+			await p.evaluate((ix) => { __phone.ix = ix; }, phoneIx);
+			// Who moves the mark after the load, for the note when it is seeded.
+			await p.evaluate(() => { window.__marks = []; const real = DaimondCloud.noteWhole;
+				DaimondCloud.noteWhole = function (v) { window.__marks.push(v + '@' + DaimondSync.version() + ' ' + String(new Error().stack).split('\n').slice(2, 4).map((l) => l.trim().replace(/^at /, '').replace(/\(.*\/([^/]+)\)$/, '($1)')).join(' < ')); return real.apply(this, arguments); }; });
+			const had = await p.evaluate(() => DaimondCloud.wholeAt ? DaimondCloud.wholeAt() : 'no mark here');
+			await sandboxFiles(p, 'f' + how + 'x', 1);
+			await round(p);
+			const c = await commits(p);
+			const w = await why(p);
+			const left = await p.evaluate(async () => ({ ever: localStorage.getItem('daimond-sync-folder-ever'),
+				dbs: ((await indexedDB.databases()) || []).map((d) => d.name).filter((n) => /^daimond-(fsa|folders)/.test(n)) }));
+			console.log(`  note ${tag}: the old page's parcel v${stripped.v} (flag was ${stripped.had}), mark at load=${had}, after: ever=${left.ever} dbs=${JSON.stringify(left.dbs)}, commits=${c.length}, blocked=${w || 'none'}`);
+			if (c.length) console.log(`  note ${tag}: marks after the load: ` + JSON.stringify(await p.evaluate(() => window.__marks)));
+			check(`${tag}: a device with a machine folder behind it is not seeded, and waits`, c.length === 0 && w === 'index-not-merged',
+				'commits ' + c.length + ', blocked=' + (w || 'none'));
+			// The phone pushes a whole parcel: merged whole in the sandbox, it makes this device whole.
+			const v2 = await p.evaluate(() => __phonePush(true, true));
+			await round(p);
+			await round(p);
+			const later = await commits(p);
+			console.log(`  note ${tag} after the phone's v${v2}: ` + later.map((x) => 'v' + x.at + ':' + x.addrs.length
+				+ (names(x, phone) ? '+phone' : '-phone')).join(', ') + ' | blocked=' + (await why(p) || 'none'));
+			check(`${tag}: after a whole parcel it commits, naming the phone's chunks`,
+				later.length > 0 && later.every((x) => names(x, phone)), later.length + ' commits');
+			const gone = await p.evaluate(async (a) => { const r = await DaimondChunks.presence(a); return r && r.ok ? r.missing.length : -1; }, phone);
+			check(`${tag}: the gateway still holds every one of the phone's chunks`, gone === 0, gone + ' of ' + phone.length + ' missing');
 		} finally { await s.close(); }
 	}
 }
@@ -721,101 +684,13 @@ async function armTabs() {
 	}
 }
 
-/// G: THE UPGRADE CROSSED WHILE ASLEEP, the writer real (QCMG2's G4). argonaut is a second page on the
-/// phone's account with a folder behind it; its 5.2.1 push is its own parcel reposted without the flags,
-/// with the records a 5.2.1 page leaves (no foreign-take record, no mark); then it loads this build.
-async function armUpgradeCrossed() {
-	console.log('\n── G: the phone sleeps while argonaut pushes as 5.2.1, loads this build, and pushes twice ──');
-	const s = await device('gp');
-	let a = null;
-	try {
-		const p = s.page;
-		await sandboxFiles(p, 'gp', 1);
-		await round(p);
-		a = await device('ga', { pairWith: s });
-		await round(a.page); await round(p); await round(a.page); await round(p);
-		// argonaut has a machine folder behind it, as the owner's does, back in the Browser now: so its
-		// first load of this build is not seeded, and its parcels never say chunkedFull.
-		await pickFolder(a, false);
-		await round(a.page); await round(p);
-		await workMenu(a.page, 'head', 'browser');
-		await sleep(1200);
-		await round(a.page); await round(p);
-		const c0 = await commits(p);
-		check('G: [ctl] the phone, whole, commits', c0.length > 0, c0.length + ' commits, whole at ' + await p.evaluate(() => DaimondCloud.wholeAt()));
-		await asleep(s, true);
-		// argonaut on 5.2.1 pushes once: its own parcel with neither flag, and the cursor and records
-		// a 5.2.1 page leaves (a bare cursor, no daimond-sync-old, no mark).
-		await sandboxFiles(a.page, 'ga', 1);
-		await round(a.page);
-		const vOld = await a.page.evaluate(async () => {
-			const call = async (method, body) => {
-				const r = await DaimondGateway.gwFetch('/api/sync', { method, credentials: 'same-origin',
-					headers: { 'x-daimond-api': String(DaimondGateway.clientApi()), 'content-type': 'application/json', 'x-cmg-standin': '1' },
-					body: body ? JSON.stringify(body) : undefined });
-				return r.json().catch(() => null);
-			};
-			const g = await call('GET');
-			const st = JSON.parse(await DaimondIdentity.unwrap(g.blob));
-			delete st.chunkedFull; delete st.chunkedFrom; delete st.chunkedOld;
-			const r = await call('POST', { base_version: g.version | 0, device: 'argonaut on 5.2.1', blob: await DaimondIdentity.wrap(JSON.stringify(st)) });
-			localStorage.setItem('daimond-sync-version', String(r.version | 0));
-			localStorage.removeItem('daimond-sync-old');
-			await DaimondDurable.del('daimond-cloud-merged');
-			localStorage.removeItem('daimond-cloud-merged');
-			localStorage.removeItem('daimond-cloud-merged-seen');
-			return r.version | 0;
-		});
-		const theirs = await ownAddrs(a.page, 'ga');
-		// It loads this build, and pushes twice (in the Browser, after the boot reconnects the folder).
-		await a.page.reload({ waitUntil: 'domcontentloaded' });
-		await signInAs(a, a.name);
-		await a.page.waitForFunction(() => !!(window.DaimondSync && window.DaimondCloud && window.DaimondGateway
-			&& DaimondGateway.state().authed), null, { timeout: 30000 });
-		await a.page.evaluate(() => window.DaimondPanels && DaimondPanels.open && DaimondPanels.open('work'));
-		await sleep(800);
-		await workMenu(a.page, 'head', 'browser');
-		await sleep(1200);
-		await round(a.page);
-		await sandboxFiles(a.page, 'gb', 1); await round(a.page);
-		await sandboxFiles(a.page, 'gc', 1); await round(a.page);
-		const head = await a.page.evaluate(async () => {
-			const r = await DaimondGateway.gwFetch('/api/sync', { method: 'GET', credentials: 'same-origin',
-				headers: { 'x-daimond-api': String(DaimondGateway.clientApi()), 'x-cmg-standin': '1' } });
-			const g = await r.json();
-			const st = JSON.parse(await DaimondIdentity.unwrap(g.blob));
-			return { v: g.version | 0, from: st.chunkedFrom, old: st.chunkedOld, full: st.chunkedFull,
-				rec: localStorage.getItem('daimond-sync-old') };
-		});
-		console.log(`  note G: argonaut's 5.2.1 push v${vOld}; after its upgrade the head v${head.v} says chunkedFrom=${head.from}, chunkedOld=${head.old}, chunkedFull=${head.full} (recorded ${head.rec})`);
-		check('G: argonaut, first loading this build, records its cursor and sends it (chunkedOld)', head.old === vOld && head.from === vOld,
-			'chunkedOld=' + head.old + ', chunkedFrom=' + head.from + ', its 5.2.1 push v' + vOld);
-		await asleep(s, false);
-		const n0 = (await commits(p)).length;
-		await round(p);
-		await sandboxFiles(p, 'gpx', 1);
-		await round(p);
-		const after = (await commits(p)).slice(n0);
-		console.log(`  note G: the phone woke at v${await p.evaluate(() => DaimondSync.version())}: ` + after.map((c) => 'v' + c.at + ':' + c.addrs.length
-			+ (names(c, theirs) ? '+argo' : '-argo')).join(', ') + ' | blocked=' + (await why(p) || 'none') + ', whole at ' + await p.evaluate(() => DaimondCloud.wholeAt()));
-		check('G: the phone, whole before the upgrade crossed while it slept, commits again', after.length > 0, 'blocked=' + (await why(p) || 'none'));
-		check('G: and names argonaut\'s chunks', after.every((c) => names(c, theirs)), after.length + ' commits');
-	} finally {
-		if (a) await a.close();
-		await s.close();
-	}
-}
-
 try {
 	if (ONLY.includes('R')) await armRollback();
-	if (ONLY.includes('G')) await armUpgradeCrossed();
 	if (ONLY.includes('T')) await armTabs();
 	if (ONLY.includes('M')) await armMixed();
 	if (ONLY.includes('K')) await armAsleep();
-	if (ONLY.includes('L')) await armLostOrSwitched('L', 'lost');
-	if (ONLY.includes('S')) await armLostOrSwitched('S', 'switched');
-	if (ONLY.includes('A')) await armAlone();
 	if (ONLY.includes('U')) await armUpgrade();
+	if (ONLY.includes('F')) await armFolderBehind();
 } catch (e) {
 	check('the run finished', false, String(e && e.stack || e).slice(0, 500));
 }

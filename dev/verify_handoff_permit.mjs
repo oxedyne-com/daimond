@@ -2,7 +2,7 @@
 // verify_handoff_permit.mjs — a handed-off turn's permit is asked on the device it came from.
 //
 // CONSENT-ROUTE (10 Oct). A daimon turn sent from the phone A runs on the desktop B. When it
-// needs a place to write, a toolkit or (in the Ask mode) a command run, the question used to
+// needs (in the Ask mode) a command run, the question used to
 // open as a dialog on B, where nobody is, and the turn waited on an empty room. Now B asks
 // A, and only A: a third device C with the chat open sees the question but cannot answer it.
 //
@@ -12,16 +12,20 @@
 //
 //   (1)  the ask opens on A and never on B or C (and C's answer, forged as its footer would
 //        post it, authorises nothing);
-//   (2)  the answering device writes only that ask's grant: a toolkit yes adds only the kits
-//        asked for, a place or run yes writes no holds link and no marks-here entry anywhere;
+//   (2)  the answering device writes only that ask's grant: a run yes writes no holds link
+//        and no marks-here entry anywhere;
 //   (3a) Not now: "You said no." on A, no grant;
 //   (3b) silence: "Your other device didn't answer in time." on A, no grant, after the
 //        unchanged 60 s deadline (measured once);
-//   (3c) Retry asks again, and Allow then lets the write proceed, the answer landing once;
-//   (4)  toolkit and run, as well as place;
-//   (5)  control: a turn on B that was not handed off draws the same dialog and writes the
-//        same mark as on 075723c9;
-//   (7)  B already allows the place or the kit: no ask anywhere.
+//   (3c) Retry asks again, and Allow then lets the command run, the answer landing once;
+//   (4)  run: Allow on A runs the command;
+//   (5)  control: a turn on B that was not handed off draws its own run dialog on B;
+//   (7)  the Guarded mode: the command runs, no ask anywhere.
+//
+//   UNBLOCK-82 G2k (1 Nov 2026): the place and toolkit asks went with marking and toolkits
+//   (D-20261031-11), so every arm, QA96, P1-P3, B-F9, F3, RA3 and B-F4 included, now asks
+//   through a run in the Ask mode, with a stand-in hand on B whose execs are the evidence.
+//   The place deny on a handed-off turn is permitroute's B8b.
 //
 //   MIX=A547 / MIX=B547 serve the r547 (075723c9) www to A or B (DAIMOND_OLD_WWW) and run arm
 //   (6) alone: no crash, never a grant, and "Could not ask on your other device." where it
@@ -214,14 +218,19 @@ const HAND_ON = () => {
 		status:  async () => JSON.stringify({ paired: true, link: 1, transport: 'machine',
 			machine: 'test', os: 'linux', root: '/home/u/ws', home: '/home/u',
 			caps: ['fence:linux', 'root:/home/u/ws', 'home:/home/u', 'meter:deletes'] }),
-		run:     async (spec) => { window.__sent.push(JSON.parse(spec));
+		run:     async (spec) => { const x = JSON.parse(spec); window.__sent.push(x);
+			try { const k = 'hp-sent'; sessionStorage.setItem(k, JSON.stringify(JSON.parse(sessionStorage.getItem(k) || '[]').concat([x]))); } catch (e) {}
 			return JSON.stringify({ t: 'exec_result', exit: 0, stdout: 'ran', stderr: '', out_bytes: 3, err_bytes: 0, timed_out: false }); },
 		runs: async () => '[]', held: async () => '{}', signal: async () => '{}',
 	};
 };
 const HAND_OFF = () => { if (window.__realHand) window.DaimondHand = window.__realHand; };
-const execs = (pg) => pg.evaluate(() => (window.__sent || []).filter((x) => x.t === 'exec')
-	.map((x) => ({ argv: x.argv, toolkits: x.toolkits || [] }))).catch(() => []);
+const execs = (pg) => pg.evaluate(() => { let l = []; try { l = JSON.parse(sessionStorage.getItem('hp-sent') || '[]'); } catch (e) {}
+	return l.filter((x) => x.t === 'exec').map((x) => ({ argv: x.argv || [] })); }).catch(() => []);
+const execsReset = (pg) => pg.evaluate(() => { window.__sent = []; try { sessionStorage.removeItem('hp-sent'); } catch (e) {} }).catch(() => {});
+// B's own run question: the run dialog carries no data-ask, so it is told by its title.
+const RUN_DLG = /^\?.*Run this command\?/;
+const runDlg = async (pg, ms) => { const t = Date.now(); while (Date.now() - t < ms) { if ((await openDlgs(pg)).some((d) => RUN_DLG.test(d))) return true; await sleep(250); } return false; };
 
 let A, B, C;
 try {
@@ -351,6 +360,7 @@ try {
 		}
 		console.log('  steer#' + nTurn + ' seat wait ' + (Date.now() - w0) + 'ms ' + JSON.stringify(seat));
 		for (const pg of pages) await pvReset(pg);
+		await execsReset(B.page);
 		try { clearMockLog(); } catch (e) {}
 		const before = (await answers(A.page, dia)).length;
 		const holdsBefore = { A: await holds(A.page, dia), B: await holds(B.page, dia) };
@@ -394,7 +404,7 @@ try {
 			landed, copies: ans.length - before, ranOn: (ans[ans.length - 1] || {}).ranOn || '',
 			ms: Date.now() - t0, duringOut, unstuck,
 			bDlgs: [...bDlgSeen], cCards: [...cCards], cFoot: [...cFoot],
-			results: toolResults(),
+			results: toolResults(), execsB: await execs(B.page),
 			pvA: await pv(A.page), pvB: await pv(B.page), pvC: C ? await pv(C.page) : null,
 			holdsBefore, marksBefore,
 			holdsAfter: { A: await holds(A.page, dia), B: await holds(B.page, dia) },
@@ -404,7 +414,9 @@ try {
 	const asksOf = (r) => (r.pvB.sealed || []).filter((x) => x.t === 'consent-ask');
 	const noRows = (r) => JSON.stringify(r.holdsBefore) === JSON.stringify(r.holdsAfter)
 		&& JSON.stringify(r.marksBefore) === JSON.stringify(r.marksAfter);
-	const wrote = (r) => r.results.some((c) => /^Wrote /.test(c));
+	// The command ran on B (its stand-in hand saw the exec), the evidence a write gave before.
+	const ran = (r) => (r.execsB || []).length > 0;
+	const ranN = (r, d) => (r.execsB || []).filter((x) => x.argv.join(' ').includes(d)).length;
 	const refusedW = (r) => r.results.some((c) => /^Refused/.test(c));
 	// What the MODEL was told (the engine's tool result, as the mock provider received it):
 	// the real reason, and "the user said not now" only for a no (tools.rs `permit_of`).
@@ -413,12 +425,19 @@ try {
 	const sum = (r) => JSON.stringify({ landed: r.landed, copies: r.copies, ranOnB: r.ranOn === idB, bDlgs: r.bDlgs,
 		asks: asksOf(r).map((a) => a.kind + '>' + (a.target === idA ? 'A' : a.target || '∅')), cCards: r.cCards,
 		results: r.results.map((c) => c.slice(0, 50)) });
-	const PLACEIN = (d, f) => `@tool file_write {"path":"docs/${d}/${f}","content":"permit ${f}"}`;
-	const PLACE = (f) => `@tool file_write {"path":"docs/permit/${f}","content":"permit ${f}"}`;
+	// Every arm asks through a run in the Ask mode (UNBLOCK-82 G2k): the place and toolkit asks
+	// went with marking and toolkits, and a run is the permit a handed-off turn still asks for.
+	const RUNC = (d) => `run {"argv":["touch","${d}"],"cwd":""}`;
+	const RUNIN = (d, f) => '@tool ' + RUNC(d + '-' + f);
+	const RUNP = (f) => RUNIN('permit', f);
+	const ASK = '^Run this command';
+	for (const pg of [A.page, B.page]) await pg.evaluate(() => { try { DaimondHandMode.set('ask'); } catch (e) {} }).catch(() => {});
+	await B.page.evaluate(HAND_ON);
+	await syncAll();
 
 	if (!MIX && ARMS === 'fix') {
 		const POSTURE = 'daimond-autonomous-posture';
-		const askRe = '^Let .*change';
+		const askRe = ASK;
 		const allowOnA = async (re) => {
 			const at = await waitCard(A.page, re, 30000);
 			const pressed = at >= 0 ? await press(A.page, re, 'go') : false;
@@ -437,8 +456,7 @@ try {
 		}, tid).catch((e) => ({ err: String(e).slice(0, 60) }));
 		const btnOfQ = (pg) => pg.evaluate(() => { const el = document.getElementById('chat-send'); return !el ? '' : el.classList.contains('stop') ? 'stop' : 'send'; }).catch(() => '?');
 		const grantsQ = (p) => ((p && p.sealed) || []).filter((x) => x.t === 'consent-grant');
-		const wroteN = (r, d) => r.results.filter((c) => /^Wrote /.test(c) && c.includes(d)).length;
-		const sawN = (d) => { try { return (mockLog() || []).filter((r) => JSON.stringify(r).includes(d)).length; } catch (e) { return -1; } };
+				const sawN = (d) => { try { return (mockLog() || []).filter((r) => JSON.stringify(r).includes(d)).length; } catch (e) { return -1; } };
 		// The turn's id is A's sent row's (the user message carrying the directive): B's own
 		// `__pv` record is reset by its reload, and its asks with it (R3 F3, `door null`).
 		const sentTid = (d) => daimonMsgs(A.page, dia).then((ms) => ((ms.find((m) => m.role === 'user' && m.content.includes(d)) || {}).mid || ''));
@@ -453,25 +471,25 @@ try {
 				await sleep(3000);
 			}
 			const dA = await doorOf(A.page, tid), dB = await doorOf(B.page, tid);
-			note(tag + ' tid=' + tid + ' doorA=' + JSON.stringify(dA) + ' doorB=' + JSON.stringify(dB) + ' wrote=' + wroteN(r, d) + ' modelSaw=' + sawN(d)
+			note(tag + ' tid=' + tid + ' doorA=' + JSON.stringify(dA) + ' doorB=' + JSON.stringify(dB) + ' ran=' + ranN(r, d) + ' modelSaw=' + sawN(d)
 				+ ' holds ' + JSON.stringify([r.holdsBefore, r.holdsAfter]) + ' marks ' + JSON.stringify([r.marksBefore, r.marksAfter]) + ' results=' + JSON.stringify(r.results.map((c) => c.slice(0, 90))));
 			check(tag + ' the lease settles on both devices', !(dA.door && dA.door.live) && !(dA.view && dA.view.live) && !(dB.view && dB.view.live), JSON.stringify([dA, dB]));
 			check(tag + ' both Send buttons read send', (await btnOfQ(A.page)) === 'send' && (await btnOfQ(B.page)) === 'send');
 			check(tag + ' at most one answer lands on A', r.copies <= 1, 'copies ' + r.copies);
-			check(tag + ' the file is written at most once', wroteN(r, d) <= 1, 'wrote ' + wroteN(r, d));
-			check(tag + ' a place yes writes no holds link and no marks-here entry anywhere', noRows(r), JSON.stringify([r.holdsBefore, r.holdsAfter, r.marksBefore, r.marksAfter]));
+			check(tag + ' the command runs at most once', ranN(r, d) <= 1, 'ran ' + ranN(r, d));
+			check(tag + ' a run yes writes no holds link and no marks-here entry anywhere', noRows(r), JSON.stringify([r.holdsBefore, r.holdsAfter, r.marksBefore, r.marksAfter]));
 			return tid;
 		};
 
 		if (on('Q2')) {
 		// Q2: Allow pressed twice and then Not now, in one tick, on A's card.
-		console.log('\nQ2 — place, A answers twice (go, go, no in one tick)');
+		console.log('\nQ2 — run, A answers twice (go, go, no in one tick)');
 		const dq2 = 'q2' + qtag;
-		const q2 = await steer(PLACEIN(dq2, 'two.md'), async () => {
-			const at = await waitCard(A.page, '^Let .*change', 30000);
+		const q2 = await steer(RUNIN(dq2, 'two.md'), async () => {
+			const at = await waitCard(A.page, ASK, 30000);
 			const g0 = grantsQ(await pv(A.page)).length;
 			const clicked = at >= 0 ? await A.page.evaluate(() => {
-				const c = [...document.querySelectorAll('#pending-list .pend-card')].find((x) => /^Let .*change/.test(((x.querySelector('.pend-line') || {}).textContent || '').trim()));
+				const c = [...document.querySelectorAll('#pending-list .pend-card')].find((x) => /^Run this command/.test(((x.querySelector('.pend-line') || {}).textContent || '').trim()));
 				const go = c && c.querySelector('.pend-go'), no = c && c.querySelector('.pend-no');
 				if (!go) return 'no card';
 				go.click(); go.click(); if (no) no.click(); return 'go,go,' + (no ? 'no' : '-');
@@ -482,25 +500,26 @@ try {
 		note('Q2 ' + sum(q2) + ' during=' + JSON.stringify(q2.duringOut));
 		check('Q2 the ask opened on A', !!q2.duringOut && q2.duringOut.at >= 0, JSON.stringify(q2.duringOut));
 		check('Q2 A seals exactly one grant for the triple press', !!q2.duringOut && q2.duringOut.sealed === 1, JSON.stringify(q2.duringOut));
-		check('Q2 the first answer (Allow) wins: written once, never told not now', wroteN(q2, dq2) === 1 && !notNow(q2), JSON.stringify(q2.results));
+		check('Q2 the first answer (Allow) wins: written once, never told not now', ranN(q2, dq2) === 1 && !notNow(q2), JSON.stringify(q2.results));
 		check('Q2 the answer lands once', q2.landed && q2.copies === 1, sum(q2));
 		await settleQ('Q2', q2, dq2);
 		}
 
 		if (on('Q1')) {
 		// Q1: A presses Allow at the same moment B (the runner, waiting on the ask) reloads.
-		console.log('\nQ1 — place, A answers while B reloads');
+		console.log('\nQ1 — run, A answers while B reloads');
 		const dq1 = 'q1' + qtag;
 		const q1Send = Date.now();
-		const q1 = await steer(PLACEIN(dq1, 'one.md'), async ({ t0 }) => {
-			const at = await waitCard(A.page, '^Let .*change', 30000);
+		const q1 = await steer(RUNIN(dq1, 'one.md'), async ({ t0 }) => {
+			const at = await waitCard(A.page, ASK, 30000);
 			const rl = B.page.reload({ waitUntil: 'domcontentloaded' }).catch((e) => 'reload ' + e);
-			const pressed = at >= 0 ? await press(A.page, '^Let .*change', 'go') : false;
+			const pressed = at >= 0 ? await press(A.page, ASK, 'go') : false;
 			await rl;
 			await signInAs(B, 'hplead').catch((e) => note('Q1 signIn ' + e));
 			await ready(B.page).catch(() => {});
 			await connectMock(B).catch(() => {});
 			await instrument(B.page);
+			await B.page.evaluate(HAND_ON);
 			const seenCards = [];
 			for (let i = 0; i < 20; i++) { for (const c of await cards(A.page)) { const k = c.line.slice(0, 60) + (c.retry ? ' [retry]' : ''); if (!seenCards.some((x) => x.k === k)) seenCards.push({ k, t: Date.now() - t0 }); } await A.page.evaluate(() => { try { window.DaimondPost.collect(); } catch (e) {} }).catch(() => {}); await sleep(1000); if ((await answers(A.page, dia)).length > 0 && i > 3) break; }
 			return { at, pressed, seenCards };
@@ -544,36 +563,36 @@ try {
 		check('Q1 the model is never told the user did not answer', liedQ1 === 0, liedQ1 + ' requests say "didn\'t answer in time"');
 		// Afterwards: a fresh turn in a fresh folder must ASK again -- the reload-time Allow is not a standing grant.
 		const dq1b = 'q1b' + qtag;
-		const q1b = await steer(PLACEIN(dq1b, 'next.md'), async () => {
-			const at = await waitCard(A.page, '^Let .*change', 40000);
-			const pressed = at >= 0 ? await press(A.page, '^Let .*change', 'go') : false;
+		const q1b = await steer(RUNIN(dq1b, 'next.md'), async () => {
+			const at = await waitCard(A.page, ASK, 40000);
+			const pressed = at >= 0 ? await press(A.page, ASK, 'go') : false;
 			return { at, pressed };
 		}, 100000);
 		note('Q1b ' + sum(q1b) + ' during=' + JSON.stringify(q1b.duringOut));
-		check('Q1b the next turn asks on A again and its Allow writes once', !!q1b.duringOut && q1b.duringOut.at >= 0 && wroteN(q1b, dq1b) === 1, sum(q1b) + ' ' + JSON.stringify(q1b.results));
+		check('Q1b the next turn asks on A again and its Allow runs it once', !!q1b.duringOut && q1b.duringOut.at >= 0 && ranN(q1b, dq1b) === 1, sum(q1b) + ' ' + JSON.stringify(q1b.results));
 		await settleQ('Q1b', q1b, dq1b);
 		}
 
 		if (on('P1')) {
 		// ── P1 (B-F1): the RUNNER's posture never grants a permit on someone else's turn ──
-		console.log('\nP1 — place, the runner is in the step-away posture and hidden');
+		console.log('\nP1 — run, the runner is in the step-away posture and hidden');
 		await B.page.evaluate((k) => {
 			try { localStorage.setItem(k, '1'); } catch (e) {}
 			Object.defineProperty(document, 'visibilityState', { get: () => 'hidden', configurable: true });
 		}, POSTURE);
-		const p1 = await steer(PLACEIN('fixp1', 'one.md'), () => allowOnA(askRe), 90000);
+		const p1 = await steer(RUNIN('fixp1', 'one.md'), () => allowOnA(askRe), 90000);
 		await B.page.evaluate((k) => { try { localStorage.removeItem(k); } catch (e) {} delete document.visibilityState; }, POSTURE);
 		note('P1 ' + sum(p1) + ' during=' + JSON.stringify(p1.duringOut));
 		check('P1 the runner\'s posture grants nothing: A is asked', asksOf(p1).length === 1 && asksOf(p1)[0].target === idA
 			&& !!p1.duringOut && p1.duringOut.at >= 0, sum(p1));
-		check('P1 Allow on A writes, and the model is never told the user said not now', wrote(p1) && !notNow(p1), JSON.stringify(p1.results));
+		check('P1 Allow on A runs it, and the model is never told the user said not now', ran(p1) && !notNow(p1), JSON.stringify(p1.results));
 
 		}
 		if (on('P2')) {
 		// ── P2 (B-F1): the ASKER's posture counts, and is read as a yes ──────
-		console.log('\nP2 — place, the asker is in the step-away posture');
+		console.log('\nP2 — run, the asker is in the step-away posture');
 		await A.page.evaluate((k) => { try { localStorage.setItem(k, '1'); } catch (e) {} }, POSTURE);
-		const p2 = await steer(PLACEIN('fixp2', 'two.md'), async () => {
+		const p2 = await steer(RUNIN('fixp2', 'two.md'), async () => {
 			const at = await waitCard(A.page, askRe, 12000);
 			if (at >= 0) await press(A.page, askRe, 'no');
 			return { at };
@@ -582,25 +601,24 @@ try {
 		note('P2 ' + sum(p2) + ' during=' + JSON.stringify(p2.duringOut));
 		check('P2 the asker\'s posture answers: nobody is asked', asksOf(p2).length === 0 && p2.bDlgs.length === 0
 			&& !!p2.duringOut && p2.duringOut.at < 0, sum(p2));
-		check('P2 and it is read as a yes: the write proceeds', wrote(p2) && !refusedW(p2), JSON.stringify(p2.results));
+		check('P2 and it is read as a yes: the command runs', ran(p2) && !refusedW(p2), JSON.stringify(p2.results));
 
 		}
 		if (on('P3')) {
 		// ── P3 (F1): B's own turn, while a handed-off ask is open, asks on B ──
 		console.log('\nP3 — a turn of B\'s own while a handed-off ask is open on A');
-		const p3 = await steer(PLACEIN('fixp3', 'three.md'), async () => {
+		const p3 = await steer(RUNIN('fixp3', 'three.md'), async () => {
 			const at = await waitCard(A.page, askRe, 30000);
 			await B.page.evaluate(async (a) => {
 				const mod = await import('/pkg/oxedyne_daimond.js');
 				window.__seen = [];
-				const b = await DaimondDiamond.bounds(a.id);
 				const app = new mod.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
 				window.__turn = app.steer_crystal(a.id, a.dir,
-					JSON.stringify(b.toolkits || []), [],
+					[],
 					(ev) => { if (ev.type === 'tool_result') window.__seen.push(String(ev.content || '')); })
 					.then(() => 'done', (e) => 'threw ' + String(e && e.message || e));
-			}, { id: dia, dir: PLACEIN('fixp3own', 'own.md'), mock: process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/completions' });
-			const dlg = await B.page.waitForSelector('.modal.dlg[data-ask="place"]', { timeout: 15000 }).then(() => true, () => false);
+			}, { id: dia, dir: RUNIN('fixp3own', 'own.md'), mock: process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/completions' });
+			const dlg = await runDlg(B.page, 15000);
 			const asks = (await pv(B.page)).sealed.filter((x) => x.t === 'consent-ask').length;
 			if (dlg) await answerDlg(B.page, true);
 			const own = await B.page.evaluate(async () => ({ end: await window.__turn, seen: window.__seen })).catch((e) => ({ end: 'eval ' + e, seen: [] }));
@@ -609,16 +627,16 @@ try {
 		}, 120000);
 		const d3 = p3.duringOut || {};
 		note('P3 ' + sum(p3) + ' during=' + JSON.stringify(d3).slice(0, 500));
-		check('P3 B\'s own turn draws its own place dialog on B', d3.dlg === true, JSON.stringify(d3).slice(0, 300));
-		check('P3 and is not refused as "could not ask": Allow on B writes', !!d3.own && d3.own.seen.some((c) => /^Wrote /.test(c))
+		check('P3 B\'s own turn draws its own run dialog on B', d3.dlg === true, JSON.stringify(d3).slice(0, 300));
+		check('P3 and is not refused as "could not ask": Allow on B runs it', !!d3.own && ranN(p3, 'fixp3own') >= 1
 			&& !d3.own.seen.some((c) => /could not ask/.test(c)), JSON.stringify(d3.own || null).slice(0, 300));
-		check('P3 one ask only went to A, and its Allow still writes', d3.asks === 1 && asksOf(p3).length === 1 && p3.landed, sum(p3));
+		check('P3 one ask only went to A, and its Allow still runs it', d3.asks === 1 && asksOf(p3).length === 1 && p3.landed, sum(p3));
 
 		}
 		if (on('F9')) {
 		// ── B-F9: a device whose clock runs ahead still draws the ask ─────────
-		console.log('\nB-F9 — place, A\'s clock 90 s ahead of B\'s');
-		const f9 = await steer(PLACEIN('fixf9', 'nine.md'), async () => {
+		console.log('\nB-F9 — run, A\'s clock 90 s ahead of B\'s');
+		const f9 = await steer(RUNIN('fixf9', 'nine.md'), async () => {
 			await A.page.evaluate(SHIFT, 90000);
 			const r = await allowOnA(askRe);
 			await A.page.evaluate(UNSHIFT);
@@ -628,67 +646,51 @@ try {
 		await beat();		// as after F3a: a 90 s shift would hold A's beat for ~135 s
 		note('B-F9 ' + sum(f9) + ' during=' + JSON.stringify(f9.duringOut));
 		check('B-F9 the ask draws on a device whose clock is 90 s ahead', !!f9.duringOut && f9.duringOut.at >= 0, sum(f9));
-		check('B-F9 and its Allow writes', wrote(f9), JSON.stringify(f9.results));
+		check('B-F9 and its Allow runs it', ran(f9), JSON.stringify(f9.results));
 
 		}
 		if (on('F3')) {
-		// A turn of B's own, allowed on B, so the Diamond has its folder on the machine (as T4).
-		await B.page.evaluate(async (a) => {
-			const mod = await import('/pkg/oxedyne_daimond.js');
-			const b = await DaimondDiamond.bounds(a.id);
-			const app = new mod.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
-			window.__turn = app.steer_crystal(a.id, a.dir,
-				JSON.stringify(b.toolkits || []), [], () => {})
-				.then(() => 'done', (e) => 'threw ' + String(e && e.message || e));
-		}, { id: dia, dir: PLACEIN('fixkit', 'home.md'), mock: process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/completions' });
-		const home = await B.page.waitForSelector('.modal.dlg[data-ask="place"]', { timeout: 15000 }).then(() => true, () => false);
-		if (home) await answerDlg(B.page, true);
-		note('F3 setup: B\'s own place dialog=' + home + ' end=' + await B.page.evaluate(() => window.__turn).catch((e) => 'eval ' + e));
-		await syncAll();
-		// ── F3: a toolkit yes is written only for an ask still open and delivered ─
-		await B.page.evaluate(HAND_ON);
+		// ── F3: a run yes counts only for an ask still open and delivered ─
 		const NPM = '@tool run {"argv":["npm","--version"],"cwd":""}';
-		// Each arm asks for a kit of its own: with one kit between them, F3a's wrongly written
-		// `node` left F3b and F3c nothing to ask and so nothing to fail.
+		// Each arm runs a command of its own, so one arm's wrongly run command cannot pass another's check.
 		const PIP = '@tool run {"argv":["pip","--version"],"cwd":""}';
 		const CARGO = '@tool run {"argv":["cargo","--version"],"cwd":""}';
-		const kitRe = '^Let .*use';
 		const grantsA = (r) => (r.pvA.sealed || []).filter((x) => x.t === 'consent-grant');
 
-		console.log('\nF3a — toolkit, Allow pressed on A after the deadline');
+		console.log('\nF3a — run, Allow pressed on A after the deadline');
 		const f3a = await steer(NPM, async () => {
-			const at = await waitCard(A.page, kitRe, 30000);
+			const at = await waitCard(A.page, ASK, 30000);
 			await A.page.evaluate(SHIFT, 61000);
-			const pressed = at >= 0 ? await press(A.page, kitRe, 'go') : false;
+			const pressed = at >= 0 ? await press(A.page, ASK, 'go') : false;
 			await sleep(2500);
 			await A.page.evaluate(UNSHIFT);
-			return { at, pressed, kitsA: await kits(A.page, dia) };
+			return { at, pressed };
 		}, 150000);
 		await A.page.evaluate(UNSHIFT);
 		await beat();		// A's clock is back: beat now, or A stays silent for ~106 s and B refuses F3b/F3c unasked
-		const k3a = await kits(A.page, dia);
-		note('F3a ' + sum(f3a) + ' during=' + JSON.stringify(f3a.duringOut) + ' kitsA=' + JSON.stringify(k3a));
+		const k3a = f3a.execsB;
+		note('F3a ' + sum(f3a) + ' during=' + JSON.stringify(f3a.duringOut) + ' ranB=' + JSON.stringify(k3a));
 		check('F3a the ask drew on A', !!f3a.duringOut && f3a.duringOut.at >= 0, sum(f3a));
-		check('F3a a late Allow writes no kit on A', !k3a.includes('node') && !((f3a.duringOut || {}).kitsA || []).includes('node'), JSON.stringify(k3a));
+		check('F3a a late Allow runs nothing', ranN(f3a, 'npm') === 0 && !ran(f3a), JSON.stringify(k3a));
 
-		console.log('\nF3b — toolkit, Allow pressed on A while its post fails');
+		console.log('\nF3b — run, Allow pressed on A while its post fails');
 		const f3b = await steer(PIP, async () => {
-			const at = await waitCard(A.page, kitRe, 30000);
+			const at = await waitCard(A.page, ASK, 30000);
 			await A.page.evaluate(() => { window.__realPost = window.__realPost || DaimondPost.post; DaimondPost.post = async () => ({ ok: false }); });
-			const pressed = at >= 0 ? await press(A.page, kitRe, 'go') : false;
+			const pressed = at >= 0 ? await press(A.page, ASK, 'go') : false;
 			await sleep(2500);
 			await A.page.evaluate(() => { if (window.__realPost) DaimondPost.post = window.__realPost; });
-			return { at, pressed, kitsA: await kits(A.page, dia) };
+			return { at, pressed };
 		}, 150000);
 		await A.page.evaluate(() => { if (window.__realPost) DaimondPost.post = window.__realPost; });
-		const k3b = await kits(A.page, dia);
-		note('F3b ' + sum(f3b) + ' during=' + JSON.stringify(f3b.duringOut) + ' kitsA=' + JSON.stringify(k3b));
+		const k3b = f3b.execsB;
+		note('F3b ' + sum(f3b) + ' during=' + JSON.stringify(f3b.duringOut) + ' ranB=' + JSON.stringify(k3b));
 		check('F3b the ask drew on A', !!f3b.duringOut && f3b.duringOut.at >= 0, sum(f3b));
-		check('F3b an Allow that could not be posted writes no kit on A', !k3b.includes('python') && !((f3b.duringOut || {}).kitsA || []).includes('python'), JSON.stringify(k3b));
+		check('F3b an Allow that could not be posted runs nothing', ranN(f3b, 'pip') === 0 && !ran(f3b), JSON.stringify(k3b));
 
-		console.log('\nF3c — toolkit, the tile and the footer both pressed');
+		console.log('\nF3c — run, the tile and the footer both pressed');
 		const f3c = await steer(CARGO, async () => {
-			const at = await waitCard(A.page, kitRe, 30000);
+			const at = await waitCard(A.page, ASK, 30000);
 			let foot = [];
 			for (let i = 0; i < 20 && !foot.some((f) => /Allow/.test(f)); i++) {
 				await A.page.evaluate(() => { try { window.DaimondSync.pull(true); } catch (e) {} }).catch(() => {});
@@ -702,27 +704,26 @@ try {
 				if (tile) tile.click();
 				if (ft) ft.click();
 				return { tile: !!tile, foot: !!ft };
-			}, kitRe);
+			}, ASK);
 			return { at, foot, both };
 		}, 120000);
 		await syncAll(); await sleep(1500);
-		const k3c = await kits(A.page, dia);
-		note('F3c ' + sum(f3c) + ' during=' + JSON.stringify(f3c.duringOut) + ' grantsA=' + grantsA(f3c).length + ' kitsA=' + JSON.stringify(k3c));
+		const k3c = f3c.execsB;
+		note('F3c ' + sum(f3c) + ' during=' + JSON.stringify(f3c.duringOut) + ' grantsA=' + grantsA(f3c).length + ' ranB=' + JSON.stringify(k3c));
 		check('F3c both surfaces drew the question on A', !!f3c.duringOut && f3c.duringOut.both && f3c.duringOut.both.tile && f3c.duringOut.both.foot,
 			JSON.stringify(f3c.duringOut));
-		check('F3c the two presses are one answer: one grant sealed, the kit held once', grantsA(f3c).length === 1
-			&& k3c.filter((k) => k === 'rust').length === 1, 'grants ' + grantsA(f3c).length + ' kits ' + JSON.stringify(k3c));
-		await B.page.evaluate(HAND_OFF);
+		check('F3c the two presses are one answer: one grant sealed, the command run once', grantsA(f3c).length === 1
+			&& ranN(f3c, 'cargo') === 1, 'grants ' + grantsA(f3c).length + ' ran ' + JSON.stringify(k3c));
 		}
 		if (on('RA3')) {
 		// ── RA3 (X1): A reloads with an ask open; can a FRESH ask still be answered? ──
-		// Step 0 leaves a place ask open on A and reloads A's page. (i) the same turn then asks
-		// for a second place in a new folder; (ii) the next handed-off turn asks for a third.
+		// Step 0 leaves a run ask open on A and reloads A's page. (i) the same turn then asks
+		// to run a second command; (ii) the next handed-off turn asks for a third.
 		// Each must be drawn on A, its Allow sealed and posted, and B must go on to write.
-		console.log('\nRA3 — place, A reloads with the ask open; a fresh ask in the same turn, then in the next');
+		console.log('\nRA3 — run, A reloads with the ask open; a fresh ask in the same turn, then in the next');
 		const tag = Date.now().toString(36).slice(-4);
 		const d1 = 'ra3a' + tag, d2 = 'ra3b' + tag, d3 = 'ra3c' + tag;
-		const W = (d, f) => `file_write {"path":"docs/${d}/${f}","content":"permit ${f}"}`;
+		const W = (d, f) => RUNC(d + '-' + f);
 		const grantsOf = (p) => ((p && p.sealed) || []).filter((x) => x.t === 'consent-grant');
 		const pumpA = () => A.page.evaluate(() => { try { window.DaimondSync.pull(true); } catch (e) {} try { window.DaimondPost.collect(); } catch (e) {} }).catch(() => {});
 		const tileFor = async (src) => (await cards(A.page)).some((c) => !c.retry && (c.line + ' ' + c.detail).includes(src));
@@ -739,10 +740,9 @@ try {
 			for (let i = 0; i < 8; i++) { await pumpA(); await sleep(500); }
 			return { at, pressed, sealed: grantsOf(await pv(A.page)).length - g0 };
 		};
-		const wroteIn = (r, d) => r.results.some((c) => /^Wrote /.test(c) && c.includes(d));
-		const told = (r) => JSON.stringify(r.results.map((c) => c.slice(0, 110)));
+				const told = (r) => JSON.stringify(r.results.map((c) => c.slice(0, 110)));
 
-		// (i) SAME TURN: one round, two places; the first is left open across the reload and never pressed.
+		// (i) SAME TURN: one round, two commands; the first is left open across the reload and never pressed.
 		const r1 = await steer('@tools ' + W(d1, 'a.md') + ' ;; ' + W(d2, 'b.md'), async ({ t0 }) => {
 			const at1 = await waitTile(d1, 30000);
 			const both = await tileFor(d2);		// was the second already asked before the reload?
@@ -765,35 +765,35 @@ try {
 		check('RA3i B asked A, and only the first ask was open on A at the reload', a1.length >= 1 && a1[0].target === idA && o1.at1 >= 0 && !o1.both, sum(r1));
 		check('RA3i same turn: the second ask is DRAWN on A after the reload', o1.second.at >= 0, JSON.stringify(o1));
 		check('RA3i same turn: Allow on it SEALS and posts a grant', !!o1.second.pressed && o1.second.sealed >= 1, JSON.stringify(o1.second));
-		check('RA3i same turn: B PROCEEDS, the second file is written', wroteIn(r1, d2) || (wrote(r1) && !wroteIn(r1, d1)), told(r1));
+		check('RA3i same turn: B PROCEEDS, the second command runs', ranN(r1, d2) || (ran(r1) && !ranN(r1, d1)), told(r1));
 
-		// (ii) NEXT TURN: a new handed-off turn from the reloaded A needs a third place.
-		const r2 = await steer(PLACEIN(d3, 'c.md'), () => allowFresh(d3, 40000), 120000);
+		// (ii) NEXT TURN: a new handed-off turn from the reloaded A needs a third command.
+		const r2 = await steer(RUNIN(d3, 'c.md'), () => allowFresh(d3, 40000), 120000);
 		await syncAll(); await sleep(1500);
 		const o2 = r2.duringOut || {};
 		note('RA3ii ' + sum(r2) + ' ms=' + r2.ms + ' during=' + JSON.stringify(o2) + ' grantsA=' + grantsOf(r2.pvA).length + ' results=' + told(r2));
 		check('RA3ii next turn: it ran on B and its ask is DRAWN on A', r2.ranOn === idB && o2.at >= 0, sum(r2));
 		check('RA3ii next turn: Allow on it SEALS and posts a grant', !!o2.pressed && o2.sealed >= 1, JSON.stringify(o2));
-		check('RA3ii next turn: B PROCEEDS, the file is written', wrote(r2), told(r2));
+		check('RA3ii next turn: B PROCEEDS, the command runs', ran(r2), told(r2));
 		note('RA3 the dead first tile on A at the end: ' + ((await tileFor(d1)) ? 'STILL DRAWN' : 'gone')
 			+ ' (right after the same-turn Allow: ' + (o1.deadAfter ? 'drawn' : 'gone') + '); cardsA=' + JSON.stringify((await cards(A.page)).map((c) => (c.retry ? 'notice: ' : '') + c.line + ' | ' + c.detail.slice(0, 40))));
 		}
 	} else if (MIX === 'C547') {
 		// ── B-F4: a third device still on r547 draws no tile it could not answer ─
-		console.log('\nB-F4 MIX=C547 — place, a third device on r547');
-		const r4 = await steer(PLACEIN('fixf4', 'four.md'), async () => {
-			const at = await waitCard(A.page, '^Let .*change', 30000);
+		console.log('\nB-F4 MIX=C547 — run, a third device on r547');
+		const r4 = await steer(RUNIN('fixf4', 'four.md'), async () => {
+			const at = await waitCard(A.page, ASK, 30000);
 			for (let i = 0; i < 12; i++) {
 				await C.page.evaluate(() => { try { window.DaimondSync.pull(true); } catch (e) {} try { window.DaimondPost.collect(); } catch (e) {} }).catch(() => {});
 				await sleep(500);
 			}
 			const cardsC = (await cards(C.page)).map((c) => c.line), footC = await footerButtons(C.page);
-			const pressed = at >= 0 ? await press(A.page, '^Let .*change', 'go') : false;
+			const pressed = at >= 0 ? await press(A.page, ASK, 'go') : false;
 			return { at, cardsC, footC, pressed };
 		}, 100000);
 		const d4 = r4.duringOut || {};
 		note('B-F4 ' + sum(r4) + ' during=' + JSON.stringify(d4).slice(0, 400) + ' cFoot=' + JSON.stringify(r4.cFoot));
-		check('B-F4 the ask opened on A and its Allow wrote', d4.at >= 0 && wrote(r4), sum(r4));
+		check('B-F4 the ask opened on A and its Allow ran', d4.at >= 0 && ran(r4), sum(r4));
 		// r547 hands every verified ask to its tile door whoever it names (r547 peer.js 845,
 		// and its askRaiseDecision has no target rule), so while the question is open an
 		// r547 third device shows it as a "reach" tile. Said out loud here, because the
@@ -804,11 +804,11 @@ try {
 			!(d4.cardsC || ['?']).some((l) => /^Let |Run this/.test(l)) && r4.cCards.length === 0
 			&& !(d4.footC || []).concat(r4.cFoot).some((f) => /Allow|Deny/.test(f)), JSON.stringify({ c: d4.cardsC, f: d4.footC, seen: r4.cCards, foot: r4.cFoot }));
 	} else if (!MIX) {
-		// ── T1: place, C forges an Allow, then A says Not now — (1), (3a) ─────
-		console.log('\nT1 — place, answered Not now on A (C tries first)');
+		// ── T1: run, C forges an Allow, then A says Not now — (1), (3a) ─────
+		console.log('\nT1 — run, answered Not now on A (C tries first)');
 		let forged = null;
-		const t1 = await steer(PLACE('one.md'), async () => {
-			const at = await waitCard(A.page, '^Let .*change', 30000);
+		const t1 = await steer(RUNP('one.md'), async () => {
+			const at = await waitCard(A.page, ASK, 30000);
 			const ask = asksOf({ pvB: await pv(B.page) })[0] || null;
 			let cAllowed = null;
 			if (ask && C) {
@@ -823,30 +823,30 @@ try {
 				}, ask);
 				await B.page.evaluate(() => { try { window.DaimondPost.collect(); } catch (e) {} }).catch(() => {});
 				await sleep(5000);
-				cAllowed = toolResults().some((c) => /^Wrote /.test(c));
+				cAllowed = (await execs(B.page)).length > 0;
 			}
 			const cardsA = await cards(A.page);
-			const pressed = at >= 0 ? await press(A.page, '^Let .*change', 'no') : false;
+			const pressed = at >= 0 ? await press(A.page, ASK, 'no') : false;
 			return { at, cardsA, pressed, cAllowed };
 		});
 		note('T1 ' + sum(t1) + ' during=' + JSON.stringify(t1.duringOut).slice(0, 400));
 		const a1 = asksOf(t1);
-		check('(1) the place ask opens on A', !!t1.duringOut && t1.duringOut.at >= 0
+		check('(1) the run ask opens on A', !!t1.duringOut && t1.duringOut.at >= 0
 			&& a1.length === 1 && a1[0].target === idA, 'card at ' + (t1.duringOut || {}).at + 'ms, asks ' + a1.length);
 		check('(1) and never on B (no dialog, no Pending card)', t1.bDlgs.length === 0
-			&& !(await cards(B.page)).some((c) => /^Let /.test(c.line)), 'B dialogs ' + JSON.stringify(t1.bDlgs));
+			&& !(await cards(B.page)).some((c) => /^Let |^Run this/.test(c.line)), 'B dialogs ' + JSON.stringify(t1.bDlgs));
 		check('(1) and never on C (no card, no Allow in its footer)', !!C && t1.cCards.length === 0
 			&& !t1.cFoot.some((f) => /Allow|Deny/.test(f)), JSON.stringify({ cCards: t1.cCards, cFoot: t1.cFoot }));
 		check('(1) C\'s forged Allow authorised nothing', forged === true && t1.duringOut && t1.duringOut.cAllowed === false,
-			'posted=' + forged + ' wroteAfterC=' + (t1.duringOut || {}).cAllowed);
+			'posted=' + forged + ' ranAfterC=' + (t1.duringOut || {}).cAllowed);
 		const n1 = (await cards(A.page)).find((c) => /^You said no\.$/.test(c.line));
 		check('(3a) Not now gives "You said no." on A, with Retry', !!n1 && n1.retry, JSON.stringify(n1 || await cards(A.page)));
-		check('(3a) the write was refused and no grant was written', refusedW(t1) && !wrote(t1) && noRows(t1),
+		check('(3a) the command was refused and no grant was written', refusedW(t1) && !ran(t1) && noRows(t1),
 			JSON.stringify({ holds: t1.holdsAfter, marksChanged: !noRows(t1) }));
 		check('(3a) the model is told "the user said not now"', toldW(t1, /the user said not now/), sum(t1));
 		check('(3a) the turn went on and answered once, run on B', t1.copies === 1 && t1.ranOn === idB, sum(t1));
 
-		// ── T2: Retry on that notice asks again; Allow lets the write proceed — (3c), (2) ─
+		// ── T2: Retry on that notice asks again; Allow lets the command run — (3c), (2) ─
 		console.log('\nT2 — Retry, then Allow on A');
 		await beat();
 		for (const pg of pages) await pvReset(pg);
@@ -855,12 +855,13 @@ try {
 		// mid: the answers not on A before the press.
 		const seen2 = new Set((await answers(A.page, dia)).map((m) => m.mid));
 		const fresh2 = async () => (await answers(A.page, dia)).filter((m) => !seen2.has(m.mid)).length;
+		await execsReset(B.page);
 		const hb2 = { A: await holds(A.page, dia), B: await holds(B.page, dia) }, mb2 = { A: await marks(A.page), B: await marks(B.page) };
 		const t2at = Date.now();
 		const retried = await press(A.page, '^You said no\\.$', 'go');
-		const at2 = await waitCard(A.page, '^Let .*change', 40000);
+		const at2 = await waitCard(A.page, ASK, 40000);
 		const busyToast = await A.page.evaluate(() => [...document.querySelectorAll('.toast')].map((x) => x.textContent).join('|')).catch(() => '');
-		const allowed2 = at2 >= 0 ? await press(A.page, '^Let .*change', 'go') : false;
+		const allowed2 = at2 >= 0 ? await press(A.page, ASK, 'go') : false;
 		let landed2 = false;
 		for (let i = 0; i < 200 && !landed2; i++) {
 			landed2 = (await fresh2()) > 0;
@@ -887,15 +888,15 @@ try {
 		}
 		check('(3c) Retry asks again on A', retried && at2 >= 0
 			&& pvB2.sealed.filter((x) => x.t === 'consent-ask' && x.target === idA).length === 1, 'retried=' + retried + ' at=' + at2);
-		check('(3c) Allow then lets the write proceed', allowed2 && res2.some((c) => /^Wrote /.test(c)), JSON.stringify(res2.map((c) => c.slice(0, 60))));
+		check('(3c) Allow then lets the command run', allowed2 && (await execs(B.page)).length === 1, JSON.stringify(res2.map((c) => c.slice(0, 60))));
 		check('(3c) the answer lands on A exactly once', copies2 === 1, copies2 + ' copies');
-		check('(2) the place yes wrote no holds link and no marks-here entry on A or B', noRows(t2),
+		check('(2) the run yes wrote no holds link and no marks-here entry on A or B', noRows(t2),
 			JSON.stringify({ before: t2.holdsBefore, after: t2.holdsAfter, marks: [t2.marksBefore, t2.marksAfter] }).slice(0, 400));
 
 		// ── T3: silence. The deadline is measured once — (3b) ─────────────────
-		console.log('\nT3 — place, A stays silent');
-		const t3 = await steer(PLACE('three.md'), async () => {
-			const at = await waitCard(A.page, '^Let .*change', 30000);
+		console.log('\nT3 — run, A stays silent');
+		const t3 = await steer(RUNP('three.md'), async () => {
+			const at = await waitCard(A.page, ASK, 30000);
 			return { at };
 		}, FAST ? 30000 : 150000);
 		const a3 = asksOf(t3)[0] || null;
@@ -903,11 +904,11 @@ try {
 		const wait3 = a3 && tg ? tg.at - a3.at : -1;
 		note('T3 ' + sum(t3) + ' deadline-at=' + (a3 ? a3.deadline - a3.at : '?') + ' told-after=' + wait3);
 		const n3 = (await cards(A.page)).find((c) => /^Your other device didn.t answer in time\.$/.test(c.line));
-		check('(2) the place yes was that turn\'s only: the next write there asks A again', !!a3 && a3.target === idA, sum(t3));
+		check('(2) the run yes was that turn\'s only: the next run asks A again', !!a3 && a3.target === idA, sum(t3));
 		check('(3b) silence gives "Your other device didn\'t answer in time." on A', !!n3 && n3.retry, JSON.stringify(n3 || (await cards(A.page)).map((c) => c.line)));
 		check('(3b) the deadline is unchanged at 60 s', !!a3 && Math.abs((a3.deadline - a3.at) - 60000) < 1500
 			&& (FAST || (wait3 >= 59000 && wait3 < 75000)), 'ask deadline ' + (a3 ? a3.deadline - a3.at : '?') + ' ms, refused after ' + wait3 + ' ms');
-		check('(3b) the write was refused and no grant was written', refusedW(t3) && !wrote(t3) && noRows(t3), sum(t3));
+		check('(3b) the command was refused and no grant was written', refusedW(t3) && !ran(t3) && noRows(t3), sum(t3));
 		check('(3b) the model is told the other device didn\'t answer in time, never that the user said no',
 			toldW(t3, /didn't answer in time/) && toldW(t3, /did not say no/) && !notNow(t3), JSON.stringify(t3.results));
 
@@ -915,65 +916,37 @@ try {
 		console.log('\nT4 — control: a turn of B\'s own');
 		for (const pg of pages) await pvReset(pg);
 		const hb4 = await holds(B.page, dia), mb4 = await marks(B.page);
+		await execsReset(B.page);
 		await B.page.evaluate(async (a) => {
 			const mod = await import('/pkg/oxedyne_daimond.js');
 			window.__seen = [];
-			const b = await DaimondDiamond.bounds(a.id);
 			const app = new mod.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
 			window.__turn = app.steer_crystal(a.id, a.dir,
-				JSON.stringify(b.toolkits || []), [],
+				[],
 				(ev) => { if (ev.type === 'tool_result') window.__seen.push(String(ev.content || '')); })
 				.then(() => 'done', (e) => 'threw ' + String(e && e.message || e));
-		}, { id: dia, dir: PLACE('ctl.md'), mock: process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/completions' });
-		const dlg4 = await B.page.waitForSelector('.modal.dlg[data-ask="place"]', { timeout: 15000 }).then(() => true, () => false);
+		}, { id: dia, dir: RUNP('ctl.md'), mock: process.env.DAIMOND_MOCK || 'http://127.0.0.1:9099/v1/chat/completions' });
+		const dlg4 = await runDlg(B.page, 15000);
 		const asked4 = (await pv(A.page)).sealed.length + (await pv(B.page)).sealed.filter((x) => x.t === 'consent-ask').length;
 		if (dlg4) await answerDlg(B.page, true);
 		const end4 = await B.page.evaluate(async () => ({ end: await window.__turn, seen: window.__seen })).catch((e) => ({ end: 'eval ' + e, seen: [] }));
 		await sleep(800);
 		const ha4 = await holds(B.page, dia), ma4 = await marks(B.page);
 		note('T4 dlg=' + dlg4 + ' end=' + end4.end + ' seen=' + JSON.stringify(end4.seen.map((c) => c.slice(0, 50))) + ' holds ' + hb4.length + '->' + ha4.length);
-		check('(5) control: B\'s own turn draws the place dialog on B, and no ask goes anywhere', dlg4 && asked4 === 0, 'dialog=' + dlg4 + ' asks=' + asked4);
-		check('(5) control: Allow writes the file and the same mark as before (a holds link and a marks-here entry on B)',
-			end4.seen.some((c) => /^Wrote /.test(c)) && ha4.length === hb4.length + 1 && ma4 !== mb4,
+		check('(5) control: B\'s own turn draws the run dialog on B, and no ask goes anywhere', dlg4 && asked4 === 0, 'dialog=' + dlg4 + ' asks=' + asked4);
+		check('(5) control: Allow runs the command and writes no holds link or marks-here entry on B',
+			(await execs(B.page)).length === 1 && ha4.length === hb4.length && ma4 === mb4,
 			JSON.stringify({ holds: [hb4.length, ha4.length], marksChanged: ma4 !== mb4 }));
 
-		// ── T5: B already allows docs/permit — (7) place ──────────────────────
-		console.log('\nT5 — place B already allows');
-		const t5 = await steer(PLACE('five.md'), null, 60000);
+		// ── T5: the Guarded mode lets the command run unasked — (7) ─────────────
+		console.log('\nT5 — run in the Guarded mode');
+		for (const pg of [A.page, B.page]) await pg.evaluate(() => { try { DaimondHandMode.set('guarded'); } catch (e) {} }).catch(() => {});
+		await syncAll();
+		const t5 = await steer(RUNP('five.md'), null, 60000);
 		note('T5 ' + sum(t5));
-		check('(7) B already allows the place: no ask anywhere, and the write proceeds',
-			asksOf(t5).length === 0 && t5.bDlgs.length === 0 && t5.cCards.length === 0 && wrote(t5)
-			&& !(await cards(A.page)).some((c) => /^Let .*five/.test(c.line + c.detail)), sum(t5));
-
-		// ── T6: toolkit, Allow on A — (4), (2) ───────────────────────────────
-		console.log('\nT6 — toolkit, Allow on A');
-		await B.page.evaluate(HAND_ON);
-		const kitsBefore = { A: await kits(A.page, dia), B: await kits(B.page, dia) };
-		const t6 = await steer('@tool run {"argv":["cargo","--version"],"cwd":""}', async () => {
-			const at = await waitCard(A.page, '^Let .*use', 30000);
-			const pressed = at >= 0 ? await press(A.page, '^Let .*use', 'go') : false;
-			return { at, pressed };
-		});
-		await syncAll(); await sleep(1500);
-		const kitsAfter = { A: await kits(A.page, dia), B: await kits(B.page, dia) };
-		const x6 = await execs(B.page);
-		note('T6 ' + sum(t6) + ' during=' + JSON.stringify(t6.duringOut) + ' kits ' + JSON.stringify([kitsBefore, kitsAfter]) + ' execs ' + JSON.stringify(x6));
-		const a6 = asksOf(t6);
-		check('(4) toolkit: the ask opens on A, never on B or C', !!t6.duringOut && t6.duringOut.at >= 0
-			&& a6.length === 1 && a6[0].kind === 'toolkit' && a6[0].target === idA && t6.bDlgs.length === 0 && t6.cCards.length === 0, sum(t6));
-		check('(4) toolkit: Allow runs it with the kit', x6.length === 1 && x6[0].toolkits.includes('rust'), JSON.stringify(x6));
-		check('(2) the toolkit yes added only the kit asked for, to the Diamond (A, synced to B)',
-			kitsBefore.A.length === 0 && JSON.stringify(kitsAfter.A) === '["rust"]' && JSON.stringify(kitsAfter.B) === '["rust"]',
-			JSON.stringify([kitsBefore, kitsAfter]));
-
-		// ── T7: the kit is held now — (7) toolkit ────────────────────────────
-		console.log('\nT7 — toolkit B already allows');
-		await B.page.evaluate(() => { window.__sent = []; });
-		const t7 = await steer('@tool run {"argv":["cargo","--version"],"cwd":""}', null, 60000);
-		const x7 = await execs(B.page);
-		note('T7 ' + sum(t7) + ' execs ' + JSON.stringify(x7));
-		check('(7) B already allows the kit: no ask anywhere, and it runs', asksOf(t7).length === 0
-			&& t7.bDlgs.length === 0 && t7.cCards.length === 0 && x7.length === 1, sum(t7));
+		check('(7) the Guarded mode: no ask anywhere, and the command runs',
+			asksOf(t5).length === 0 && t5.bDlgs.length === 0 && t5.cCards.length === 0 && ran(t5)
+			&& !(await cards(A.page)).some((c) => /^Run this/.test(c.line + c.detail)), sum(t5));
 
 		// ── T8: run in the Ask mode, Allow on A — (4), (2) ───────────────────
 		console.log('\nT8 — run (Ask mode), Allow on A');
@@ -997,14 +970,14 @@ try {
 		await B.page.evaluate(HAND_OFF);
 	} else {
 		// ── (6) mixed versions ───────────────────────────────────────────────
-		console.log('\n(6) MIX=' + MIX + ' — place, one device on r547');
-		const r6 = await steer(PLACE('six.md'), null, 90000);
+		console.log('\n(6) MIX=' + MIX + ' — run, one device on r547');
+		const r6 = await steer(RUNP('six.md'), null, 90000);
 		const cardsA = await cards(A.page);
-		note('(6) ' + sum(r6) + ' trailB=' + JSON.stringify(r6.pvB.trail.filter((x) => /place/.test(x))).slice(0, 300)
+		note('(6) ' + sum(r6) + ' trailB=' + JSON.stringify(r6.pvB.trail.filter((x) => /run/.test(x))).slice(0, 300)
 			+ ' cardsA=' + JSON.stringify(cardsA.map((c) => c.line)));
 		check('(6) no crash: the turn answered on A once', r6.landed && r6.copies === 1, sum(r6));
-		check('(6) never a grant: the write was refused and no holds link or marks-here entry was written',
-			!wrote(r6) && noRows(r6), sum(r6));
+		check('(6) never a grant: the command was refused and no holds link or marks-here entry was written',
+			!ran(r6) && noRows(r6), sum(r6));
 		if (MIX === 'A547') {
 			// A CONSENT-ROUTE runner and an r547 sender: the errand carries no `asks`, so B asks
 			// nobody, refuses at once and says why in its trail. The r547 A has no notice for it.
@@ -1013,12 +986,12 @@ try {
 				r6.pvB.trail.some((x) => /could not ask on your other device/.test(x)) && r6.ms < 30000, r6.ms + 'ms');
 			check('(6) A547: the model is told B could not ask on the other device, never that the user said no',
 				toldW(r6, /could not ask on the user's other device/) && !notNow(r6), JSON.stringify(r6.results));
-			check('(6) A547: A, on r547, shows no question (nothing it could answer)', !cardsA.some((c) => /^Let /.test(c.line)), JSON.stringify(cardsA.map((c) => c.line)));
+			check('(6) A547: A, on r547, shows no question (nothing it could answer)', !cardsA.some((c) => /^Let |^Run this/.test(c.line)), JSON.stringify(cardsA.map((c) => c.line)));
 		} else {
 			// An r547 runner and a CONSENT-ROUTE sender: the old runner is unchanged, its own
 			// dialog on B (answered Not now here), and A is asked nothing.
-			check('(6) B547: the old runner is unchanged: its own place dialog on B, nothing asked of A',
-				r6.bDlgs.includes('place') && asksOf(r6).length === 0 && !cardsA.some((c) => /^Let /.test(c.line)), sum(r6));
+			check('(6) B547: the old runner is unchanged: its own run dialog on B, nothing asked of A',
+				r6.bDlgs.some((d) => RUN_DLG.test(d)) && asksOf(r6).length === 0 && !cardsA.some((c) => /^Let |^Run this/.test(c.line)), sum(r6));
 		}
 	}
 

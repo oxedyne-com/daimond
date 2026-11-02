@@ -186,7 +186,6 @@ async function armOutside() {
 		const parts = p.split('/');
 		for (let i = 0; i < parts.length - 1; i++) d = await d.getDirectoryHandle(parts[i]);
 		await d.removeEntry(parts[parts.length - 1]);
-		DaimondCore.syncClearWalkCache();
 		return true;
 	}, P);
 	try {
@@ -217,8 +216,8 @@ async function armOutside() {
 			const linkId = await app.add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
 			return { id, ref, linkId };
 		});
-		await markHere(A, m.id, m.ref, { linkId: m.linkId, share: true });
-		await pa.evaluate(async () => { await DaimondCore.loadDiamonds(); DaimondCore.syncClearWalkCache(); });
+		await markHere(A, m.id, m.ref, { linkId: m.linkId });
+		await pa.evaluate(async () => { await DaimondCore.loadDiamonds(); });
 		const mode = await pa.evaluate(async () => (await import('/pkg/oxedyne_daimond.js')).workspace_mode());
 		control(`${tag}: A is in its machine folder`, mode === 'folder', mode);
 

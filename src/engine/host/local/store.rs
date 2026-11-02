@@ -9,9 +9,8 @@ use crate::{
         store::{Drained, HostStore},
         types::store::CrystalHalf,
     },
-    marks::{Live, Reach},
     rating::Author,
-    tools::{Bound, CrystalPassed, FileRoot, ToolContext},
+    tools::{CrystalPassed, FileRoot, ToolContext},
 };
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -201,10 +200,6 @@ impl HostStore for LocalStore {
     }
     fn end_turn_counts(&self, _: &str) {}
 
-    async fn live_bounds(&self, _: &Live) -> Outcome<Vec<Bound>> { refused("live_bounds") }
-    async fn reach(&self, _: &Live) -> Outcome<Reach> {
-        Err(err!("{}", crate::marks::UNREAD; Invalid, Input))
-    }
     fn trail(&self, _: &str, _: &str) {}
 
     async fn journal_put(&self, _: &str, _: u64, _: &[u8]) -> Outcome<()> {

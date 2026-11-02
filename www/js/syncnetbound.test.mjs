@@ -129,7 +129,7 @@ console.log('\na sync call ends at its deadline, and presence beats go one at a 
 	const clock = makeClock();
 	const tab = makeTab(clock);
 	for (let i = 0; i < 20; i++) {
-		tab.win.DaimondSync.beatPresence('dev', 'name', true, false, false, true, false, false, i, []);
+		tab.win.DaimondSync.beatPresence('dev', 'name', true, false, false, true, false, i, []);
 		await clock.advance(1000);
 	}
 	check('(b) 20 ticks on a stalled network put at most 1 beat on the wire', beats(tab).length <= 1,
@@ -150,7 +150,7 @@ console.log('\na sync call ends at its deadline, and presence beats go one at a 
 	tab.win.DaimondSync.beatPresence('dev', 'name', true).then((r) => { first = r; });
 	await clock.advance(61000);
 	check('(c) a beat held past its deadline settles (null)', first === null, String(first));
-	tab.win.DaimondSync.beatPresence('dev', 'name', true, false, false, true, false, false, 7, []);
+	tab.win.DaimondSync.beatPresence('dev', 'name', true, false, false, true, false, 7, []);
 	await clock.flush();
 	const b = beats(tab);
 	check('(c) the next beat goes at once', b.length === 2 && b[1].body.busy === 7,

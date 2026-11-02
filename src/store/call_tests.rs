@@ -7,8 +7,6 @@ use crate::{
     },
     diamond_versions::{hash_of, Body, Carried, Change, TurnFound, Unplaced, VERSION_FILE_MAX},
     engine::host::types::store::Wants,
-    marks::{DiamondId, Hold},
-    tools::Toolkit,
 };
 
 use oxedyne_fe2o3_core::error::ErrWire;
@@ -47,14 +45,6 @@ fn change() -> Change {
         by:         Some(author()),
         door:       true,
     }
-}
-
-fn live() -> Outcome<Live> {
-    Ok(Live::Diamond(res!(DiamondId::parse("ab12")), vec![s("rust")]))
-}
-
-fn chat() -> Live {
-    Live::Chat(s("c1"), vec![Hold { r: s("r"), path: s("p"), ws: true, read: false }])
 }
 
 fn notes() -> FoldNotes {
@@ -239,8 +229,6 @@ fn calls() -> Outcome<Vec<StoreCall>> {
             instruction:    WireText::Body(r(b"go")),
         },
         StoreCall::EndTurnCounts { id: id() },
-        StoreCall::LiveBounds { live: res!(live()) },
-        StoreCall::Reach { target: chat() },
         StoreCall::Trail { what: s("w"), detail: s("d") },
         StoreCall::BodyPut { id: id(), act: 1, hash: HexHash::of(&[1, 2]), len: 2, offset: 0, chunk: vec![1, 2] },
         StoreCall::BodyGet { id: id(), hash: HexHash::of(&[1, 2]), offset: 1, max: 1 },
@@ -265,12 +253,6 @@ fn replies() -> Outcome<Vec<StoreReply>> {
         note:   s(""),
         by:     s("user"),
         share:  true,
-    };
-    let reach = Reach {
-        attached:       vec![s("a")],
-        read_only:      vec![],
-        unconfirmed:    vec![s("u")],
-        nested:         vec![],
     };
     let wants = Wants {
         own:        vec![(s("a.md"), Seen::Bytes(hex()))],
@@ -377,12 +359,6 @@ fn replies() -> Outcome<Vec<StoreReply>> {
         StoreReply::VersionsRecordHeld(Ok(None)),
         StoreReply::RecordSteer(Ok(6)),
         StoreReply::EndTurnCounts(()),
-        StoreReply::LiveBounds(Ok(vec![
-            Bound::NoWrite(s("a")),
-            Bound::Toolkit(Toolkit::Rust),
-            Bound::Nowhere,
-        ])),
-        StoreReply::Reach(Ok(reach)),
         StoreReply::Trail(()),
         StoreReply::BodyPut(Ok(Put::Held)),
         StoreReply::BodyGet(Ok(vec![2])),
@@ -638,24 +614,6 @@ fn a_malformed_frame_is_refused() -> Outcome<()> {
         Dat::Map(map(vec![("id", Dat::Str(s("ab12")))])),
     )]))));
     assert!(decode_call(&short).is_err());
-    Ok(())
-}
-
-#[test]
-fn a_bad_diamond_id_is_refused_on_decode() -> Outcome<()> {
-    let c = StoreCall::LiveBounds { live: res!(live()) };
-    let mut dat = res!(c.to_dat());
-    // Put "../x" where the id stands.
-    fn swap(d: &mut Dat) {
-        match d {
-            Dat::Str(v) if v == "ab12" => *v = "../x".to_string(),
-            Dat::Map(m) => for (_, v) in m.iter_mut() { swap(v) },
-            Dat::List(l) => for v in l.iter_mut() { swap(v) },
-            _ => (),
-        }
-    }
-    swap(&mut dat);
-    assert!(decode_call(&res!(dat_bytes(&dat))).is_err());
     Ok(())
 }
 
@@ -1166,7 +1124,7 @@ fn every_variant_at_its_ceilings_fits_its_class() -> Outcome<()> {
 
 /// The calls that change nothing and whose answer may be too big to frame: a `Read` reply,
 /// refused `TooBig` in its own `Outcome`, is safe only for these.
-const READS: &[&str] = &["all_links", "links_json", "links_page", "live_bounds", "reach",
+const READS: &[&str] = &["all_links", "links_json", "links_page",
     "activity_read_all", "store_file_list", "his_words_read"];
 
 /// A mutating call's reply always fits (D1k2 lead line, kept by D1v2): its effect has happened,

@@ -22,7 +22,7 @@ async function run(runnerMsgs) {
 	const R = loadPage({ window: win, want: ['peerReady', 'peerReconstruct', 'lackedNote', 'THROUGH_WAIT_MS', 'throughDeadline', 'graftSeed',
 		'RECONSTRUCT_STALL_MS', 'RECONSTRUCT_ABS_CAP_MS', 'RECONSTRUCT_PULL_MIN_MS', 'RECONSTRUCT_PULL_MAX_MS', 'syncHeld', 'runnerTurnOpts'], stub: {
 		diag() {}, chats, loadChatMessages: async () => {}, onChatsChangedElsewhere: async () => {}, persistChats() {}, touchChat() {},
-		honourGone() {}, DaimondMarksHere: { chatSettle() {} }, ensureApp: () => ({}), scopeChatTo: async () => {}, diamonds: [], loadDiamonds: async () => {} } });
+		honourGone() {}, ensureApp: () => ({}), scopeChatTo: async () => {}, diamonds: [], loadDiamonds: async () => {} } });
 	const t0 = Date.now();
 	const rd = await R.peerReady(errand, [], BOUND);
 	const waited = Date.now() - t0;

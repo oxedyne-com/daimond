@@ -26,10 +26,10 @@ use crate::{
             Won,
         },
     },
-    marks::{num, Reach},
     protocol::{seed_prior, ChatMessage},
     tools::{
         KeeperKind,
+        OcrConf,
         ToolContext,
         ToolRegistry,
     },
@@ -38,6 +38,7 @@ use crate::{
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_jdat::{
     Dat,
+    bdat::DecodeLimits,
     conv::FromDat,
     map::DaticleMap,
 };
@@ -112,13 +113,15 @@ pub struct TurnSpec {
     pub pre:            String,
     /// The transcript row the instruction is said as (an errand's turn id); empty for none.
     pub mid:            String,
+    pub n:              u32,    // the turn's number as the page fixed it (TURN-NUM), 0 for none
+    pub turns:          Vec<(String, u32)>, // rows' (mid, n) since the fold, `turn_get`'s map
     /// The conversation before the turn, oldest first, as the page seeds it (the turn's own
     /// message excluded): what a detached run's agent holds before the instruction.
     pub thread:         Vec<ChatMessage>,
     /// The page's applied limits (KT-2), `None` from a send that carried none.
     pub limits:         Option<TurnLimits>,
     pub today:          String,         // the page's `Today` block (KT-4), empty for none
-    pub reach:          Option<Reach>,  // the page's reach, its `Attached` block (KT-4)
+    pub focus:          Option<Vec<String>>,    // what the user attached, its `Attached` block (KT-4)
     pub words:          Option<(String, String)>,   // the tab's words log, `(keeper, log)` (U2a)
 }
 
@@ -136,6 +139,7 @@ pub struct TurnLimits {
     pub fold_model:     String,	// the effective Summarising model on the turn's provider
     pub fold_prompt:    String,	// the person's `prompts/compactor.md`
     pub tune:           String,	// the tune JSON; `Agent::set_tune`
+    pub ocr:            OcrConf,	// the gateway's OCR engines and figures; `Agent::set_ocr`
 }
 
 impl TurnLimits {
@@ -163,6 +167,7 @@ impl TurnLimits {
             fold_model:     text(m, "foldModel"),
             fold_prompt:    text(m, "foldPrompt"),
             tune:           text(m, "tune"),
+            ocr:            m.get(&key("ocr")).map(OcrConf::of_dat).unwrap_or_default(),
         })
     }
 
@@ -177,6 +182,7 @@ impl TurnLimits {
         d.insert(key("foldModel"), Dat::Str(self.fold_model.clone()));
         d.insert(key("foldPrompt"), Dat::Str(self.fold_prompt.clone()));
         d.insert(key("tune"), Dat::Str(self.tune.clone()));
+        d.insert(key("ocr"), self.ocr.to_dat());
         Dat::Map(d)
     }
 
@@ -192,6 +198,7 @@ impl TurnLimits {
         agent.set_spend_cap_usd(self.spend_cap_usd);
         agent.set_fold_model(&self.fold_model);
         agent.set_fold_prompt(&self.fold_prompt);
+        agent.set_ocr(&self.ocr);
         agent.set_tune(&self.tune)
     }
 }
@@ -219,6 +226,8 @@ pub struct TurnAsk {
     pub pre:        String,
     /// The row the turn's message is said as (`mid`).
     pub mid:        String,
+    pub n:          u32,    // `n`: the turn's number (TURN-NUM), 0 for none
+    pub turns:      Vec<(String, u32)>, // `turns`: `[["mid", n], …]`, rows' numbers since the fold
     /// The conversation before the turn, from the page's engine session (`session`: `{msgs,
     /// tail}`, KT-4) as `ensureApp` restores it: the model's rows repaired by [`seed_prior`],
     /// then the prose tail's `{role, content, pre, mid, interject?}` rows read through
@@ -228,7 +237,7 @@ pub struct TurnAsk {
     /// The page's applied limits (`limits`), `None` where the send carries no object.
     pub limits:     Option<TurnLimits>,
     pub today:      String,         // `today`: the page's `Today` block, empty for none
-    pub reach:      Option<Reach>,  // `reach`: what the page's marks put in reach, `None` for none
+    pub focus:      Option<Vec<String>>,    // `focus`: the paths the user attached, `None` for none
     /// The tab's words log for a runner's fold to stage over (`words`: `{keeper, log}`, U2a):
     /// `(keeper, log)`, `None` where the send carries none.
     pub words:      Option<(String, String)>,
@@ -294,10 +303,12 @@ pub fn resolve(ask: &TurnAsk) -> TurnSpec {
         refused,
         pre:        ask.pre.clone(),
         mid:        ask.mid.clone(),
+        n:          ask.n,
+        turns:      ask.turns.clone(),
         thread:     ask.thread.clone(),
         limits:     ask.limits.clone(),
         today:      ask.today.clone(),
-        reach:      ask.reach.clone(),
+        focus:      ask.focus.clone(),
         words:      ask.words.clone(),
     }
 }
@@ -319,6 +330,11 @@ fn text(m: &DaticleMap, k: &str) -> String {
         Some(Dat::Str(s)) => s.clone(),
         _                 => String::new(),
     }
+}
+
+/// A row's or a send's turn number, `n` (TURN-NUM): 0 where it has none.
+fn turn_n_of(m: &DaticleMap) -> u32 {
+    crate::turn_num::n_of(num(m.get(&key("n"))))
 }
 
 fn flag(m: &DaticleMap, k: &str) -> bool {
@@ -344,8 +360,8 @@ fn session_thread(m: &DaticleMap) -> Vec<ChatMessage> {
     if let Some(Dat::List(l)) = m.get(&key("tail")) {
         thread.extend(l.iter().filter_map(|d| match d {
             Dat::Map(r) => match r.get(&key("content")) {
-                Some(Dat::Str(c)) => ChatMessage::of_row_opening(&text(r, "role"), c.clone(),
-                    text(r, "pre"), text(r, "mid"), !flag(r, "interject")),
+                Some(Dat::Str(c)) => ChatMessage::of_row_numbered(&text(r, "role"), c.clone(),
+                    text(r, "pre"), text(r, "mid"), !flag(r, "interject"), turn_n_of(r)),
                 _                 => None,
             },
             _ => None,
@@ -355,9 +371,23 @@ fn session_thread(m: &DaticleMap) -> Vec<ChatMessage> {
 }
 
 impl TurnAsk {
-    /// The page's send, from its JSON (`turn_spec`'s argument).
-    pub fn from_json(json: &str) -> Outcome<Self> {
-        let top = match res!(Dat::decode_string_with_config(json, &crate::agent::compact::json_cfg())) {
+    /// Why a turn's request of `len` bytes is not read under a bound of `max`, in his words, or
+    /// `None` when it fits.
+    pub fn oversize(len: usize, max: usize) -> Option<String> {
+        match len > max {
+            true    => Some(fmt!("This turn's request is {} bytes, over the {} bytes a turn may carry",
+                len, max)),
+            false   => None,
+        }
+    }
+
+    /// The page's send, from its JSON (`turn_spec`'s argument), of at most `max` bytes: over it,
+    /// refused with its size and the bound named ([`TurnAsk::oversize`]).
+    pub fn from_json(json: &str, max: usize) -> Outcome<Self> {
+        if let Some(why) = Self::oversize(json.len(), max) {
+            return Err(err!("{}", why; Input, Excessive, Size));
+        }
+        let top = match res!(Dat::decode_string_with_config(json, &crate::agent::compact::json_cfg_within(max))) {
             Dat::Map(m) => m,
             _           => return Err(err!("A turn's send must be a JSON object."; Input, Invalid)),
         };
@@ -399,15 +429,20 @@ impl TurnAsk {
             how,
             pre:        text(&top, "pre"),
             mid:        text(&top, "mid"),
+            n:          turn_n_of(&top),
+            turns:      top.get(&key("turns")).map(crate::turn_num::nums_of_dat).unwrap_or_default(),
             thread:     match top.get(&key("session")) {
                 Some(Dat::Map(m)) => session_thread(m),
                 _                 => Vec::new(),
             },
             limits:     top.get(&key("limits")).and_then(TurnLimits::of_dat),
             today:      text(&top, "today"),
-            reach:      match top.get(&key("reach")) {
-                Some(d @ Dat::Map(_)) => Reach::from_dat(d.clone()).ok(),
-                _                     => None,
+            focus:      match top.get(&key("focus")) {
+                Some(Dat::List(l)) => Some(l.iter().filter_map(|d| match d {
+                    Dat::Str(p) => Some(p.clone()),
+                    _           => None,
+                }).collect()),
+                _                  => None,
             },
             words:      match top.get(&key("words")) {
                 Some(Dat::Map(m)) => Some((text(m, "keeper"), text(m, "log"))),
@@ -472,7 +507,8 @@ impl TurnSpec {
 /// that is not one (the page refuses the turn on it).  The error is a fixed sentence: the page logs
 /// it, and a decoder's own wording is not for the console.
 pub fn spec_json(json: &str) -> String {
-    match TurnAsk::from_json(json) {
+    // The page's own send, built in the tab and never off a wire, so the decoder's default bound.
+    match TurnAsk::from_json(json, DecodeLimits::DEFAULT_MAX_BYTES) {
         Ok(ask) => match resolve(&ask).json() {
             Ok(s)  => s,
             Err(_) => fmt!("{{\"error\":\"turn_spec: the spec could not be written\"}}"),
@@ -699,6 +735,29 @@ async fn end_keeper_turn_kept<H: Host>(ctx: &ToolContext<H>, own: bool, key: &st
             refused(store, &key, "versions_record_held", &e, unkept);
             None
         },
+    }
+}
+
+
+/// A JSON number as the page sent it, any width, or 0 where it is not one.
+pub(crate) fn num(d: Option<&Dat>) -> f64 {
+    match d {
+        Some(Dat::U8(n))   => *n as f64,
+        Some(Dat::U16(n))  => *n as f64,
+        Some(Dat::U32(n))  => *n as f64,
+        Some(Dat::U64(n))  => *n as f64,
+        Some(Dat::U128(n)) => *n as f64,
+        Some(Dat::I8(n))   => *n as f64,
+        Some(Dat::I16(n))  => *n as f64,
+        Some(Dat::I32(n))  => *n as f64,
+        Some(Dat::I64(n))  => *n as f64,
+        Some(Dat::I128(n)) => *n as f64,
+        Some(Dat::F32(n))  => n.0 as f64,
+        Some(Dat::F64(n))  => n.0,
+        // A JSON number with a point or an exponent decodes as a decimal (KT-2: `foldAt` 0.8
+        // read as 0, the engine's figure, until this arm).
+        Some(Dat::Adec(d)) => d.to_string().parse::<f64>().unwrap_or(0.0),
+        _                  => 0.0,
     }
 }
 

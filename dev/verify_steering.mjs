@@ -284,8 +284,8 @@ const SECTIONS = {
 
 // ── Two devices (ST7, ST8) and the 5.3.1 page (MIX) ──
 const ready = (s) => s.page.waitForFunction(() => !!(window.DaimondSync && window.DaimondCore && window.DaimondGateway && window.DaimondCloud && DaimondGateway.state().authed), null, { timeout: 30000 }).catch(() => {});
-const push = (s) => s.page.evaluate(async () => { try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older */ } return window.DaimondSync.flush ? await DaimondSync.flush() : await DaimondSync.push(); }).then(() => sleep(500)).catch(() => {});
-const pull = (s) => s.page.evaluate(async () => { try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older */ } return DaimondSync.pull(); }).then(() => sleep(500)).catch(() => {});
+const push = (s) => s.page.evaluate(async () => { try { } catch (e) { /* older */ } return window.DaimondSync.flush ? await DaimondSync.flush() : await DaimondSync.push(); }).then(() => sleep(500)).catch(() => {});
+const pull = (s) => s.page.evaluate(async () => { try { } catch (e) { /* older */ } return DaimondSync.pull(); }).then(() => sleep(500)).catch(() => {});
 async function rounds(X, Y, k) { for (let i = 0; i < k; i++) { await push(X); await pull(Y); await push(Y); await pull(X); } }
 const reqs = (text) => mockLog().filter((r) => lastUser(r).includes(text));
 let PAIR = null, ST7_BLOCK = '';

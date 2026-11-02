@@ -228,13 +228,35 @@
 			_cache.expire = days(raw.expire, CHAT_EXPIRE_DAYS);
 			_cache.retain = days(raw.retain, TRASH_RETAIN_DAYS);
 			_cache.high   = Math.max(_cache.retain, days(raw.high, TRASH_RETAIN_DAYS));
+			_cache.ocr    = ocrOf(raw.ocr);
 		} catch (e) { /* nothing cached: the shipped figures stand */ }
 		return _cache;
 	}
 
 	function save(p) {
-		try { localStorage.setItem(KEY, JSON.stringify({ v: 1, expire: p.expire, retain: p.retain, high: p.high })); }
+		try { localStorage.setItem(KEY, JSON.stringify({ v: 1, expire: p.expire, retain: p.retain, high: p.high,
+			ocr: p.ocr || null })); }
 		catch (err) { log('could not cache the policy', err); }
+	}
+
+	/// The OCR engines and figures as the gateway served them (P2.5d), under the engine's names,
+	/// or null for none; zero or '' is the engine's own figure, as the engine reads it.
+	function ocrOf(o) {
+		if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+		function text(v) { return typeof v === 'string' ? v : ''; }
+		function num(v)  { var n = +v; return (isFinite(n) && n > 0) ? n : 0; }
+		return { pdfFree: text(o.pdfFree), pdfOcr: text(o.pdfOcr), mistralModel: text(o.mistralModel),
+			relayModel: text(o.relayModel), visionModel: text(o.visionModel),
+			usdPerPage: num(o.usdPerPage), emptyFloor: Math.trunc(num(o.emptyFloor)) };
+	}
+
+	/// Adopt the gateway's OCR figures. True when they moved.
+	function setOcr(o) {
+		var p = load(), n = ocrOf(o);
+		if (JSON.stringify(n) === JSON.stringify(p.ocr || null)) return false;
+		p.ocr = n;
+		save(p);
+		return true;
 	}
 
 	/// Adopt a policy, from the gateway or from a test. True when it moved,
@@ -243,7 +265,7 @@
 		var was = load(), e = days(expireDays, was.expire), r = days(retainDays, was.retain);
 		var h = Math.max(was.high, r);
 		if (e === was.expire && r === was.retain && h === was.high) return false;
-		_cache = { expire: e, retain: r, high: h };
+		_cache = { expire: e, retain: r, high: h, ocr: was.ocr || null };
 		save(_cache);
 		return true;
 	}
@@ -275,6 +297,7 @@
 	/// policy.js asks once per boot and every reader shares that answer.
 	function adopt(j) {
 		if (!j || j.ok !== true) return false;
+		setOcr(j.ocr);
 		return set(j.chat_expire_days, j.trash_retain_days);
 	}
 	async function refresh() {
@@ -298,6 +321,10 @@
 		/// The two figures in days, for the sentences that quote them.
 		days:          function () { var p = load(); return { expire: p.expire, retain: p.retain }; },
 		set:           set,
+		/// The gateway's OCR engines and figures, last served (P2.5d), or null: what
+		/// `applyFoldSettings` hands each engine and an errand's limits carry.
+		ocr:           function () { return load().ocr || null; },
+		setOcr:        setOcr,
 		refresh:       refresh,
 		/// Drop the cache, for an account switch and for the verifiers.
 		reset:         function () { _cache = null; },
@@ -372,7 +399,7 @@
 	/// empty it brought every trashed Diamond back as live, and the next save wrote
 	/// over what was left of the record (QA A F2). It holds nothing here, every
 	/// write is refused, and only `resetDamaged` -- a person's explicit press --
-	/// replaces it. The engine's `marks::trashed_ids` keeps the same rule.
+	/// replaces it.
 	function load() {
 		if (_items) return _items;
 		_items = {};

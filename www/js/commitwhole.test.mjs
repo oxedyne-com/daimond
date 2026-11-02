@@ -111,7 +111,7 @@ function loadGate(win, env) {
 		text = text.replace(needle, broken);
 	}
 	return new Function('window', 'env',
-		'var Files = env.Files, FsaDB = env.FsaDB, localStorage = env.ls;\n'
+		'var Files = env.Files, localStorage = env.ls;\n'
 		+ 'function filesSyncable() { return env.syncable(); }\n'
 		+ 'function offloadAllowed() { return !!window.DaimondCloud && filesSyncable(); }\n'
 		+ 'with (window) {\n' + text + '\n'

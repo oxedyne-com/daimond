@@ -254,8 +254,8 @@ async function armFolder() {
 			const linkId = await app.add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
 			return { id, ref, linkId };
 		});
-		await markHere(A, m.id, m.ref, { linkId: m.linkId, share: true });
-		await pa.evaluate(async () => { await DaimondCore.loadDiamonds(); DaimondCore.syncClearWalkCache(); });
+		await markHere(A, m.id, m.ref, { linkId: m.linkId });
+		await pa.evaluate(async () => { await DaimondCore.loadDiamonds(); });
 		const mode = await pa.evaluate(async () => (await import('/pkg/oxedyne_daimond.js')).workspace_mode());
 		control(`${tag}: A is in its machine folder`, mode === 'folder', mode);
 		for (let i = 0; i < 4; i++) await write(B, 'big/ballast' + i + '.txt', BIG('ballast' + i));

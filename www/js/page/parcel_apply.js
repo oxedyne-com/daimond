@@ -12,7 +12,7 @@ import { DEVICE_ID_RE, DEVICE_TOMBS_KEY, SYNC_CHATS_INLINE_MAX, SYNC_CLOUDBASE_K
 	collectDiamonds, collectFiles, collectOwn, deviceId, diamondMergePlan, diamondTwoSided,
 	dropDiamondRecords, fileHash, fileTombs, filesSyncable, heldLoc, indexWhole, inlineSoftCap,
 	loadDevices, loadTombMap, mergeDevices, mergeTombMap, nominationSnapshot, noteFileTombs,
-	noteFoldersLeft, packFacets, planDiamonds, previewReap, readDiamondBase, readDiamondRecv,
+	packFacets, planDiamonds, previewReap, readDiamondBase, readDiamondRecv,
 	readDiamondSeen, readDiamondUnioned, reconcileRoster, recordDiamondCopies, recvOf, seenAncestor,
 	seenEntry, sentAnc, syncDoorRoom, syncFileAt, syncFileLoc, syncFilesBudget, syncInlineRoom,
 	writeDiamondBase, writeDiamondUnioned } from './parcel_collect.js';
@@ -26,7 +26,7 @@ import { MANIFEST_LOST_NAMED, clog, diag, heapNote, mergeLedgers, toast } from '
 import { DIAMOND_LOCK_WAIT, holdDiamond } from './pending.js';
 import { adoptDiamondModel, diamondApp, inheritGate, loadDiamonds } from './diamonds.js';
 import { notePrunes } from './crystal.js';
-import { dropChatApp, dropRefused, removeLinkHere } from './marks.js';
+import { dropRefused, removeLinkHere } from './marks.js';
 import { tOr } from './settingsui.js';
 // page-split: end imports
 let diamondCounter; // page-split: hoisted
@@ -496,10 +496,8 @@ function storeRefusal(e) {
 async function mergeConflictLinks(app, owner, plan) {
 	var refused = null;
 	for (var pd = 0; pd < plan.drop.length; pd++) {
-		// Read as `settle` reads it, so the two name one entry.
-		var gr = DaimondMarksHere.parseSidecar(plan.drop[pd].line)[0];
-		try { await removeLinkHere({ owner: owner, id: plan.drop[pd].id, from: gr ? gr.from : '',
-			to: gr ? gr.to : '', rel: gr ? gr.rel : '' }); }
+		// A dropped row always has an id (`diamondMergePlan`), so it goes by id.
+		try { await removeLinkHere({ owner: owner, id: plan.drop[pd].id }); }
 		catch (e) {
 			trail('sync conflict link removal refused', owner + ': ' + ((e && (e.message || e)) || '?'));
 			if (!refused) refused = e;
@@ -561,8 +559,6 @@ async function applyDiamonds(remote, from) {
 	// equal-stamp meeting only where a union then builds on that copy.
 	var recv = readDiamondRecv(), seen = readDiamondSeen(), gone = [];
 	trail('sync tombs', deletions.length + ' tombstone(s), ' + Object.keys(local).length + ' here');
-	// A Diamond deleted anywhere takes what was pressed on it here (R2).
-	if (deletions.length && DaimondMarksHere.dropAll(deletions)) changed = true;
 	for (var j = 0; j < deletions.length; j++) {
 		var dead = deletions[j];
 		// A Diamond no longer here still takes its records with it (QDIA F6).
@@ -723,7 +719,7 @@ async function applyDiamonds(remote, from) {
 			var twoSided = diamondTwoSided(r, mine, recv, dbase);
 			var rAnc = sentAnc(r);
 			var wfOk = packFacets(idata);
-			var wf = wfOk || { tags: packTags(idata), kits: [], name: '', links: packLinks(idata) };
+			var wf = wfOk || { tags: packTags(idata), name: '', links: packLinks(idata) };
 			var plan = null, loserNotes = '', loserArchive = '';
 			if (twoSided) {
 				// What lives outside the versioned files -- tags, links, name, grants -- is
@@ -742,19 +738,11 @@ async function applyDiamonds(remote, from) {
 				catch (e) { loserLinks = ''; loserNotes = ''; loserArchive = ''; }
 				var lf = {
 					tags:  (mine && Array.isArray(mine.tags)) ? mine.tags.slice() : [],
-					kits:  (mine && Array.isArray(mine.toolkits)) ? mine.toolkits.slice() : [],
 					name:  (mine && typeof mine.name === 'string') ? mine.name : '',
 					links: loserLinks,
 				};
 				plan = diamondMergePlan(wf, lf, wfOk ? seenAncestor(seen[r.id], rAnc) : null);
 			}
-			// A REMOVAL OR A NARROWING MADE ON ANOTHER DEVICE LANDS ON THIS DEVICE'S
-			// RECORD HERE (R2), from the rows the live copy will hold -- the arriving
-			// copy's own sidecar, or the merge's rows where a conflict settles them -- and
-			// never from a read of the store, which mid-import answers "no links". Before
-			// the import, so a failed import leaves an entry narrowed and a row standing:
-			// that errs closed, and the next pull's retry repairs it. A widening never lands.
-			if (DaimondMarksHere.settle(r.id, plan ? plan.rows : wf.links, '')) changed = true;
 			var storedAt = packStamp(idata) || diamondStamp(r);	// the stamp the import lays down
 			var imp = null;
 			try { imp = joinCounts(await app.import_diamond(idata, twoSided)); }
@@ -791,9 +779,6 @@ async function applyDiamonds(remote, from) {
 				// Each write moves `touched`, so the result travels back on the next push
 				// and the other device takes it one-sided: it descends from both copies.
 				if (plan.tags) { try { await app.set_tags(r.id, JSON.stringify(plan.tags)); } catch (e) {} }
-				if (plan.kits && app.set_toolkits) {
-					try { await app.set_toolkits(r.id, JSON.stringify(plan.kits)); } catch (e) {}
-				}
 				if (plan.name !== null) { try { await app.rename_diamond(r.id, plan.name); } catch (e) {} }
 				// A row the merge takes off is a removal this device made since the common
 				// copy, so it goes through the one door every removal here takes: the row,
@@ -1321,8 +1306,7 @@ async function verifyManifestPresence() {
 	// round of a sitting, which keeps the manifest -- the safe direction.
 	var canReoffloadFiles = false;
 	try {
-		canReoffloadFiles = filesSyncable()
-			|| !!(_sharePlan && _sharePlan.folder);
+		canReoffloadFiles = filesSyncable();
 	} catch (e) { canReoffloadFiles = false; }
 	for (var si = 0; si < sk.length; si++) {
 		var key = sk[si], kind = manifestKind(key), id = key.replace(/^@[dcm]\//, '');
@@ -1714,9 +1698,6 @@ export async function collectSync() {
 	if (window.DaimondCloud) chunked = DaimondCloud.index();
 	noteFilesLeft(fileCol.left);
 	noteDiamondsLeft(dCol.left);
-	// A flagged folder too big to travel is named in the same banner, because it is
-	// the reason its own files are missing from the two rows above.
-	noteFoldersLeft(fileCol.plan ? fileCol.plan.left : []);
 	// AND A DELETION BECOMES NEWS HERE, on the device that made it. The fork point
 	// says which files both devices held; a COMPLETE census that no longer carries
 	// one of them is this device saying it deleted that file, with the hash it held,
@@ -2160,10 +2141,6 @@ async function applyChats(remote, from) {
 			diag('apply chat NEW', r.id + ' n=' + (Array.isArray(r.messages) ? r.messages.length : 0));
 			byId[r.id] = r;
 			arrived.push.apply(arrived, arrivedIn(r.id, [], r.messages, '', '', 0));
-			// What this device pressed on it before its record was lost here (an
-			// evicted store keeps localStorage) narrows to the copy arriving, as a
-			// merge's does below (R2; QA 2026-09-24, F1).
-			if (DaimondMarksHere.chatSettle(r.id, r.holds)) dropChatApp(r.id);
 			continue;
 		}
 		// `st` is a SUMMARY since seq 213 -- read the local transcript and session from
@@ -2212,16 +2189,12 @@ async function applyChats(remote, from) {
 		byId[r.id] = merged;
 		mergedIds[r.id] = 1;
 		arrived.push.apply(arrived, arrivedIn(r.id, localMsgs, r.messages, nameWas, merged.name || '', chatMatOf(merged, 'nat')));
-		// A holding taken off, marked out or Read-off on another device narrows what
-		// was pressed on it here (R2), as the merged record now stands.
-		if (DaimondMarksHere.chatSettle(r.id, merged.holds)) dropChatApp(r.id);
 	}
 	var deadChats = Object.keys(tombs);
 	deadChats.forEach(function (id) {
 		if (byId[id]) diag('apply chat removed', id + ' by tombstone');
 		delete byId[id];
 	});
-	DaimondMarksHere.chatDropAll(deadChats);
 	var out = Object.keys(byId).map(function (id) { return byId[id]; });
 	// A MERGE THAT SHORTENED A TRANSCRIPT, in the durable trail.
 	//

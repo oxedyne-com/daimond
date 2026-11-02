@@ -55,6 +55,13 @@ const P = pw.DaimondPeer;
 	check('an errand made again keeps the limits', JSON.stringify(P.makeErrand(e).limits) === LIMITS_JSON);
 	const chat = { id: 'c9', messages: [{ role: 'user', content: 'go', mid: 't9', ts: 1 }] };
 	const sent = (extra) => P.buildDispatch(chat, Object.assign({ turnId: 't9', prompt: 'go', now: 2 }, extra)).errand(0);
+	// P2.5d: the gateway's OCR figures ride the limits, coerced to the engine's names; none, none.
+	const OCR = { pdfFree: '', pdfOcr: 'ocr-y', mistralModel: '', relayModel: 'relay/r', visionModel: '',
+		usdPerPage: 0.01, emptyFloor: 3 };
+	const lo = P.makeErrand({ limits: Object.assign({}, LIMITS, { ocr: { pdfOcr: 'ocr-y', relayModel: 'relay/r',
+		usdPerPage: '0.01', emptyFloor: 3.9, bogus: 1 } }) }).limits;
+	check('P2.5d an errand carries the OCR figures as the engine reads them', same(lo.ocr, OCR), JSON.stringify(lo.ocr));
+	check('P2.5d an errand with none carries none', !('ocr' in P.makeErrand({ limits: LIMITS }).limits));
 	check('a dispatch carries its limits', JSON.stringify(sent({ limits: LIMITS }).limits) === LIMITS_JSON);
 	check('a dispatch with none carries no key', !('limits' in sent({})));
 }
@@ -87,6 +94,13 @@ const P = pw.DaimondPeer;
 		check('nothing set and an unknown window send zeros, the engine\'s defaults', same(z,
 			{ window: 0, foldAt: 0, contextCap: 0, spendCap: 0, maxRounds: 0, foldModel: 'm-fold', foldPrompt: '', tune: '' }),
 			JSON.stringify(z));
+	}
+	if (F) {
+		const H = loadPage({ window: win({ DaimondPolicy: { ocr: () => ({ pdfFree: '', pdfOcr: 'ocr-y', mistralModel: '',
+			relayModel: 'relay/r', visionModel: '', usdPerPage: 0.01, emptyFloor: 3 }) } }), want: ['errandLimits'], stub: env() });
+		const h = H.errandLimits({ id: 'c1' });
+		check('P2.5d the page\'s limits carry the policy\'s OCR figures', h.ocr && h.ocr.relayModel === 'relay/r'
+			&& h.ocr.emptyFloor === 3, JSON.stringify(h.ocr));
 	}
 	const src = source('daimond.js');
 	check('dispatchToPeer sends errandLimits(chat) as limits', /limits:\s*errandLimits\(chat\),/.test(src));

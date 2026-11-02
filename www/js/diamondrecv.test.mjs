@@ -20,8 +20,8 @@
    descends from, at most 16); a device records its copy's lineage and what
    it last received (`daimond-diamond-recv`, `[s, c, anc]`). An arrival is
    two-sided when this device moved since its receipt and the arrival's
-   lineage holds no copy this device is holding. The tags, links, name and
-   grants of the copies a device sent and received are recorded
+   lineage holds no copy this device is holding. The tags, links and name
+   of the copies a device sent and received are recorded
    (`daimond-diamond-seen`), and a conflict settles them three-way against
    the newest copy in the arrival's lineage it holds a record of.
 
@@ -29,7 +29,7 @@
    (`applyDiamonds`, `entryLineage`, `recordDiamondCopies`, `syncForkPoint`,
    `commitDiamondBaseline`, `readDiamondRecv`) over a fake store that
    models the import contract (`keep_conflict` keeps the loser as a
-   version; a tag, name, grant or link write moves the stamp). Devices
+   version; a tag, name or link write moves the stamp). Devices
    exchange parcels by hand, so each shape is exactly the one named.
 
    Run:  node www/js/diamondrecv.test.mjs
@@ -42,14 +42,6 @@
    ============================================================ */
 import { makeWindow } from '../../dev/syncprobe.mjs';
 import { loadPage } from './test/page.mjs';
-import { readFileSync } from 'node:fs';
-
-/// The page's own sidecar read (markshere.js), so a row is named here as `settle` names it.
-const MH = (() => {
-	const win = { localStorage: { getItem: () => null, setItem() {}, removeItem() {} }, addEventListener() {}, dispatchEvent: () => true };
-	new Function('window', 'CustomEvent', readFileSync(new URL('./markshere.js', import.meta.url), 'utf8'))(win, function () {});
-	return win.DaimondMarksHere;
-})();
 
 let failures = 0;
 function check(name, cond, detail) {
@@ -82,7 +74,7 @@ function pack(id, d) {
 	return JSON.stringify({
 		id: id, touched: d.touched,
 		files: {
-			'.daimond/meta.json':   JSON.stringify({ name: d.name, touched: d.touched, tags: d.tags || [], toolkits: d.kits || [] }),
+			'.daimond/meta.json':   JSON.stringify({ name: d.name, touched: d.touched, tags: d.tags || [] }),
 			'.daimond/links.jsonl': d.links || '',
 			'crystal.json':         d.memory || '',
 		},
@@ -92,7 +84,7 @@ function unpack(json) {
 	const v = JSON.parse(json), files = v.files || {};
 	let m = {};
 	try { m = JSON.parse(files['.daimond/meta.json'] || '{}'); } catch (e) {}
-	return { touched: v.touched, name: m.name || '', tags: m.tags || [], kits: m.toolkits || [],
+	return { touched: v.touched, name: m.name || '', tags: m.tags || [],
 		links: String(files['.daimond/links.jsonl'] || ''), memory: String(files['crystal.json'] || '') };
 }
 
@@ -100,23 +92,20 @@ function unpack(json) {
 function device(name, skew) {
 	const w = makeWindow({ now: T });
 	const store = {};
-	const settled = {};
-	const drops = [], taken = [];				// entries dropped; rows the store took off
 	const bump = (id) => { store[id].touched = Math.max(tick() + (skew || 0), store[id].touched + 1); };
 	const app = {
 		list_diamonds: async () => JSON.stringify(Object.keys(store).map((id) => ({
 			id, name: store[id].name, updated: store[id].touched, touched: store[id].touched,
-			tags: store[id].tags.slice(), toolkits: store[id].kits.slice() }))),
+			tags: store[id].tags.slice() }))),
 		export_diamond: async (id) => pack(id, store[id]),
 		import_diamond: async (json, keep) => {
 			const inc = unpack(json), id = JSON.parse(json).id, had = store[id];
 			const versions = had ? had.versions.slice() : [];
 			if (had && keep) versions.push({ memory: had.memory, tags: had.tags.slice(), note: 'kept before sync' });
-			store[id] = { touched: inc.touched, name: inc.name, tags: inc.tags.slice(), kits: inc.kits.slice(),
+			store[id] = { touched: inc.touched, name: inc.name, tags: inc.tags.slice(),
 				links: inc.links, memory: inc.memory, versions };
 		},
 		set_tags: async (id, j) => { store[id].tags = JSON.parse(j); bump(id); },
-		set_toolkits: async (id, j) => { store[id].kits = JSON.parse(j); bump(id); },
 		rename_diamond: async (id, n) => { store[id].name = n; bump(id); },
 		union_links: async (id, side) => {
 			const cur = rowsOf(store[id].links), ids = cur.map((l) => JSON.parse(l).id);
@@ -127,9 +116,6 @@ function device(name, skew) {
 		},
 		remove_link: async (id, lid) => {
 			const cur = rowsOf(store[id].links), kept = cur.filter((l) => JSON.parse(l).id !== lid);
-			// The one door (P5): this device's entry for the row goes with it, once the store took it.
-			const gone = MH.parseSidecar(cur.filter((l) => JSON.parse(l).id === lid).join('\n'))[0];
-			if (gone) taken.push([id + ' ' + lid, id + ' ' + lid + ' ' + gone.to]);
 			if (kept.length === cur.length) return false;
 			store[id].links = kept.join('\n'); bump(id); return true;
 		},
@@ -137,8 +123,6 @@ function device(name, skew) {
 	};
 	const stubs = {
 		ChatStore: { putTombs: () => Promise.resolve(true) }, diamondApp: () => app, trail: () => {}, heapNote: () => '',
-		DaimondMarksHere: { dropAll: () => false, settle: (owner, text, loser) => { settled[owner] = String(text || '') + '\n' + String(loser || ''); return false; },
-			drop: (owner, lid, to) => { drops.push(owner + ' ' + lid + ' ' + to); return false; }, parseSidecar: MH.parseSidecar },
 		notePeerRef: () => {}, bumpDiamonds: () => {},
 		onDiamondsChangedElsewhere: async () => {}, signalLinksChanged: () => {}, setDiamondModel: () => {}, adoptDiamondModel: () => false, renderEffortStep: () => {},
 		storageAlarm: () => {}, tOr: (k, x) => x, DaimondCloud: undefined, DaimondChunks: undefined,
@@ -166,21 +150,17 @@ function device(name, skew) {
 	const f = loadPage({ window: w, want: ['applyDiamonds', 'entryLineage', 'recordDiamondCopies', 'readDiamondRecv', 'readDiamondSeen',
 		'syncForkPoint', 'commitDiamondBaseline', 'readDiamondBase', 'diamondAncOf', 'recvOf'], stub: stubs });
 	const dev = {
-		name, store, w, f, settled, drops,
-		// Rows taken off whose entry did not follow.
-		get raw() { return taken.filter((t) => !drops.includes(t[1])).map((t) => t[0]); },
+		name, store, w, f,
 		create(id, memory) {
-			store[id] = { touched: tick() + (skew || 0), name: id, tags: ['common'], kits: [], links: '', memory, versions: [] };
+			store[id] = { touched: tick() + (skew || 0), name: id, tags: ['common'], links: '', memory, versions: [] };
 		},
-		/// One change, one stamp: the memory, and whatever of tags, name, grants and marks `o` names.
+		/// One change, one stamp: the memory, and whatever of tags, name and marks `o` names.
 		edit(id, memory, tag, o) {
 			const d = store[id]; o = o || {};
 			if (memory != null) d.memory = memory;
 			if (tag) d.tags = d.tags.concat([tag]);
 			if (o.dropTag) d.tags = d.tags.filter((x) => x !== o.dropTag);
 			if (o.name) d.name = o.name;
-			if (o.kit) d.kits = d.kits.concat([o.kit]);
-			if (o.dropKit) d.kits = d.kits.filter((x) => x !== o.dropKit);
 			if (o.mark) d.links = rowsOf(d.links).concat([mark(id, o.mark)]).join('\n');
 			if (o.unmark) d.links = rowsOf(d.links).filter((l) => !hasMark(l, o.unmark)).join('\n');
 			d.touched = tick() + (skew || 0);
@@ -369,8 +349,8 @@ console.log('\ndiamondrecv: F1, three devices, two hops down from this device\'s
 	check('F1: A takes C\'s copy one-sided (it descends from A\'s edit through B)', A.store.R.memory === 'C r3e-c' && A.keptAny('R') === 0,
 		A.store.R.memory + ' kept ' + A.keptAny('R'));
 	check('F1: the tag B took off stays off on A', !tagIn(A.store.R, 'r3eA'), JSON.stringify(A.store.R.tags));
-	check('F1: the mark B took off stays off on A, and A\'s marks-here record is settled without it',
-		!hasMark(A.store.R.links, 'r3e-mark') && !hasMark(A.settled.R, 'r3e-mark'), A.store.R.links + ' | ' + A.settled.R);
+	check('F1: the mark B took off stays off on A',
+		!hasMark(A.store.R.links, 'r3e-mark'), A.store.R.links);
 	const q = await A.push(); await B.pull(q); await C.pull(q);
 	check('F1: no device keeps a spurious copy, and all three converge', [A, B, C].every((d) => d.keptAny('R') === 0)
 		&& B.store.R.touched === A.store.R.touched && C.store.R.touched === A.store.R.touched,
@@ -426,39 +406,31 @@ for (const first of ['A', 'B']) {
 	check(`F2 ${first}-first: A's page edit survives on A (live or kept)`, A.keeps(id, 'rmc-a'), JSON.stringify(A.store[id]));
 	check(`F2 ${first}-first: the mark taken off on B is off on both`, !hasMark(A.store[id].links, 'rmc') && !hasMark(B.store[id].links, 'rmc'),
 		A.store[id].links + ' | ' + B.store[id].links);
-	check(`F2 ${first}-first: A's marks-here record was settled without it`, !hasMark(A.settled[id], 'rmc'), String(A.settled[id]));
-	// B-first, B's merge takes A's copy of the row off again; A-first, nothing is taken off.
-	check(`F2 ${first}-first: a row the merge takes off takes this device's entry with it (P5's one door)`,
-		!A.raw.length && !B.raw.length && (first === 'A' || B.drops.includes(id + ' l-rmc dir:rmc')),
-		JSON.stringify({ rawA: A.raw, rawB: B.raw, dropsB: B.drops }));
 	check(`F2 ${first}-first: both converge`, A.store[id].touched === B.store[id].touched, A.store[id].touched + ' / ' + B.store[id].touched);
 }
 
-console.log('\ndiamondrecv: F2, tags and grants three-way; an addition on the losing side stays');
+console.log('\ndiamondrecv: F2, tags three-way; an addition on the losing side stays');
 {
 	const { A, B } = await agreed('TG');
-	A.edit('TG', null, 'old', { kit: 'rust' });
+	A.edit('TG', null, 'old');
 	await B.pull(await A.push()); await A.pull(await B.push());
 	A.edit('TG', 'A tg-a', 'aNew');				// A adds a tag
 	const pa = await A.push();
-	B.edit('TG', 'B tg-b', null, { dropTag: 'old', dropKit: 'rust' });	// B takes a tag and a grant off, later
+	B.edit('TG', 'B tg-b', null, { dropTag: 'old' });	// B takes a tag off, later
 	await B.pull(pa);
 	await A.pull(await B.push());
 	check('F2: the tag B took off stays off', !tagIn(A.store.TG, 'old'), JSON.stringify(A.store.TG.tags));
 	check('F2: the tag A added stays on', tagIn(A.store.TG, 'aNew'), JSON.stringify(A.store.TG.tags));
-	check('F2 (sweep): the grant B took off stays off', !A.store.TG.kits.includes('rust'), JSON.stringify(A.store.TG.kits));
 	check('F2: A\'s page is kept before sync', A.kept('TG', 'tg-a'));
-	// The removal on the LOSING side: B takes a grant off and lands first; A's later page edit wins.
+	// The removal on the LOSING side: B takes a tag off and lands first; A's later page edit wins.
 	const { A: A2, B: B2 } = await agreed('TK');
-	A2.edit('TK', null, null, { kit: 'node' });
-	await B2.pull(await A2.push()); await A2.pull(await B2.push());
-	B2.edit('TK', null, null, { dropKit: 'node', dropTag: 'common' });
+	B2.edit('TK', null, null, { dropTag: 'common' });
 	const pb = await B2.push();
 	A2.edit('TK', 'A tk-a');
 	await A2.pull(pb);
 	await B2.pull(await A2.push());
-	check('F2 (sweep): a grant and a tag taken off on the losing side stay off', !B2.store.TK.kits.includes('node') && !tagIn(B2.store.TK, 'common'),
-		JSON.stringify(B2.store.TK.kits) + ' ' + JSON.stringify(B2.store.TK.tags));
+	check('F2 (sweep): a tag taken off on the losing side stays off', !tagIn(B2.store.TK, 'common'),
+		JSON.stringify(B2.store.TK.tags));
 	check('F2 (sweep): and the winner\'s page is live', B2.store.TK.memory === 'A tk-a', B2.store.TK.memory);
 }
 

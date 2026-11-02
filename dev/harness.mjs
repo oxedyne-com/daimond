@@ -411,15 +411,10 @@ export { displayFault, cleanDisplayEnv, WAYLAND_VARS, INHERITED_ENV,
 	UNATTENDED_VAR, OWNED_VAR, SEAT_DISPLAY } from './display.mjs';
 import { displayFault, cleanDisplayEnv, INHERITED_ENV } from './display.mjs';
 
-/// A mark pressed as the page presses one, for a verifier (HIST-SAFE U2, 2026-10-12). The engine
-/// reads a Diamond's marks itself at every act -- the user's sidecar row AND this device's record
-/// of the press, on the workspace open in the engine -- and takes no list from a caller, so a
-/// verifier that used to pass `['vault']` presses the mark instead:
-///
-///   await window.__pressMark(app, id, 'dir:[machine:vault]vault', 'machine:vault#<fid>', 'holds')
-///
-/// `root` is the record's key for the workspace the ENGINE has open (`marks::root_key`):
-/// `browser`, or `machine:<folder name>#<folder id>`. Answers whether the press landed.
+/// A Diamond's holding written as the page writes one, for a verifier. Since GRANT-G2
+/// (D-20261031-11) a mark is a link in focus and nothing more: there is no press on a
+/// device and no record of one, so `root` is accepted and unused. Answers whether the row
+/// landed.
 const PRESS_MARK = () => {
 	window.__pressMark = async (app, id, ref, root, rel) => {
 		const did = String(id);
@@ -427,7 +422,7 @@ const PRESS_MARK = () => {
 		const ls = JSON.parse(await app.links_touching('diamond:' + did) || '[]');
 		const row = ls.find((l) => l.owner === did && l.from === 'diamond:' + did
 			&& (l.to === ref || l.other === ref) && l.rel === (rel || 'holds'));
-		return !!row && window.DaimondMarksHere.grant(did, row, root, { share: false });
+		return !!row;
 	};
 };
 
@@ -1384,93 +1379,28 @@ export async function newChat(s, { reuse = false } = {}) {
 /// called, so a verifier that used to seed with one of those and read the mark
 /// as already in force has to press it here as well, exactly as this does.
 ///
-/// A Diamond mark, by default (`opts.chat` unset): `diamondId` names the Diamond.
-///   - `opts.linkId` presses a row already added elsewhere instead of adding
-///     one -- for a legacy or agent-written row a verifier wrote by hand.
-///   - `opts.share` presses ⇄ afterwards: the row's flag (`set_link_share`,
-///     refused silently on a legacy row, as the button itself lets that fail)
-///     and this device's own entry (`DaimondMarksHere.setShare`), the two
-///     writes O2 asks for.
+/// A Diamond mark, by default (`opts.chat` unset): `diamondId` names the Diamond, and
+/// `opts.linkId` names a row already added elsewhere instead of adding one.
 ///
-/// A chat holding, with `opts.chat` set to the chat's id and `opts.path` to the
-/// path inside `ref`: `diamondId` is unused and may be null. The holding is
-/// written straight into the chat's own record, `c.holds[]`, through the live
-/// array `DaimondAttach.chatList` hands back -- since `chatToggle`/`chatWs`
-/// would press it here themselves, and a verifier meaning to stand for one that
-/// arrived by SYNC needs it claimed and not yet pressed. `opts.ws`/`opts.read`
-/// choose what is claimed; both default to marking the folder in.
-///
-/// `opts.press: false`, on either kind, seeds the claim and leaves it waiting --
-/// for a verifier whose own subject is the waiting state, or the press itself.
-///
-/// Returns `{ id, confirmed, shared }`: the row's id (chat holdings have none),
-/// whether the press landed, and whether ⇄ was asked for and landed.
+/// A chat holding, with `opts.chat` set to the chat's id and `opts.path` to the path inside
+/// `ref`: `diamondId` is unused and may be null. The holding is written straight into the
+/// chat's own record, `c.holds[]`, through the live array `DaimondAttach.chatList` hands back.
 export async function markHere(s, diamondId, ref, opts = {}) {
-	const { rel = 'holds', note = '', by = 'user', share = false, linkId = null, press = true,
+	const { rel = 'holds', note = '', by = 'user', linkId = null,
 		chat = null, path = null, dir = true, ws = true, read = false } = opts;
 	const p = s.page;
 	if (chat) {
 		await p.evaluate(({ chat, ref, path, dir, ws, read }) => {
 			DaimondAttach.chatList(chat).push({ ref, dir, path, state: read ? 'read' : 'note', ws });
-			// The push alone reaches no redraw -- `chatToggle`/`chatWs` themselves signal one, but
-			// this bypasses both on purpose. Without it the notice over the composer, and the
-			// paperclip, go on showing what stood before a caller that never presses would see.
+			// The push alone reaches no redraw, so the paperclip and the notice are drawn again.
 			DaimondAttach.render();
 		}, { chat, ref, path, dir, ws, read });
-		const confirmed = press && await p.evaluate(({ chat, ref }) =>
-			DaimondAttach.chatConfirm(chat, ref), { chat, ref });
-		return { id: null, confirmed: !!confirmed, shared: false };
+		return { id: null, confirmed: true, shared: false };
 	}
 	const id = linkId || await p.evaluate(async ({ diamondId, ref, rel, note, by }) =>
 		DaimondCore.diamondApp().add_link(diamondId, 'diamond:' + diamondId, ref, rel, note, by),
 		{ diamondId, ref, rel, note, by });
-	const confirmed = press && await p.evaluate(({ diamondId, ref }) =>
-		DaimondAttach.confirmHere(diamondId, ref), { diamondId, ref });
-	let shared = false;
-	if (share) {
-		shared = await p.evaluate(async ({ diamondId, id }) => {
-			const app = DaimondCore.diamondApp();
-			const row = JSON.parse(await app.links_touching('diamond:' + diamondId) || '[]')
-				.find((l) => l.id === id);
-			if (!row) return false;
-			try { await app.set_link_share(diamondId, id, true); } catch (e) { /* not this row's to flag */ }
-			// The page's own name for the open workspace, folder id and all (M2): a key
-			// composed here from the folder's name would be one no grant is written under.
-			return DaimondMarksHere.setShare(diamondId, row, DaimondAttach.root(), true);
-		}, { diamondId, id });
-	}
-	return { id, confirmed: !!confirmed, shared };
-}
-
-/// The Workspace tree's rows that hold a mark for what is in focus, read the way a person
-/// reads them (P3): the ◈'s role on the row, and the share item in the row ⋯.
-///
-/// Keyed by the row's path in the tree. `share` is the item's `aria-checked`, `pressable`
-/// whether it can be pressed, `why` its title; all three are null where the ⋯ has no share
-/// item (not the user's own mark). `ro` is the muted ◈, `wait` a mark waiting on this device.
-export async function workRows(s) {
-	const p = s.page || s;
-	await p.evaluate(() => window.DaimondPanels && (DaimondPanels.open ? DaimondPanels.open('work') : DaimondPanels.show('work')));
-	await p.waitForTimeout(500);
-	await workMenu(p, 'head', 'refresh');
-	await p.waitForTimeout(2100);
-	return p.evaluate(() => {
-		const out = {};
-		for (const r of document.querySelectorAll('#panel-work .files-row[data-path]')) {
-			const m = r.querySelector('[data-act="mark"]');
-			if (!m || m.hidden || !['on', 'ro', 'wait'].some((c) => m.classList.contains(c))) continue;
-			const more = r.querySelector('[data-act="row-more"]');
-			let share = null, pressable = null, why = null;
-			if (more) {
-				more.click();
-				const b = document.querySelector('.railhead-menu[data-menu="row"] [data-act="share"]');
-				if (b) { share = b.getAttribute('aria-checked') === 'true'; pressable = !b.disabled; why = b.title || ''; }
-				if (document.querySelector('.railhead-menu[data-menu="row"]')) more.click();
-			}
-			out[r.dataset.path] = { share, pressable, why, ro: m.classList.contains('ro'), wait: m.classList.contains('wait') };
-		}
-		return out;
-	});
+	return { id, confirmed: !!id, shared: false };
 }
 
 /// Press an item of a tree row's ⋯ in the Workspace panel, as a person does: hover the row,

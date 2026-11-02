@@ -927,8 +927,7 @@ impl Tool {
     /// 2. **The environment is not the model's to set.** There is no `env` argument, deliberately:
     ///    a model that could name environment variables could set `LD_PRELOAD`, or smuggle a
     ///    stolen value out through one. What a command inherits is the user's decision, made once
-    ///    when they paired the hand -- and, where they granted a [`Toolkit`], the two or three
-    ///    names that toolkit needs, taken from a table here and never from `argv`. The push
+    ///    when they paired the hand. The push
     ///    credential is the same rule applied to a secret: it enters the environment of one
     ///    command, chosen by [`git_step`] out of what the user set and never out of `argv`, and it
     ///    is in no other command's environment at all.
@@ -1013,7 +1012,7 @@ impl Tool {
     /// `run` is the model naming a command; `verify` with no name is the PROJECT's own check, and
     /// `serve` is a static server -- and all three are a command a model reached for. So all
     /// three are fenced the same way, asked about the network the same way, put to the user on
-    /// the same rung and given the same toolkits: a second exec site is a second set of answers
+    /// the same rung: a second exec site is a second set of answers
     /// to those questions, and the one that drifts is the one nobody is reading.
     ///
     /// The exec request is built HERE and nowhere else, which
@@ -1174,25 +1173,6 @@ impl Tool {
                 "Refused: this turn's bounds do not describe any folder the command could run in, \
                 so there is no fence to run it inside. Nothing was run.")));
         }
-        // A toolchain this Diamond lacks is asked for here, on first use (E1), and the fence is
-        // then built from the bounds the answer leaves. A yes is recorded on the Diamond by the
-        // page (`set_toolkits`) and held for the rest of this turn; a no refuses this command
-        // and is not remembered.
-        let ask = ctx.kits_to_ask_on(argv, mode, &machine);
-        if !ask.is_empty() {
-            let names: Vec<String> = ask.iter().map(|k| fmt!("\"{}\"", k.name())).collect();
-            let detail = fmt!("{{\"id\":\"{}\",\"kits\":[{}]}}",
-                json_escape(&ctx.daimon_of), names.join(","));
-            match ctx.host().net().egress_allowed_kit(&ctx.turn_tag(), &argv.join(" "), &detail).await {
-                Some(Permit::Allow)  => {},
-                Some(Permit::No(no)) => return Ok(Exec::Refused(kit_refusal(argv, &ask, no))),
-                None                 => return Ok(Exec::Refused(kit_refusal(argv, &ask,
-                    PermitNo::Absent))),
-            }
-            ctx.grant_kits(&ask);
-        }
-        let bounds = ctx.run_bounds();
-        let bare = command_fence(&bounds, &machine, true);
         // The network, asked about rather than taken away in silence (`hand/REVIEW.md` §1.13).
         //
         // `net_risk`, not the raw taint: an unattended worker is at risk on a clean turn too, and
@@ -1215,7 +1195,7 @@ impl Tool {
         // field comes from the turn's bounds and nothing else --
         // `test_a_yes_moves_nothing_but_the_network` holds it to exactly that.
         let fence = if gives_net {
-            command_fence(&bounds, &machine, false)
+            command_fence(&ctx.no_write, &machine, false)
         } else {
             bare
         };
@@ -1281,24 +1261,9 @@ impl Tool {
                 return Ok(Exec::Refused(reason));
             }
         }
-        // The environment is still not the model's to set: what goes here is the granted toolkit's
-        // own two or three names, from a table in this file, or nothing at all. `argv` never
-        // reaches it, so no command can name a variable by asking to be run with one.
-        //
-        // The push credential joins it here and nowhere else, and it is appended LAST so that a
-        // toolkit variable can never overwrite one of git's: the two name-spaces do not overlap
-        // today, and "today" is not a property worth resting a credential on.
-        let mut env_pairs = match Kit::resolve(&bounds, &machine) {
-            Some(kit) => kit.env,
-            None      => Vec::new(),
-        };
-        env_pairs.extend(push_env);
-        let env_json = env_json_of(&env_pairs);
-        // The granted toolkit names travel WITH the fence, because the hand cannot check the one
-        // without the other: a fence naming `~/.cargo/registry` is not under the granted root, and
-        // a hand that allowed every toolchain folder regardless would accept a writable
-        // `~/.local/bin` from a turn that was granted nothing -- which is a shim on the front of
-        // PATH. Read out of the same bounds the fence came from, so `argv` cannot reach it.
+        // The environment is still not the model's to set: nothing goes here but the push
+        // credential, chosen by `git_step` out of what the user set and never out of `argv`.
+        let env_json = env_json_of(&push_env);
         // The turn's deletion allowance travels with every command, and what each command
         // spent comes back on its result, so a loop of small commands meets the same ceiling
         // one large one does. The hand holds the ceiling; this only carries it.
@@ -1326,7 +1291,7 @@ impl Tool {
             None      => "null".to_string(),
         };
         let spec = bound_to_link(fmt!(
-            r#"{{"t":"exec","id":"{}","argv":[{}],"cwd":"{}","env":{},"stdin":{},"timeout_ms":{},"capture":"both","fence":{},"toolkits":{},"meter":{{"budget":{},"since_ms":{}}},"made":{},"tainted":{}}}"#,
+            r#"{{"t":"exec","id":"{}","argv":[{}],"cwd":"{}","env":{},"stdin":{},"timeout_ms":{},"capture":"both","fence":{},"meter":{{"budget":{},"since_ms":{}}},"made":{},"tainted":{}}}"#,
             json_escape(&Self::run_id(prog, ctx)),
             argv_json.join(","),
             json_escape(&cwd_abs),
@@ -1334,7 +1299,6 @@ impl Tool {
             stdin_json,
             timeout,
             fence.to_json(),
-            toolkit_names_json(&bounds),
             budget,
             since_ms,
             made,
@@ -1365,30 +1329,7 @@ impl Tool {
             let mut c = lock_cache(&ctx.read_seen);
             c.removed = c.removed.saturating_add(n.min(u32::MAX as u64) as u32);
         }
-        // AFTER THE FACT, for what the question above could not see: a wrapper script calling
-        // `cargo` is one program to `kits_wanted`, and the shell's "not found" is the first word
-        // of the toolkit it needed. The same door, the same answer; the command is not run again
-        // here, since it may have done half its work, and the daimon is told to run it again.
-        let mut after = String::new();
-        if ctx.can_ask_kits_on(mode, &machine) {
-            let late = kits_not_found(
-                &extract_json_string(&res, "stderr").unwrap_or_default(),
-                extract_json_i64(&res, "exit").unwrap_or(-1),
-                &toolkits(&bounds));
-            if !late.is_empty() {
-                let names: Vec<String> = late.iter().map(|k| fmt!("\"{}\"", k.name())).collect();
-                let detail = fmt!("{{\"id\":\"{}\",\"kits\":[{}]}}",
-                    json_escape(&ctx.daimon_of), names.join(","));
-                let answer = ctx.host().net().egress_allowed_kit(&ctx.turn_tag(), &cmd, &detail).await
-                    .unwrap_or(Permit::No(PermitNo::Absent));
-                if answer == Permit::Allow {
-                    ctx.grant_kits(&late);
-                }
-                after = kit_after_note(argv, &late, answer);
-            }
-        }
-        after.push_str(&loud);
-        Ok(Exec::Ran { res, no_net, tainting, read_only, after })
+        Ok(Exec::Ran { res, no_net, tainting, read_only, after: loud })
     }
 
     /// The longest a run's identifier may be.

@@ -1167,9 +1167,6 @@ export async function destroyDiamond(id) {
 	// and travels in every sync parcel for the life of the account.
 	try { DaimondPause.forget(DaimondPause.id('root', 'diamonds', id)); }
 	catch (e) { /* module not up */ }
-	// And what was pressed on it here. Trashing keeps them, since a restore brings
-	// the scope back; destroying is for good.
-	DaimondMarksHere.dropAll(id);
 	// And its folders' answered marks, which are otherwise never drained (r569 A3).
 	pruneMailMarks(id, true);
 	forgetTilePrefs(id);

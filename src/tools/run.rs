@@ -1,83 +1,32 @@
 use super::*;
 
-// ── The toolchain a build needs and the workspace does not hold ──────────────
+// ── The secrets every fence denies ──────────────────────────────────────────
 //
-// A fence built from a Diamond's bounds alone refuses `cargo`, because `~/.cargo/bin/cargo` is not
-// in the user's workspace and never will be. The model then meets a refusal it can do nothing with,
-// which reads as the app being broken. What follows is the grant that fixes it, and the shape of
-// that grant is the whole of the care: it is named, it is short, it is the user's to give, and it
-// is never chosen by the thing it is granted to.
+// Toolchain grants are gone (R2, D-20261031-11): the agreed tree already holds `~/.cargo`,
+// `~/.rustup` and nvm, and Kimberlite's `PATH` comes from that tree. What stays is the deny list.
 
-/// What a toolkit's path is granted for.
+/// What a path in a [`Grant`] is granted for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Level {
-    /// Readable and executable, never writable: a toolchain is not a command's to edit.
-    Ro,
-    /// Writable, because a cache a tool must write is not optional.
-    Rw,
-    /// Denied outright, even where some wider grant would otherwise cover it.
-    Deny,
+    Ro,     // readable and executable, never writable
+    Rw,     // writable, because a file the tool must write is not optional
+    Deny,   // denied outright, even where some wider grant would otherwise cover it
 }
 
-/// One path a toolkit names, relative to the home directory the hand reported.
+/// One path a fence rule names, relative to the home directory the hand reported.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Grant {
-    /// The path, relative to the home directory.  Never absolute (see [`Toolkit`]).
-    pub tail:  &'static str,
-    /// What it is granted for.
+    pub tail:  &'static str,    // relative to the home directory, never absolute
     pub level: Level,
-    /// Why it is here, for the grant window and for anyone reading the fence afterwards.
-    pub why:   &'static str,
+    pub why:   &'static str,    // for anyone reading the fence afterwards
 }
 
-/// The `PATH` a command is given when a toolkit puts a directory on it.
+/// Denied on EVERY fence.
 ///
-/// A mirror of the hand's own `PATH_FALLBACK`, and it has to be: the hand uses that list only when
-/// the caller supplies no `PATH` at all, so a toolkit that sent `~/.cargo/bin` alone would take
-/// `cc`, `ld` and `git` away from every build it was meant to enable.
-pub(super) const PATH_BASE: &str = "/usr/local/bin:/usr/bin:/bin";
-
-/// Credentials denied whenever any toolkit is granted, whichever one it is.
-///
-/// Two entries, and each earns its place.  `.netrc` is read by cargo, pip, npm and the go command
-/// alike when a registry asks for a password, so it is the one file every toolkit would otherwise
-/// hand over at once.  `.config/oxedyne` is a whole directory of credentials -- the Stripe secret
-/// keys, the DKIM signing key and the mail password file were all moved there on 2026-08-22
-/// precisely so that they would sit outside the tree a hand is granted -- and a directory whose
-/// entire contents are secrets is the same class of thing as `.ssh`.
-///
-/// Both are denied rather than merely left ungranted, because a user whose workspace root IS their
-/// home directory has already granted them by granting the workspace.  That hazard has nothing to
-/// do with which toolchain was lent, which is why these are here and not in [`Toolkit::Git`]
-/// beside `.ssh`: `.ssh` sits there because git is the tool that would reach for it, and an
-/// absolute path in an `argv` needs no toolkit at all to be tried.
-///
-/// A deny costs nothing at the far end.  The hand clamps an arriving fence's `rw` and `ro` roots
-/// against what its grant could imply and pointedly does not clamp `deny`, since a deny only ever
-/// takes access away; and a denied path that does not exist on the machine is tolerated where a
-/// granted one is not (`hand/src/fence.rs`, `canonical`).
-pub(super) const CREDS: &[Grant] = &[
-    Grant { tail: ".netrc", level: Level::Deny,
-        why: "the password file cargo, pip, npm and go all read for a private registry" },
-    Grant { tail: ".config/oxedyne", level: Level::Deny,
-        why: "the Stripe keys, the DKIM signing key and the mail password, kept out of the \
-            workspace on purpose" },
-];
-
-/// Denied on EVERY fence, whether or not a toolkit was granted.
-///
-/// [`CREDS`] above says the hazard out loud -- *"a user whose workspace root IS their home
-/// directory has already granted them by granting the workspace"* -- and then applies the answer
-/// only where [`Kit::resolve`] runs, which is only where a toolkit was granted.  So the user's
-/// private key was safe because it happened to sit outside their workspace root, and for no other
-/// reason.  Checked on 2026-08-26: `.ssh` appears at `Level::Deny` in exactly two places, both
-/// inside a toolkit's own grant list, and nothing in [`fence_spec`] mentions it at all.
-///
-/// **A guarantee that holds by accident of a setting is not a guarantee.**  The owner asked that
-/// evening whether he should simply point the workspace root at `$HOME` -- he had chosen `~/usr`
-/// for no reason beyond seeing no need to go higher -- and the honest answer was that the setting
-/// he picked arbitrarily was the only thing standing between a daimon and his private key.  So the
-/// rule is written down here instead, and the setting is free to move.
+/// **A guarantee that holds by accident of a setting is not a guarantee.**  Until 2026-08-26 the
+/// user's private key was safe only because it sat outside the workspace root he had picked; a
+/// root at `$HOME` would have handed it over.  So the rule is written down here, and the setting
+/// is free to move.
 ///
 /// A deny costs nothing where the path is not granted anyway, and a denied path that does not exist
 /// is tolerated (`hand/src/fence.rs`, `canonical`), so this is applied unconditionally rather than
@@ -113,150 +62,89 @@ pub(super) const ALWAYS_DENIED: &[Grant] = &[
             workspace on purpose" },
 ];
 
-/// A named toolchain a Diamond may be granted, so that a build can reach its compiler.
+// ── The terminal's ssh ────────────────────────────────────────────────────────
+//
+// Not a toolchain grant and not a Diamond's: the MACHINE's posture (`install.sh --remote`,
+// reported in `hello` as `remote:ready`), lent to the interactive terminal alone. An `ssh` reaches
+// the far end UNFENCED, so a fenced command that could run it would not be fenced at all; a
+// terminal is the user at a keyboard. Daimond's own keypair and host list, never `~/.ssh`.
+
+/// The `PATH` a terminal is given when the ssh wrapper is put on it.
 ///
-/// Three things about this are deliberate, and none of them is negotiable.
+/// A mirror of the hand's own `PATH_FALLBACK`, and it has to be: the hand uses that list only when
+/// the caller supplies no `PATH` at all, so a wrapper directory sent alone would take `cc`, `ld`
+/// and `git` away from the shell.
+pub(super) const PATH_BASE: &str = "/usr/local/bin:/usr/bin:/bin"; // fixed: the hand's PATH_FALLBACK
+
+/// Kimberlite's ssh, as its installer writes it.
+pub(super) const TERMINAL_SSH: &[Grant] = &[
+    Grant { tail: ".config/oxedyne/kimberlite/bin", level: Level::Ro,
+        why: "the ssh the installer wrote, which supplies the key, the host list and the \
+            session that survives a dropout" },
+    Grant { tail: ".config/oxedyne/kimberlite/ssh", level: Level::Ro,
+        why: "the keypair the installer made for this computer's Daimond, which is all that \
+            directory holds" },
+    Grant { tail: ".config/oxedyne/kimberlite/known_hosts", level: Level::Rw,
+        why: "the hosts ssh has learned -- Daimond's own list, written when it learns one, and \
+            never the user's" },
+    Grant { tail: ".config/oxedyne/daimond-hand/openrouter.key", level: Level::Deny,
+        why: "the daimon's own budget, which is no part of reaching another machine" },
+    Grant { tail: ".ssh", level: Level::Deny,
+        why: "the user's own keys and host list, which this never reads: Daimond reaches \
+            another machine as itself or not at all" },
+];
+
+/// The same where the retiring native-messaging hand runs the turn, under the hand's own
+/// directory (`TOOLKIT_ROOTS` in `hand/src/exec.rs`).
+// R10: delete with the hand.
+pub(super) const TERMINAL_SSH_HAND: &[Grant] = &[
+    Grant { tail: ".config/oxedyne/daimond-hand/bin", level: Level::Ro,
+        why: "the ssh the hand's installer wrote" },
+    Grant { tail: ".config/oxedyne/daimond-hand/ssh", level: Level::Ro,
+        why: "the keypair the installer made for this computer's Daimond" },
+    Grant { tail: ".config/oxedyne/daimond-hand/known_hosts", level: Level::Rw,
+        why: "the hosts ssh has learned, Daimond's own list" },
+    Grant { tail: ".config/oxedyne/daimond-hand/openrouter.key", level: Level::Deny,
+        why: "the daimon's own budget, in the same directory" },
+    Grant { tail: ".ssh", level: Level::Deny,
+        why: "the user's own keys and host list, which this never reads" },
+];
+
+/// The ssh a terminal on `m` is lent, with the directory its wrapper sits in, or `None` where
+/// the machine never set it up (silence is "not set up", never "probably fine").
+pub fn terminal_ssh(m: &Machine) -> Option<(&'static [Grant], &'static str)> {
+    match (m.remote, m.runs_hand()) {
+        (false, _)    => None,
+        (true, false) => Some((TERMINAL_SSH, ".config/oxedyne/kimberlite/bin")),
+        (true, true)  => Some((TERMINAL_SSH_HAND, ".config/oxedyne/daimond-hand/bin")), // R10
+    }
+}
+
+/// The environment a terminal on `m` opens with, as the JSON the hand reads.
 ///
-/// * **It is never inferred from what the model asked to run.**  A fence that widened itself to fit
-///   the requested binary would be a fence the model chooses, and the entire arrangement rests on
-///   its not being one.  `cargo` is reachable because the user granted the Rust toolkit, and for no
-///   other reason.
-/// * **It is a grant, so it is the user's to give.**  Off by default, chosen per Diamond, and it
-///   arrives here as a [`Bound::Toolkit`] in the turn's own bounds like every other thing the user
-///   has decided about this turn.
-/// * **It is a short list of named paths and never the home directory.**  `~/.cargo` is 2.2 GB and
-///   holds the crates.io token `cargo login` writes to `credentials.toml`.  So the Rust toolkit
-///   grants `~/.cargo/bin` and `~/.rustup`, names the two caches cargo must write, and denies the
-///   token.  Each toolkit's table below says what every path is for; what a toolkit leaves out is
-///   said in its doc comment, because an omission nobody wrote down is an omission that gets
-///   quietly repaired later by someone widening the grant.
-///
-/// **Every path is relative to the home directory the hand reported, and there is no other kind.**
-/// The absolute system paths a toolchain also needs -- `/usr`, `/bin`, `/lib`, `/etc`, `/opt` --
-/// are already in the hand's own read-only base, so a toolkit naming them would be a second copy of
-/// the hand's decision living in the page and free to drift from it.  A hand that does not report a
-/// home directory therefore grants no toolkit at all: a browser tab cannot know the path, and a
-/// fence built on a guessed one is not a fence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ToDat, FromDat)]
-pub enum Toolkit {
-    /// Rust: `cargo`, `rustc`, `rustup`, the two caches cargo cannot build without, and the
-    /// target directory the trees here point every build at.
-    ///
-    /// `~/.cache/cargo-targets` is named because a build in these trees does not put its
-    /// artefacts in the workspace: `CARGO_TARGET_DIR` is set per agent under that directory, so a
-    /// fence without it leaves a daimon unable to run the build its own repository's scripts
-    /// describe.  It is named at that one folder and never at `~/.cache`, which also holds the
-    /// browser's cache and the thumbnailer's copy of every image the user has opened.
-    ///
-    /// Deliberately excluded: `~/.cargo` itself (2.2 GB, and where `cargo login` writes
-    /// `credentials.toml`), and `~/.cargo/config.toml`, which names a linker and `rustflags` for
-    /// every build on the machine -- writable, it is a way to run something of the command's
-    /// choosing the next time the user builds anything at all.
-    Rust,
-    /// Node: what `nvm` installed, npm's cache, and the scratch the dev scripts write.
-    ///
-    /// `~/.cache/daimond` is where every `dev/*.mjs` puts what it produces -- shots, logs, a
-    /// built extension -- unless `DAIMOND_SCRATCH` says otherwise.  Named at that one folder for
-    /// the reason `~/.cache/cargo-targets` is: the directory above it is not this app's.
-    ///
-    /// Deliberately excluded: `~/.npmrc` and `~/.yarnrc.yml`, which hold registry tokens.  A
-    /// project's `node_modules` needs nothing here -- it sits in the workspace, which the turn's
-    /// own bounds already cover.
-    Node,
-    /// Python: the interpreters, what `pip install --user` provides, and pip's cache.
-    ///
-    /// Deliberately excluded: `~/.local/share`, which is granted by no part of this even though
-    /// `~/.local/bin` and `~/.local/lib` are -- it holds `keyrings/`.  And `~/.pypirc`, which is
-    /// the PyPI upload token.
-    Python,
-    /// Go: the toolchains, the module cache and the build cache.
-    ///
-    /// Deliberately excluded: `~/.config/go/env`.  `go env -w` writes `GOFLAGS` there, and a
-    /// `-toolexec` in it runs a program of the writer's choosing on every later build.
-    Go,
-    /// Git: the user's own configuration, and never a credential.
-    ///
-    /// The odd one out, and worth saying why it is here.  `git` itself needs no grant -- it lives
-    /// in `/usr/bin`, which the hand's own read-only base already covers, which is why `status`,
-    /// `diff`, `log`, `add` and `commit` all work with no toolkit at all.  What does not work is
-    /// everything the user configured GLOBALLY: their name and email, and `core.hooksPath`, which
-    /// is where a credential-scanning `pre-commit` hook usually lives.  A git that cannot read
-    /// `~/.gitconfig` runs without the user's identity and without their hooks, and it does so
-    /// SILENTLY -- an unreadable hooks directory is indistinguishable from an empty one.  Refusing
-    /// `--no-verify` while the hook cannot run at all would be a guard protecting nothing.
-    ///
-    /// Deliberately excluded: `~/.ssh`, which nothing here ever needs and which is denied outright;
-    /// `~/.git-credentials`, which `credential.helper store` writes in plain text; and
-    /// `~/.config/git/credentials`, the same file where XDG puts it.
-    ///
-    /// A hooks directory outside the granted root is still unreachable, and the hook still does not
-    /// run: the page cannot read `~/.gitconfig` and so cannot know where to look.
-    ///
-    /// # The repository itself is not granted here, and cannot be
-    ///
-    /// Every path in this table is relative to the HOME directory, so none of them can name a
-    /// `.git` in the workspace.  Nor do they need to.  A repository sits inside the folder the
-    /// Diamond marked, which [`fence_spec`] grants whole and writable, so `.git` is reachable for
-    /// exactly the same reason `src` is -- and a daimon that cannot see one is a daimon whose
-    /// command is running somewhere the repository is not ABOVE it, which no grant here fixes.
-    ///
-    /// It is granted WRITABLE and there is no read-only middle ground, which is worth writing down
-    /// because `.git/config` sets `core.fsmonitor`, `core.pager` and `core.sshCommand`, each of
-    /// which runs a program of the writer's choosing on the next ordinary git command.  Two things
-    /// bound that.  A program git starts is a child of the fenced command, so it inherits the
-    /// fence and reaches nothing the model could not already reach; the exposure is the user's own
-    /// later `git` in their own shell, outside all of this.  And the alternative does not work:
-    /// re-stating `.git/config` as read-only makes the hand carve `.git` around it, and a carved
-    /// directory cannot have a file created directly in it -- which is `index.lock`, `HEAD.lock`
-    /// and `COMMIT_EDITMSG`, so every commit fails.  A `.git` that can be committed to is a
-    /// `.git` that can be reconfigured.
-    ///
-    /// # Ore needs no grant of its own
-    ///
-    /// A tree under Ore as well as git gets its replica marked by the global `post-commit` hook,
-    /// which runs `ore mark` beside the commit -- so the second system rides on the first and
-    /// `.ore` is granted at no width, which is the only safe answer: `.ore/key` is a plaintext
-    /// signing key and EVERY Ore verb but `init`, `import` and `help` captures the working copy
-    /// and signs it, so there is no read-only verb to lend.  What that hook needs is to be
-    /// REACHABLE, and `core.hooksPath` usually names a directory outside the folder the Diamond
-    /// marked; attach that directory to the Diamond read-only and it runs, since a read-only grant
-    /// carries execute.  Unattached, git finds no hook and says nothing -- so the mark is missed
-    /// silently, and so is the credential-scanning `pre-commit` beside it.
-    ///
-    /// One thing not to widen for: a repository initialised `--mirror` has Ore shell out to `git
-    /// fast-import`.  There is no mirror in this tree, so that path does not run here.
-    Git,
-    /// `ssh`, with a key that is Daimond's own -- and only from a terminal the user opened.
-    ///
-    /// # Why it is not the user's `~/.ssh`
-    ///
-    /// The three refusals that made this necessary were captured through the real hand in a real
-    /// pty, and the first of them is `hostkeys_foreach failed for ~/.ssh/known_hosts: Permission
-    /// denied`.  The tempting repair is to lend `~/.ssh`, and it is the wrong one: that directory
-    /// holds the keys the user's own life runs on, and [`Toolkit::Git`] denies it by name for
-    /// exactly that reason.  So Daimond has a keypair of its OWN, made by Kimberlite's installer,
-    /// under `~/.config/oxedyne/kimberlite/ssh`, installed on the machines the user chose with
-    /// `restrict,pty` against each one's `authorized_keys`.  Revoking Daimond's reach is then one
-    /// line removed from one file, on the machine that wants it back -- which is not true of a
-    /// grant of the user's own key.
-    ///
-    /// The host list is Daimond's own for the same reason and a second one: a `known_hosts` the
-    /// user owns would have to be WRITTEN to learn a host, and a writable `~/.ssh` is a way to
-    /// add an `authorized_keys` entry.
-    ///
-    /// # Why the terminal and not a command
-    ///
-    /// **This is the one toolkit a daimon can never be granted**, and [`Toolkit::terminal_only`]
-    /// is where that is enforced in this end.  An `ssh` that reaches another machine reaches it
-    /// UNFENCED -- the far end is a login shell under sshd, and nothing this repository can do
-    /// binds it -- so a fenced command that could run `ssh` would not be fenced at all.  A
-    /// terminal is a different trust class: a person opened it, a person is typing into it, and
-    /// what they reach is what they could reach from any other terminal on their own machine.
-    ///
-    /// Deliberately excluded: `~/.ssh` in every part, denied by name; and
-    /// `~/.config/oxedyne/daimond-hand/openrouter.key`, which is the daimon's own budget and
-    /// sits in the retiring hand's directory beside where this kit used to live.
-    Remote,
+/// The wrapper goes AHEAD of `/usr/bin`, which is what makes `ssh argonaut`, typed exactly like
+/// that, reach it rather than the system's own ssh: OpenSSH takes the home directory from the
+/// passwd entry and not from `HOME`, so a wrapper on `PATH` is the only place Daimond's key and
+/// host list can come from without the user typing them.
+pub fn terminal_env_json(m: &Machine) -> String {
+    let home = match &m.home {
+        Some(h) if abs_dir(h) => h.trim_end_matches('/'),
+        _                     => return fmt!("[]"),
+    };
+    match terminal_ssh(m).and_then(|(_, bin)| home_path(home, bin)) {
+        Some(bin) => env_json_of(&[(fmt!("PATH"), fmt!("{}:{}", bin, PATH_BASE))]),
+        None      => fmt!("[]"),
+    }
+}
+
+/// The lends a terminal's open frame names, so the executor's clamp admits their roots: a
+/// `.config/oxedyne` path is under no granted root. `"remote"` is the wire word the executors read
+/// (Kimberlite's mirror table in `exec.rs`, the hand's `TOOLKIT_ROOTS`).
+pub fn terminal_lends_json(m: &Machine) -> String {
+    match terminal_ssh(m) {
+        Some(_) => fmt!("[\"remote\"]"), // fixed: the executors' wire word
+        None    => fmt!("[]"),
+    }
 }
 
 /// The cap by which Kimberlite names itself as the executor of a turn, in its hello and in its own
@@ -264,363 +152,18 @@ pub enum Toolkit {
 pub const CAP_EXECUTOR_KIMBERLITE: &str = "executor:kimberlite";
 
 /// The cap by which Kimberlite says its commands run inside a whole-home fence: that fence alone
-/// decides what a command reaches, so there is no toolkit to grant and no toolchain question to
-/// put (U1 KIT-ASK).  See [`Machine::whole_home`].
+/// decides what a command reaches.  See [`Machine::whole_home`].
 pub const CAP_FENCE_WHOLE_HOME: &str = "fence:whole-home";
-
-/// [`Toolkit::Remote`]'s grants where the retiring native-messaging hand runs the turn: the same
-/// rows as Kimberlite's, under the hand's own directory, which is the kit that hand vets against
-/// (`TOOLKIT_ROOTS` in `hand/src/exec.rs`).
-// R10: delete with the hand.
-pub(super) const REMOTE_HAND_GRANTS: &[Grant] = &[
-    Grant { tail: ".config/oxedyne/daimond-hand/bin", level: Level::Ro,
-        why: "the ssh the hand's installer wrote, which supplies the key, the host \
-            list and the session that survives a dropout" },
-    Grant { tail: ".config/oxedyne/daimond-hand/ssh", level: Level::Ro,
-        why: "the keypair the installer made for this computer's Daimond, which is \
-            all that directory holds" },
-    Grant { tail: ".config/oxedyne/daimond-hand/known_hosts", level: Level::Rw,
-        why: "the hosts ssh has learned -- Daimond's own list, written when it \
-            learns one, and never the user's" },
-    Grant { tail: ".config/oxedyne/daimond-hand/openrouter.key", level: Level::Deny,
-        why: "the daimon's own budget, which sits in the same directory and is no \
-            part of reaching another machine" },
-    Grant { tail: ".ssh",                 level: Level::Deny,
-        why: "the user's own keys and host list, which this never reads: Daimond \
-            reaches another machine as itself or not at all" },
-];
-
-impl Toolkit {
-
-    /// Every toolkit a user can grant a Diamond, in the order they are offered.
-    ///
-    /// [`Toolkit::Remote`] is deliberately NOT among them, and that absence is the whole of its
-    /// scope: it is not a thing a Diamond holds, so there is no name for a Diamond to record, no
-    /// chip to press and nothing for [`Toolkit::parse`] to answer.  A terminal gets it from the
-    /// COMPUTER -- see [`Toolkit::terminal_only`] -- and every list built from this one is
-    /// therefore a list a daimon may legitimately be told about.
-    pub fn all() -> [Self; 5] {
-        [Self::Rust, Self::Node, Self::Python, Self::Go, Self::Git]
-    }
-
-    /// The toolkit's name, which is what a Diamond records.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Rust   => "rust",
-            Self::Node   => "node",
-            Self::Python => "python",
-            Self::Go     => "go",
-            Self::Git    => "git",
-            Self::Remote => "remote",
-        }
-    }
-
-    /// What to call it on a button.
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Rust   => "Rust",
-            Self::Node   => "Node",
-            Self::Python => "Python",
-            Self::Go     => "Go",
-            Self::Git    => "Git",
-            Self::Remote => "Remote",
-        }
-    }
-
-    /// Which commands it makes available, for the sentence the daimon is told.
-    pub fn tools(&self) -> &'static str {
-        match self {
-            Self::Rust   => "cargo, rustc and rustup",
-            Self::Node   => "node and npm",
-            Self::Python => "python, pip and what pip installed for the user",
-            Self::Go     => "the go command",
-            Self::Git    => "git, with the user's own name, email and hooks",
-            Self::Remote => "ssh, from a terminal the user opened and never from a command",
-        }
-    }
-
-    /// The programs that need this toolkit, matched against the tail of a command's program.
-    ///
-    /// Git's list is empty: `git` is on the base `PATH`, and what its grant lends is the user's
-    /// identity, which only some subcommands use (see [`kits_wanted`]).
-    pub fn programs(&self) -> &'static [&'static str] {
-        match self {
-            Self::Rust   => &["cargo", "rustc", "rustup"],
-            Self::Node   => &["node", "npm", "npx"],
-            Self::Python => &["python", "python3", "pip", "pip3", "pytest"],
-            Self::Go     => &["go", "gofmt"],
-            Self::Git    => &[],
-            Self::Remote => &[],
-        }
-    }
-
-    /// Read a toolkit from its name.
-    ///
-    /// # Arguments
-    /// * `name` - The recorded name, as [`Toolkit::name`] spells it.
-    pub fn parse(name: &str) -> Outcome<Self> {
-        for k in Self::all() {
-            if k.name() == name {
-                return Ok(k);
-            }
-        }
-        Err(err!("'{}' is not a toolkit a Diamond can be granted. Known toolkits: rust, node, \
-            python, go, git.", name; Invalid, Input))
-    }
-
-    /// This toolkit as a rule in a turn's bounds.
-    ///
-    /// A grant travels with the other things the user has decided about this turn rather than in a
-    /// field of its own, which is why granting one needs no change to [`ToolContext`] and cannot be
-    /// forgotten by a caller that builds bounds some other way.
-    pub fn bound(&self) -> Bound {
-        Bound::Toolkit(*self)
-    }
-
-    /// The paths this toolkit names, each relative to the home directory.
-    ///
-    /// **A row added here needs its twin in `TOOLKIT_ROOTS` in `hand/src/exec.rs`.**  The fence
-    /// travels through the page and the page is not the app, so the hand clamps every arriving
-    /// `rw` and `ro` root against the folders its own copy of this table says the named toolkits
-    /// could imply -- and refuses the WHOLE command, not merely the unknown root, when one is not
-    /// there.  The drift fails safe and loud, and the refusal names the constant to fix.
-    pub fn grants(&self) -> &'static [Grant] {
-        match self {
-            Self::Rust => &[
-                Grant { tail: ".cargo/bin",           level: Level::Ro,
-                    why: "the cargo, rustc and rustup commands" },
-                Grant { tail: ".rustup",              level: Level::Ro,
-                    why: "the toolchains themselves" },
-                Grant { tail: ".cargo/registry",      level: Level::Rw,
-                    why: "crate sources and the index, written on every fetch" },
-                Grant { tail: ".cargo/git",           level: Level::Rw,
-                    why: "checkouts of git dependencies" },
-                Grant { tail: ".cargo/.package-cache", level: Level::Rw,
-                    why: "the lock cargo takes before touching either cache" },
-                Grant { tail: ".cache/cargo-targets", level: Level::Rw,
-                    why: "the target directory CARGO_TARGET_DIR points a build at, so the \
-                        artefacts do not land in the workspace" },
-                Grant { tail: ".cargo/credentials.toml", level: Level::Deny,
-                    why: "the crates.io token cargo login writes" },
-                Grant { tail: ".cargo/credentials",   level: Level::Deny,
-                    why: "the same token, in the spelling older cargo used" },
-            ],
-            Self::Node => &[
-                Grant { tail: ".nvm",                 level: Level::Ro,
-                    why: "the node versions nvm installed" },
-                Grant { tail: ".npm",                 level: Level::Rw,
-                    why: "npm's package cache" },
-                Grant { tail: ".cache/daimond",       level: Level::Rw,
-                    why: "the scratch every dev script writes into, unless DAIMOND_SCRATCH \
-                        names another" },
-                Grant { tail: ".npmrc",               level: Level::Deny,
-                    why: "the registry token npm login writes" },
-                Grant { tail: ".yarnrc.yml",          level: Level::Deny,
-                    why: "yarn's npmAuthToken" },
-            ],
-            Self::Python => &[
-                Grant { tail: ".pyenv",               level: Level::Ro,
-                    why: "the interpreters pyenv installed, and its shims" },
-                Grant { tail: ".local/bin",           level: Level::Ro,
-                    why: "the console scripts pip install --user puts there" },
-                Grant { tail: ".local/lib",           level: Level::Ro,
-                    why: "the packages those scripts import" },
-                Grant { tail: ".cache/pip",           level: Level::Rw,
-                    why: "pip's wheel cache" },
-                Grant { tail: ".pypirc",              level: Level::Deny,
-                    why: "the PyPI upload token" },
-            ],
-            Self::Go => &[
-                Grant { tail: "sdk",                  level: Level::Ro,
-                    why: "the toolchains go install golang.org/dl fetched" },
-                Grant { tail: "go/bin",               level: Level::Ro,
-                    why: "the binaries go install has put there" },
-                Grant { tail: "go/pkg/mod",           level: Level::Rw,
-                    why: "the module cache the go command requires" },
-                Grant { tail: ".cache/go-build",      level: Level::Rw,
-                    why: "the build cache, without which the go command refuses to run" },
-                Grant { tail: ".config/go/env",       level: Level::Deny,
-                    why: "go env -w writes GOFLAGS there, and a -toolexec in it runs on every \
-                        later build" },
-            ],
-            Self::Git => &[
-                Grant { tail: ".gitconfig",           level: Level::Ro,
-                    why: "the user's own git configuration: their name, their email, and the \
-                        hooks path" },
-                Grant { tail: ".config/git",          level: Level::Ro,
-                    why: "the same configuration where XDG puts it, and the global ignore file" },
-                Grant { tail: ".git-credentials",     level: Level::Deny,
-                    why: "the passwords credential.helper store writes in plain text" },
-                Grant { tail: ".config/git/credentials", level: Level::Deny,
-                    why: "the same passwords, in the XDG location" },
-                Grant { tail: ".ssh",                 level: Level::Deny,
-                    why: "the private keys, which nothing here needs and which pushing does not \
-                        use" },
-            ],
-            Self::Remote => &[
-                Grant { tail: ".config/oxedyne/kimberlite/bin", level: Level::Ro,
-                    why: "the ssh the hand's installer wrote, which supplies the key, the host \
-                        list and the session that survives a dropout" },
-                Grant { tail: ".config/oxedyne/kimberlite/ssh", level: Level::Ro,
-                    why: "the keypair the installer made for this computer's Daimond, which is \
-                        all that directory holds" },
-                Grant { tail: ".config/oxedyne/kimberlite/known_hosts", level: Level::Rw,
-                    why: "the hosts ssh has learned -- Daimond's own list, written when it \
-                        learns one, and never the user's" },
-                Grant { tail: ".config/oxedyne/daimond-hand/openrouter.key", level: Level::Deny,
-                    why: "the daimon's own budget, which happens to sit in the same directory \
-                        and is no part of reaching another machine" },
-                Grant { tail: ".ssh",                 level: Level::Deny,
-                    why: "the user's own keys and host list, which this never reads: Daimond \
-                        reaches another machine as itself or not at all" },
-            ],
-        }
-    }
-
-    /// As [`Toolkit::grants`], for a turn run by the executor `m` describes.
-    ///
-    /// Only [`Toolkit::Remote`] differs: its kit lives in the directory of the executor that
-    /// runs the turn, and that executor refuses a fence naming any other.  See
-    /// [`Machine::runs_hand`].
-    ///
-    /// # Arguments
-    /// * `m` - The machine whose executor runs the turn.
-    pub fn grants_on(&self, m: &Machine) -> &'static [Grant] {
-        match self {
-            // R10: delete with the hand.
-            Self::Remote if m.runs_hand() => REMOTE_HAND_GRANTS,
-            _ => self.grants(),
-        }
-    }
-
-    /// As [`Toolkit::bins`], for a turn run by the executor `m` describes.
-    ///
-    /// # Arguments
-    /// * `m` - The machine whose executor runs the turn.
-    pub fn bins_on(&self, m: &Machine) -> &'static [&'static str] {
-        match self {
-            // R10: delete with the hand.
-            Self::Remote if m.runs_hand() => &[".config/oxedyne/daimond-hand/bin"],
-            _ => self.bins(),
-        }
-    }
-
-    /// The directories this toolkit puts on `PATH`, relative to the home directory.
-    ///
-    /// Empty where a toolchain's binaries sit at a path only the machine knows: nvm's node is under
-    /// `~/.nvm/versions/node/<version>/bin`, and a version this page invented would be a `PATH`
-    /// entry pointing at nothing.  A toolkit with no entries here is still a grant -- the folders
-    /// are readable, and the daimon is told to name the binary in full.
-    pub fn bins(&self) -> &'static [&'static str] {
-        match self {
-            Self::Rust   => &[".cargo/bin"],
-            Self::Node   => &[],
-            Self::Python => &[".local/bin", ".pyenv/shims"],
-            Self::Go     => &["go/bin"],
-            // git is in `/usr/bin`, which `PATH_BASE` already carries.
-            Self::Git    => &[],
-            // AHEAD of `/usr/bin`, which is what makes `ssh argonaut` -- typed exactly like
-            // that -- reach the wrapper rather than the system's own ssh. OpenSSH takes the
-            // home directory from the passwd entry and not from `HOME`, so there is no
-            // environment variable that could point it at Daimond's key and Daimond's host
-            // list; a wrapper on `PATH` is the only place those flags can come from without
-            // the user typing them. It is granted READ-ONLY, so nothing a fenced command does
-            // can put a second program in there.
-            Self::Remote => &[".config/oxedyne/kimberlite/bin"],
-        }
-    }
-
-    /// The environment this toolkit needs, as names and home-relative values.
-    ///
-    /// `HOME` is pointedly not among them.  Setting it would point every tool a command runs at the
-    /// whole home directory -- git at `~/.gitconfig`, ssh at `~/.ssh` -- when what cargo actually
-    /// needs is two variables naming two folders it has been granted.
-    pub fn vars(&self) -> &'static [(&'static str, &'static str)] {
-        match self {
-            Self::Rust   => &[("CARGO_HOME", ".cargo"), ("RUSTUP_HOME", ".rustup")],
-            Self::Node   => &[("npm_config_cache", ".npm")],
-            Self::Python => &[("PIP_CACHE_DIR", ".cache/pip")],
-            Self::Go     => &[("GOPATH", "go"), ("GOMODCACHE", "go/pkg/mod"),
-                                 ("GOCACHE", ".cache/go-build")],
-            // git finds its global configuration through `HOME` and nothing else; see
-            // [`Toolkit::needs_home`], which is where that exception is made and argued.
-            Self::Git    => &[],
-            // Nothing: the wrapper on `PATH` carries the absolute paths, written into it by
-            // the installer, so there is no name for a caller to get wrong.
-            Self::Remote => &[],
-        }
-    }
-
-    /// Whether this toolkit needs `HOME` set to the home directory itself.
-    ///
-    /// Only git does, and it is the exception the comment on [`Toolkit::vars`] warns against --
-    /// so it is worth saying why it is safe here and would not be in general.
-    ///
-    /// That comment's objection is that setting `HOME` points every tool at the whole home
-    /// directory.  It points them at it; it does not GRANT it.  The fence decides what is
-    /// reachable, and under a Git grant that is two paths and no more, so a tool that follows
-    /// `HOME` somewhere else meets a refusal rather than a file.  Cargo is the case worth
-    /// checking: with `HOME` set it looks for `~/.cargo/config.toml`, which the Rust toolkit
-    /// deliberately does not grant, and it is denied -- the same outcome as not finding it.
-    ///
-    /// `GIT_CONFIG_GLOBAL` would name the file directly and avoid `HOME` altogether, and it was
-    /// rejected: it OVERRIDES git's own search, so pointing it at `~/.gitconfig` would hide a
-    /// configuration that lives at `~/.config/git/config` instead, and the page cannot see which
-    /// of the two this user has.  Setting `HOME` lets git do its own looking.
-    pub fn needs_home(&self) -> bool {
-        matches!(self, Self::Git)
-    }
-
-    /// Is this toolkit reachable only from a terminal the user opened by hand?
-    ///
-    /// Yes for exactly one, [`Toolkit::Remote`], and the reason is not that ssh is dangerous
-    /// but that it is a **way out of the fence**: the shell at the far end is sshd's child on
-    /// another machine, under nothing this repository applies.  So a fenced command that could
-    /// run it would not be fenced, and the grant belongs to the trust class where a person
-    /// opened the surface and is typing into it.
-    ///
-    /// # Whose grant it is
-    ///
-    /// **The user's, and per COMPUTER.**  It was a grant given to one Diamond at a time until
-    /// 2026-08-26, and the owner's objection to that is `dev/BLOCKERS.md` B12: *"permissions
-    /// should be a global posture setting, not for individual chats and daimons"*.  A Terminal
-    /// is not tied to a Diamond, so neither is what one may reach.
-    ///
-    /// It is held in the one place it cannot drift from: the key and the wrapper themselves.
-    /// `hand/install/install.sh --remote` makes them, `exec::remote_ready` in the hand reads
-    /// them back, and the hand says `remote:ready` in `hello` beside `home:`, `host:` and
-    /// `shell:` -- which is where [`Machine::remote`] gets it.  So there is no fourth store
-    /// for a permission to live in, nothing to migrate, and no setting that could still say
-    /// yes after the key is deleted.  A machine where the installer never ran says nothing,
-    /// and silence is read as off: turning it on is the user running that script.
-    ///
-    /// It is therefore NOT in [`Toolkit::all`], does not answer to [`Toolkit::parse`], is not
-    /// a name `crate::diamond_meta::normalise_kits` keeps, and has no chip in the page's
-    /// `KITS` row.  A Diamond cannot record it, so nothing about a Diamond can turn it on.
-    ///
-    /// # Where the boundary is
-    ///
-    /// Unchanged by any of that.  Enforced in three places, none of which trusts the other two.
-    /// [`toolkit_bounds`] drops
-    /// it, so a daimon's turn never carries the rule and [`fence_spec`] never sees it.  Only
-    /// [`terminal_toolkit_bounds`] keeps it, and only `crate::wasm::pty::pty_request` calls
-    /// that.  And the hand refuses a fence naming these folders unless the request came in by
-    /// its terminal door -- see `TOOLKIT_ROOTS` in `hand/src/exec.rs`, which is the copy that
-    /// matters, because the fence travels through the page and the page is not the app.
-    pub fn terminal_only(&self) -> bool {
-        matches!(self, Self::Remote)
-    }
-}
 
 /// A path under `home`, or `None` where the tail names nothing.
 ///
 /// The result cannot leave `home` whatever the tail says: [`normalise`] resolves `..` lexically and
 /// discards what it cannot climb above, so `../../etc/shadow` is `<home>/etc/shadow` -- useless,
-/// and inside.  That is the whole reason a toolkit is expressed as a tail rather than as a path.
+/// and inside.  That is the whole reason a secret is expressed as a tail rather than as a path.
 ///
 /// # Arguments
 /// * `home` - An absolute home directory, without its trailing slash.
-/// * `tail` - The toolkit's path, relative to it.
+/// * `tail` - The path, relative to it.
 pub(super) fn home_path(home: &str, tail: &str) -> Option<String> {
     let t = normalise(tail);
     if t.is_empty() {
@@ -674,14 +217,11 @@ pub struct Machine {
     /// entries in `caps`.  Never includes [`Machine::root`], which is always available.
     ///
     /// A terminal is the user at a keyboard and a command is a daimon, so the two may be
-    /// different sizes.  **The machine writes this list and the app chooses from it.**  That is
-    /// the same rule a [`Toolkit`] follows -- a fixed row with a written reason, ticked by the
-    /// user -- applied to the root itself, and it is the line that matters: the app may choose
-    /// among folders the machine sanctioned and may never invent one.
+    /// different sizes.  **The machine writes this list and the app chooses from it**: the app may
+    /// choose among folders the machine sanctioned and may never invent one.
     pub terminal_ceilings: Vec<String>,
-    // Whether Daimond's own ssh is set up on this computer, from `remote:ready` in `caps`.
-    // The Remote toolchain's whole permission, and the user's rather than a Diamond's: see
-    // [`Toolkit::terminal_only`].
+    // Whether Daimond's own ssh is set up on this computer, from `remote:ready` in `caps`: the
+    // machine's posture, the user's own act, and never a Diamond's (see [`terminal_ssh`]).
     pub remote: bool,
 }
 
@@ -728,9 +268,7 @@ impl Machine {
             // one opening on `/bin/sh`.
             shell: cap_value(&caps, "shell").filter(|p| p.starts_with('/')),
             // Affirmative, and only ever this one spelling: an older hand says nothing, and
-            // silence is "not set up" rather than "probably fine". The posture is the user's
-            // act on this machine and the hand reads it off the key and the wrapper
-            // themselves -- `exec::remote_ready` in `hand/src/exec.rs`.
+            // silence is "not set up" rather than "probably fine".
             remote: caps.iter().any(|c| c == "remote:ready"),
             caps,
         }
@@ -771,10 +309,7 @@ impl Machine {
 
     /// Does this machine run its commands inside a whole-home fence?
     ///
-    /// Then no toolkit row widens what a command reaches, so a toolchain is never asked for nor
-    /// refused for want of a grant: on the runner nobody could answer the question, and every
-    /// `python3` or `cargo` would be refused.  Only Kimberlite says so ([`CAP_FENCE_WHOLE_HOME`]);
-    /// the hand never does, and asks as it always has.
+    /// Only Kimberlite says so ([`CAP_FENCE_WHOLE_HOME`]); the hand never does.
     pub fn whole_home(&self) -> bool {
         self.caps.iter().any(|c| c == CAP_FENCE_WHOLE_HOME)
     }
@@ -845,378 +380,6 @@ pub(super) fn cap_value(caps: &[String], key: &str) -> Option<String> {
     caps.iter().find_map(|c| c.strip_prefix(&pre).map(|v| v.to_string()))
 }
 
-// ── A toolchain asked for on first use ─────────────────────────────
-//
-// Workspace round 2, E1 (specs/daimond_workspace_firstprinciples_20261009.md §3.3).  A toolkit is
-// still never INFERRED from what the model ran: the command only chooses which question is put,
-// and the grant is the user's press in the consent door.  A no is not remembered past the command
-// (N2), and nothing but that press and the head's Toolchains entry writes `set_toolkits` (N3).
-
-/// The name the toolchain question travels under through the consent door.
-pub const KIT_TOOL: &str = "toolkit";
-
-/// The word a yes to [`KIT_TOOL`] comes back as, and nothing else: an `allow` from a posture, a
-/// shortcut or an older page means no here, for the reason [`RUN_NET_ALLOW_WORD`] gives.
-pub const KIT_ALLOW_WORD: &str = "allow-kit";
-
-/// The git subcommands that use the user's identity, and so ask for the Git toolkit.
-pub(super) const GIT_IDENTITY: [&str; 4] = ["commit", "merge", "rebase", "tag"];
-
-/// The toolkits one simple command needs, from its words.
-pub(super) fn kits_of_words(words: &[&str], out: &mut Vec<Toolkit>) {
-    // Assignments and the wrappers that run the next word as the command.
-    let mut i = 0;
-    while i < words.len() {
-        let w = words[i];
-        let wrapper = matches!(w, "env" | "exec" | "command" | "time" | "nohup" | "nice");
-        if wrapper || (w.contains('=') && !w.starts_with('-') && !w.starts_with('=')) {
-            i += 1;
-        } else {
-            break;
-        }
-    }
-    let prog = match words.get(i) {
-        Some(p) => p.rsplit('/').next().unwrap_or(p),
-        None    => return,
-    };
-    let mut push = |k: Toolkit| if !out.contains(&k) { out.push(k); };
-    if prog == "git" {
-        // The first word that is not an option is the subcommand; `-C` and `-c` take a value.
-        let mut j = i + 1;
-        while j < words.len() {
-            let w = words[j];
-            if w == "-C" || w == "-c" {
-                j += 2;
-            } else if w.starts_with('-') {
-                j += 1;
-            } else {
-                if GIT_IDENTITY.contains(&w) {
-                    push(Toolkit::Git);
-                }
-                break;
-            }
-        }
-        return;
-    }
-    for k in Toolkit::all() {
-        if k.programs().contains(&prog) {
-            push(k);
-        }
-    }
-}
-
-/// The toolkits a command line needs: its program, and each simple command inside a `sh -c`.
-///
-/// A plain split on the shell's separators, not a parser.  A wrapper script calling `cargo` is
-/// not seen here; the fence refuses it as before.
-pub fn kits_wanted(argv: &[String]) -> Vec<Toolkit> {
-    let mut out = Vec::new();
-    let prog = match argv.first() {
-        Some(p) => p.rsplit('/').next().unwrap_or(p),
-        None    => return out,
-    };
-    let shell = matches!(prog, "sh" | "bash" | "dash" | "zsh");
-    let script = argv.iter().skip(1)
-        .position(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('c'))
-        .and_then(|p| argv.get(p + 2));
-    match (shell, script) {
-        (true, Some(s)) => {
-            let cut: String = s.chars()
-                .map(|c| if matches!(c, ';' | '&' | '|' | '\n' | '(' | ')' | '`' | '{' | '}')
-                    { '\n' } else { c })
-                .collect();
-            for line in cut.split('\n') {
-                let words: Vec<&str> = line.split_whitespace()
-                    .map(|w| w.trim_matches(|c| c == '"' || c == '\''))
-                    .filter(|w| !w.is_empty() && *w != "$")
-                    .collect();
-                kits_of_words(&words, &mut out);
-            }
-        },
-        _ => {
-            let words: Vec<&str> = argv.iter().map(|a| a.as_str()).collect();
-            kits_of_words(&words, &mut out);
-        },
-    }
-    out
-}
-
-/// Which toolkits to ask the user for before a command runs; empty means run as it stands.
-///
-/// Asked only where the answer can be a press here: a Diamond's own turn (there is somewhere to
-/// record the yes), someone watching (a worker alone has nobody to ask), a rung that asks
-/// ([`Mode::Bypass`] never does), and a hand that reported a home (without one a grant reaches
-/// nothing).  Everywhere else the command runs inside the fence it has, as before.
-///
-/// # Arguments
-/// * `argv` - The command.
-/// * `granted` - The toolkits this turn already holds.
-/// * `can_ask` - Whether the question can be put at all, as above.
-pub fn kits_to_ask(argv: &[String], granted: &[Toolkit], can_ask: bool) -> Vec<Toolkit> {
-    if !can_ask {
-        return Vec::new();
-    }
-    kits_wanted(argv).into_iter().filter(|k| !granted.contains(k)).collect()
-}
-
-/// The toolkits a command's own "not found" names, where a question before it ran could not see
-/// them: a wrapper script calling `cargo` (§7 of the Workspace spec).  Empty unless the shell
-/// itself gave up on a program (exit 127) and that program is one an ungranted toolkit lends.
-///
-/// Read from the shells' own sentences -- bash's `cargo: command not found`, dash's `cargo: not
-/// found` and env's `'cargo': No such file or directory` -- and from nothing else, so a program
-/// reporting a missing FILE is not mistaken for a missing toolchain.  Git is never named, since
-/// [`Toolkit::programs`] lists none for it.
-///
-/// # Arguments
-/// * `err` - The command's stderr.
-/// * `exit` - Its exit status.
-/// * `granted` - The toolkits the command already ran with.
-pub fn kits_not_found(err: &str, exit: i64, granted: &[Toolkit]) -> Vec<Toolkit> {
-    let mut out: Vec<Toolkit> = Vec::new();
-    if exit != 127 {
-        return out;
-    }
-    for line in err.lines() {
-        let head = if let Some(h) = line.strip_suffix(": command not found") {
-            h
-        } else if let Some(h) = line.strip_suffix(": not found") {
-            h
-        } else if let Some(h) = line.strip_suffix(": No such file or directory") {
-            // Only env's form: a bare path here is a program's own missing file.
-            if !line.starts_with("env: ") { continue; }
-            h
-        } else {
-            continue;
-        };
-        let word = head.rsplit(": ").next().unwrap_or(head)
-            .trim_matches(|c| c == '\'' || c == '"' || c == '`' || c == '\u{2018}' || c == '\u{2019}');
-        let prog = word.rsplit('/').next().unwrap_or(word);
-        for k in Toolkit::all() {
-            if !granted.contains(&k) && !out.contains(&k) && k.programs().contains(&prog) {
-                out.push(k);
-            }
-        }
-    }
-    out
-}
-
-/// What the daimon reads after a "not found" raised the toolchain question once the command had
-/// run: granted for this turn and to be run again, or the user's no, which is not to be retried.
-pub fn kit_after_note(argv: &[String], kits: &[Toolkit], answer: Permit) -> String {
-    match answer {
-        Permit::Allow   => fmt!("\n[{} was not found by this command because this Diamond had \
-            not been granted it. The user has now granted it: run '{}' again.]",
-            kit_labels(kits), safe_origin(&argv.join(" "))),
-        Permit::No(no)  => fmt!("\n[{} is installed but not granted to this Diamond, and {}. It \
-            is asked again the next time a command needs it, so say what you wanted it for rather \
-            than retrying.]", kit_labels(kits), permit_no_clause(no)),
-    }
-}
-
-/// Why a permit was not granted, as a clause the model reads after "and".  Only a refusal says
-/// the user decided; the other three say plainly that the user did not.
-pub(super) fn permit_no_clause(no: PermitNo) -> &'static str {
-    match no {
-        PermitNo::Refused   => "the user said not now",
-        PermitNo::TimedOut  => "the user was asked and didn't answer in time, so the user did not \
-            say no",
-        PermitNo::Unasked   => "this device could not ask on the user's other device, so the user \
-            did not say no",
-        PermitNo::Absent    => "the user could not be asked on this device, so the user did not \
-            say no",
-    }
-}
-
-/// The kits named for a person: "Rust", "Rust and Git", "Rust, Node and Git".
-pub fn kit_labels(kits: &[Toolkit]) -> String {
-    let names: Vec<&str> = kits.iter().map(|k| k.label()).collect();
-    match names.split_last() {
-        None              => String::new(),
-        Some((l, []))     => fmt!("{}", l),
-        Some((l, rest))   => fmt!("{} and {}", rest.join(", "), l),
-    }
-}
-
-/// What the daimon reads when the user says no to a toolchain, or nobody answers.
-///
-/// Says it is the user's decision and that it is not remembered, so the daimon neither reworks
-/// the command nor concludes the toolchain is missing from the computer.
-pub fn kit_refusal(argv: &[String], kits: &[Toolkit], no: PermitNo) -> String {
-    fmt!("Refused: '{}' needs {}, which this Diamond has not been granted, and {}. Nothing was \
-        run. {} is waiting for the user's yes; it is asked again the next time a command needs \
-        it, so say what you wanted it for rather than retrying.",
-        safe_origin(&argv.join(" ")), kit_labels(kits), permit_no_clause(no), kit_labels(kits))
-}
-
-// Workspace round 2, E2 (specs/daimond_workspace_firstprinciples_20261009.md §3.3).  A model's
-// write refused for being outside what its Diamond may change is put to the user once, in the
-// moment, through the consent door: "Let <Diamond> change <place>?".  The place is the NARROWEST
-// folder holding the file (owner, 2026-10-09), or the waiting mark over it where one was made on
-// another device.  A yes is the page writing the same `holds` link and marks-here entry the ◈
-// writes; a no is not remembered (N2).
-
-/// The name the write question travels under through the consent door.
-pub const PLACE_TOOL: &str = "place";
-
-/// The word a yes to [`PLACE_TOOL`] comes back as, and nothing else (see [`KIT_ALLOW_WORD`]).
-pub const PLACE_ALLOW_WORD: &str = "allow-place";
-
-/// A refused write the user may be asked about.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlaceAsk {
-    pub path:       String, // normalised, as refused
-    pub place:      String, // what a yes adds
-    pub waiting:    bool,   // `place` is a mark made on another device
-}
-
-impl PlaceAsk {
-    /// The question's detail for the page, which draws and records from it.
-    pub fn detail(&self, id: &str) -> String {
-        fmt!("{{\"id\":\"{}\",\"place\":\"{}\",\"waiting\":{}}}",
-            json_escape(id), json_escape(&self.place), self.waiting)
-    }
-}
-
-/// The narrowest folder holding `path`: its parent, or the file itself at the root.
-pub fn narrowest_place(path: &str) -> String {
-    let p = normalise(path);
-    match p.rfind('/') {
-        Some(i) => fmt!("{}", &p[..i]),
-        None    => p,
-    }
-}
-
-/// What the daimon reads when the user says no to a write, or nobody answers.
-pub fn place_refusal(ask: &PlaceAsk, no: PermitNo) -> String {
-    let why = match no {
-        PermitNo::Refused   => fmt!("the user said not now to this Diamond changing '{}', so '{}' \
-            was not changed", ask.place, ask.path),
-        _                   => fmt!("'{}' was not changed, because this Diamond may not change \
-            '{}' yet and {}", ask.path, ask.place, permit_no_clause(no)),
-    };
-    fmt!("Refused: {}. It is asked again the next time a write needs it, so say what you wanted \
-        to change rather than retrying.", why)
-}
-
-/// The page's door for a write question; none on a native build, where nobody is there to press.
-pub(super) async fn place_door<H: Host>(ask: PlaceAsk, id: String, turn: String, host: &H) -> Option<Permit> {
-    if !H::HOSTED {
-        let _ = (ask, id, turn, host);
-        return None;
-    }
-    host.net().egress_allowed_place(&turn, &ask.path, &ask.detail(&id)).await
-}
-
-/// The toolkits a turn's bounds grant, in the order the user gave them and each named once.
-///
-/// # Arguments
-/// * `bounds` - The turn's [`Bound`] rules.
-pub fn toolkits(bounds: &[Bound]) -> Vec<Toolkit> {
-    let mut out: Vec<Toolkit> = Vec::new();
-    for b in bounds {
-        if let Bound::Toolkit(k) = b {
-            if !out.contains(k) {
-                out.push(*k);
-            }
-        }
-    }
-    out
-}
-
-/// The toolkits a turn grants, as the JSON array of names the wire carries.
-///
-/// The hand clamps an arriving fence against the toolchains it was told were granted, and it has to
-/// be TOLD: a toolchain does not live in the workspace, so a fence naming `~/.cargo/registry`
-/// cannot be checked against the granted root, and the alternative -- allowing every toolchain
-/// folder unconditionally -- is what let a fence name `~/.local/bin` writable when nothing had been
-/// granted at all.
-///
-/// The names are read back out of the bounds rather than passed alongside them, so there is exactly
-/// one place a toolkit can enter a request and it is the same place [`fence_spec`] and
-/// [`Kit::resolve`] read: what the user granted.  `argv` never reaches this.
-///
-/// # Arguments
-/// * `bounds` - The turn's [`Bound`] rules.
-pub fn toolkit_names_json(bounds: &[Bound]) -> String {
-    let names: Vec<String> = toolkits(bounds).iter()
-        .map(|k| fmt!("\"{}\"", k.name()))
-        .collect();
-    fmt!("[{}]", names.join(","))
-}
-
-/// The toolchains a Diamond recorded, as rules in its turn's bounds.
-///
-/// The companion to [`diamond_bounds`], and separate from it for the reason a grant is separate
-/// from a scope: a Diamond's directories are what it holds, and a toolkit is what the user decided
-/// to lend it.  A caller composes the two -- `diamond_bounds(..)` then `extend(toolkit_bounds(..))`
-/// -- so that neither can be built without the other being visible in the same expression.
-///
-/// **The names come from what the user granted, and from nowhere else.**  In particular they are
-/// never derived from `argv`: a fence that widened itself to fit the requested binary would be a
-/// fence the model chooses, and the whole arrangement rests on its not being one.  `cargo` is
-/// reachable because the user granted the Rust toolkit, and for no other reason.
-///
-/// A name this build does not know is DROPPED, not refused.  A workspace written by a later build
-/// may record a toolkit this one cannot express, and the safe reading of "I do not know what that
-/// grants" is "it grants nothing" -- refusing the whole list would take away the grants that ARE
-/// known, and approximating it would grant paths nobody chose.
-///
-/// # Arguments
-/// * `names` - The recorded toolkit names, as [`Toolkit::name`] spells them.
-pub fn toolkit_bounds(names: &[String]) -> Vec<Bound> {
-    // `true` asks for the WIDEST list this build can compose and then drops the terminal-only
-    // part of it, rather than asking for a narrow one. That is deliberate: the filter below is
-    // the rule that matters, and a filter reached only by a branch nothing takes is a rule
-    // nothing tests. This way every call through this door exercises it.
-    terminal_toolkit_bounds(names, true).into_iter()
-        // The one narrowing between the two doors, and the whole of it. A toolkit marked
-        // [`Toolkit::terminal_only`] is a grant to a surface the USER opened; a command is a
-        // surface a daimon reaches, so the rule is dropped here and can never enter a turn's
-        // bounds by this route. Dropped rather than refused, exactly as an unknown name is:
-        // the Diamond legitimately records the grant, and what this door does with it is
-        // grant nothing.
-        .filter(|b| !matches!(b, Bound::Toolkit(k) if k.terminal_only()))
-        .collect()
-}
-
-/// The toolchains a Diamond recorded, for a terminal the user opened by hand.
-///
-/// The same list as [`toolkit_bounds`] plus the grants that belong to this door alone.
-/// **`crate::wasm::pty::pty_request` is the only caller there should ever be**, and a second
-/// one is a decision about trust rather than a convenience: see [`Toolkit::terminal_only`].
-///
-/// **The two arguments come from different people and that is the point.**  `names` is what the
-/// USER lent this Diamond and it is per Diamond; `remote` is what the user did to this COMPUTER
-/// and it is per machine.  [`Toolkit::Remote`] cannot arrive through `names` at all -- it is not
-/// in [`Toolkit::all`], so [`Toolkit::parse`] does not answer to it and no Diamond can record it
-/// -- which is why moving its scope needed no new store and left the three refusals where they
-/// were.
-///
-/// # Arguments
-/// * `names` - The recorded toolkit names, as [`Toolkit::name`] spells them.
-/// * `remote` - [`Machine::remote`]: whether Daimond's own ssh is set up on this computer.  Never
-///   taken from the ask, for the reason no toolkit ever is -- a caller that could name its own
-///   grant would be choosing its own fence.
-pub fn terminal_toolkit_bounds(names: &[String], remote: bool) -> Vec<Bound> {
-    let mut out: Vec<Bound> = Vec::new();
-    for n in names {
-        if let Ok(k) = Toolkit::parse(n) {
-            let b = k.bound();
-            if !out.contains(&b) {
-                out.push(b);
-            }
-        }
-    }
-    if remote {
-        let b = Toolkit::Remote.bound();
-        if !out.contains(&b) {
-            out.push(b);
-        }
-    }
-    out
-}
-
 /// The bounds the interactive terminal runs with: a Diamond's, with its allow-list taken away.
 ///
 /// **A terminal is the user at a keyboard, not a daimon, so its fence is the machine grant and not
@@ -1235,29 +398,15 @@ pub fn terminal_toolkit_bounds(names: &[String], remote: bool) -> Vec<Bound> {
 /// **`crate::wasm::pty::pty_request` is the only caller there should ever be.**  A scoped command
 /// fence must never equal what this composes, and a unit test pins that the two stay apart.
 ///
-/// **R2 becomes a hole the day a daimon gets a tool that types into a terminal**: this fence, the
-/// lifted `.ssh` and the Remote toolchain's ssh key are then a daimon's, and an ssh is a shell on
-/// another machine no fence here binds.
-///
-/// # Arguments
-/// * `toolkits` - The toolkit names the user granted this Diamond, never anything from `argv`.
-/// * `remote` - [`Machine::remote`], the machine's answer, see [`terminal_toolkit_bounds`].
-pub fn terminal_bounds(
-    own_dir:   &str,
-    attached:  &[String],
-    read_only: &[String],
-    toolkits:  &[String],
-    remote:    bool,
-) -> Vec<Bound> {
-    let mut out: Vec<Bound> = diamond_bounds(own_dir, attached, read_only)
+/// **This becomes a hole the day a daimon gets a tool that types into a terminal**: this fence and
+/// the lifted `.ssh` are then a daimon's, and an ssh is a shell on another machine no fence here
+/// binds.
+pub fn terminal_bounds(own_dir: &str) -> Vec<Bound> {
+    diamond_bounds(own_dir)
         .into_iter()
         .filter(|b| !matches!(b,
             Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_) | Bound::Nowhere))
-        .collect();
-    // `terminal_toolkit_bounds` and not `toolkit_bounds`: the Remote toolkit lends an ssh key, and
-    // a person typing here may use it where a daimon's `run` never can.
-    out.extend(terminal_toolkit_bounds(toolkits, remote));
-    out
+        .collect()
 }
 
 // ── Two bounds on one turn ───────────────────────────────────────────────────
@@ -1415,11 +564,6 @@ pub(super) fn permits_subtree(bounds: &[Bound], prefix: &str) -> bool {
 ///   what [`Bound::MayRead`] has always said.  A skill running inside a Diamond therefore cannot
 ///   read its own shipped references, and is refused in those words rather than quietly widening the
 ///   Diamond to reach them.
-/// * **A [`Bound::Toolkit`] survives only where BOTH sides granted it.**  A toolkit is machine paths
-///   a command may reach, so carrying one across from a list that granted it into a turn bounded by
-///   a list that did not would widen that turn's fence -- the one thing this must not do.  A caller
-///   that means to compose a narrowing and keep a grant says so in its own expression, by extending
-///   [`toolkit_bounds`] onto the result, where the decision is visible.
 ///
 /// The merge is symmetric in effect; the argument order decides only the order of the result, and
 /// therefore which allowed directory [`ToolContext::default_cwd`] picks.  Pass the turn's existing
@@ -1474,6 +618,8 @@ pub fn compose(a: &[Bound], b: &[Bound]) -> Vec<Bound> {
                 Bound::NoWrite(p) => Bound::NoWrite(normalise(p)),
                 Bound::NoRead(p)  => Bound::NoRead(normalise(p)),
                 Bound::NoSecretNames => Bound::NoSecretNames,
+                Bound::NoWriteTainted(p) => Bound::NoWriteTainted(normalise(p)),
+                Bound::NoReadTainted(p)  => Bound::NoReadTainted(normalise(p)),
                 _                 => continue,
             };
             if !out.contains(&rule) {
@@ -1504,115 +650,10 @@ pub fn compose(a: &[Bound], b: &[Bound]) -> Vec<Bound> {
             }
         }
     }
-    // Granted on both sides or not at all.
-    for x in a {
-        if let Bound::Toolkit(k) = x {
-            let rule = Bound::Toolkit(*k);
-            if b.contains(&rule) && !out.contains(&rule) {
-                out.push(rule);
-            }
-        }
-    }
     out
 }
 
-/// Every toolkit a turn was granted, resolved to absolute paths on one machine.
-///
-/// One value rather than one per toolkit, because a Diamond building a web front end against a Rust
-/// back end needs both and `PATH` can only be sent once.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Kit {
-    /// Which toolkits this came from.
-    pub kits: Vec<Toolkit>,
-    /// Absolute paths the command may read.
-    pub ro:   Vec<String>,
-    /// Absolute paths the command may write.
-    pub rw:   Vec<String>,
-    /// Absolute paths denied outright.
-    pub deny: Vec<String>,
-    /// The environment that finds the toolchains, ready for the wire.
-    pub env:  Vec<(String, String)>,
-}
-
-impl Kit {
-
-    /// The toolkits `bounds` grant, resolved against `m`, or `None` where there is nothing to
-    /// resolve or nowhere to resolve it against.
-    ///
-    /// `None` for two quite different reasons, and a caller that wants to tell them apart asks
-    /// [`toolkits`] as well: no toolkit was granted, or one was and this hand did not report a home
-    /// directory.  The second is why the briefing says so rather than staying silent -- a daimon
-    /// that has been told `cargo` is available and finds it refused has been told something false.
-    ///
-    /// # Arguments
-    /// * `bounds` - The turn's [`Bound`] rules.
-    /// * `m` - The machine the hand described.
-    pub fn resolve(bounds: &[Bound], m: &Machine) -> Option<Self> {
-        let kits = toolkits(bounds);
-        if kits.is_empty() {
-            return None;
-        }
-        let home = match &m.home {
-            Some(h) if abs_dir(h) => h.trim_end_matches('/').to_string(),
-            _                     => return None,
-        };
-        let mut out = Self { kits: kits.clone(), ..Self::default() };
-        let mut bins: Vec<String> = Vec::new();
-        for k in &kits {
-            for g in k.grants_on(m).iter().chain(CREDS.iter()) {
-                let p = match home_path(&home, g.tail) {
-                    Some(p) => p,
-                    None    => continue,
-                };
-                let list = match g.level {
-                    Level::Ro   => &mut out.ro,
-                    Level::Rw   => &mut out.rw,
-                    Level::Deny => &mut out.deny,
-                };
-                if !list.contains(&p) {
-                    list.push(p);
-                }
-            }
-            for b in k.bins_on(m) {
-                if let Some(p) = home_path(&home, b) {
-                    if !bins.contains(&p) {
-                        bins.push(p);
-                    }
-                }
-            }
-            for (name, tail) in k.vars() {
-                if let Some(p) = home_path(&home, tail) {
-                    let pair = (name.to_string(), p);
-                    if !out.env.iter().any(|(n, _)| n == name) {
-                        out.env.push(pair);
-                    }
-                }
-            }
-        }
-        // The one variable that is not a path under a granted folder but the folder they are all
-        // under. See `Toolkit::needs_home` for why this is safe and why it is not general.
-        if kits.iter().any(|k| k.needs_home()) && !out.env.iter().any(|(n, _)| n == "HOME") {
-            out.env.push((fmt!("HOME"), home.clone()));
-        }
-        if !bins.is_empty() {
-            // The base is appended and not replaced: a build reaches `cc`, `ld` and `git` through
-            // it, and a toolkit that took them away would break the builds it exists to enable.
-            out.env.push((fmt!("PATH"), fmt!("{}:{}", bins.join(":"), PATH_BASE)));
-        }
-        Some(out)
-    }
-
-    /// This kit's environment as the JSON the hand reads: a list of `[name, value]` pairs.
-    pub fn env_json(&self) -> String {
-        env_json_of(&self.env)
-    }
-}
-
 /// An environment as the JSON the hand reads: a list of `[name, value]` pairs.
-///
-/// Separate from [`Kit::env_json`] because a command's environment now has two sources -- the
-/// granted toolchain and, on a push, the credential -- and one serialiser for both is what stops
-/// them being escaped by two slightly different rules.
 ///
 /// # Arguments
 /// * `env` - The pairs, in the order they should reach the hand.
@@ -1626,7 +667,7 @@ pub(super) fn env_json_of(env: &[(String, String)]) -> String {
 /// Which surface a fence is being built for.
 ///
 /// This decides ONE thing and only one: whether `~/.ssh` is denied.  Everything else
-/// [`fence_spec_surfaced`] computes -- the allow-list, the credential denies, the toolkit fold, the
+/// [`fence_spec_surfaced`] computes -- the allow-list, the credential denies, the
 /// net rule -- is identical for both surfaces, and the two secrets a shell reaches for, the private
 /// keys and the known hosts, both live under `~/.ssh` and nowhere else.
 ///
@@ -1676,14 +717,9 @@ pub enum Surface {
 ///   gates on, not a new mechanism; [`net_step`] decides it and this function is handed the
 ///   answer, never the flag.
 ///
-/// A granted [`Toolkit`] is folded in last, and only in the direction of the paths it names.  It
-/// cannot loosen anything already decided: the workspace rules are computed first and a toolkit
-/// path is added beside them, never over them, and a toolkit that resolves to nothing -- because
-/// the hand did not say where home is -- leaves the fence exactly as it found it.
-///
 /// # Arguments
 /// * `bounds` - The turn's [`Bound`] rules, as [`ToolContext::no_write`] holds them.
-/// * `m` - The machine the hand described: the granted root, and the home a toolkit resolves
+/// * `m` - The machine the hand described: the granted root, and the home the secrets resolve
 ///   against.
 /// * `tainted` - Whether this turn has ingested content from outside the user.
 pub fn fence_spec(bounds: &[Bound], m: &Machine, tainted: bool) -> FenceSpec {
@@ -1706,6 +742,9 @@ pub fn fence_spec_surfaced(
     tainted: bool,
     surface: Surface,
 ) -> FenceSpec {
+    // The taint split (R8) settled first, so every rule below reads only plain rules.
+    let held = in_force(bounds, tainted);
+    let bounds = &held[..];
     // A scope that could not be expressed. No roots at all, which the hand refuses -- the same
     // closed failure an unusable root produces, and for the same reason. Read before the root is
     // even looked at, because nothing a machine could say would widen this.
@@ -1715,9 +754,7 @@ pub fn fence_spec_surfaced(
     // An unusable root fences nothing, and the empty string fences LESS than nothing: the hand
     // compares with `Path::starts_with`, for which every path on the machine is under "". So a
     // root that is not an absolute path yields a spec with no roots at all, which the hand refuses
-    // -- the failure is closed, loud, and cannot be mistaken for a fence. A toolkit does not rescue
-    // it either: the return is here, above the fold, so a machine with no usable root grants a
-    // toolchain no more than it grants anything else.
+    // -- the failure is closed, loud, and cannot be mistaken for a fence.
     let root = m.root.as_str();
     if root.is_empty() || !root.starts_with('/') {
         return FenceSpec { rw: Vec::new(), ro: Vec::new(), deny: Vec::new(), net: false };
@@ -1780,7 +817,7 @@ pub fn fence_spec_surfaced(
     // the granted root into `ro` turns it and the kernel checks red together.
     //
     // Read as one list rather than as two branches, because two branches is how the store-path
-    // filter and the toolkit resolution below came to exist on only one of them.
+    // filter came to exist on only one of them.
     let scoped = bounds.iter()
         .any(|b| matches!(b, Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_)));
     let allow: Vec<String> = bounds.iter()
@@ -1856,13 +893,13 @@ pub fn fence_spec_surfaced(
                 }
             },
             Bound::NoRead(p) => deny.push(abs(p)),
-            // A toolkit names paths on the machine, not in the workspace, so `abs` would be wrong
-            // for it and it is resolved below against the home the hand reported instead.
             // `Nowhere` returned above, before any of this was computed. Both allow-lists were read
             // into `allow` above, together, so neither is read again here.
             // `NoSecretNames` judges by name, which Landlock cannot; the runner walks for those.
+            // The taint split was settled by `in_force` above, so neither is left.
             Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_) | Bound::NoWrite(_)
-                | Bound::Toolkit(_) | Bound::Nowhere | Bound::NoSecretNames => {},
+                | Bound::Nowhere | Bound::NoSecretNames
+                | Bound::NoWriteTainted(_) | Bound::NoReadTainted(_) => {},
         }
     }
     // NO allow-list means the turn is bounded only by the workspace, so the fence is the granted
@@ -1877,8 +914,7 @@ pub fn fence_spec_surfaced(
     if !deny.contains(&own) {
         deny.push(own);
     }
-    // The user's own secrets, denied on every fence and not only on one that happened to grant a
-    // toolkit. See [`ALWAYS_DENIED`]: until 2026-08-26 these were out of reach because the
+    // The user's own secrets, denied on every fence. See [`ALWAYS_DENIED`]: until 2026-08-26 these were out of reach because the
     // workspace root was narrower than the home directory, which is a property of a setting the
     // user picked arbitrarily rather than a rule anything enforced.
     if let Some(h) = &m.home {
@@ -1894,15 +930,25 @@ pub fn fence_spec_surfaced(
                     if !deny.contains(&p) { deny.push(p); }
                 }
             }
+            // The terminal's ssh, folded in last and only on the terminal: a command never
+            // reaches it, whatever the bounds say (see [`terminal_ssh`]).
+            if surface == Surface::Terminal {
+                if let Some((rows, _)) = terminal_ssh(m) {
+                    for g in rows {
+                        let p = match home_path(home, g.tail) {
+                            Some(p) => p,
+                            None    => continue,
+                        };
+                        let list = match g.level {
+                            Level::Ro   => &mut ro,
+                            Level::Rw   => &mut rw,
+                            Level::Deny => &mut deny,
+                        };
+                        if !list.contains(&p) { list.push(p); }
+                    }
+                }
+            }
         }
-    }
-    // The toolchain the user granted, if any, and nothing else: `Kit::resolve` reads the grant out
-    // of these same bounds, so there is no second path by which a toolkit could arrive -- and in
-    // particular none that starts with what the model asked to run.
-    if let Some(kit) = Kit::resolve(bounds, m) {
-        for p in kit.ro   { if !ro.contains(&p)   { ro.push(p);   } }
-        for p in kit.rw   { if !rw.contains(&p)   { rw.push(p);   } }
-        for p in kit.deny { if !deny.contains(&p) { deny.push(p); } }
     }
     FenceSpec { rw, ro, deny, net: !tainted }
 }
@@ -2309,39 +1355,6 @@ pub fn call_outcome(reply: &str) -> CallOutcome {
     }
 }
 
-/// The `DOMException.name` a browser throws when a file-system grant has been withdrawn.
-pub const WITHDRAWN_GRANT: &str = "NotAllowedError";
-
-/// Does this thrown exception's NAME say a file-system grant was withdrawn?
-///
-/// The name is compared WHOLE.  A substring test over the same word is what turned a search
-/// result into a revoked grant on 2026-09-13, and `NotAllowedError` appears in this codebase's own
-/// prose often enough that a loose test will meet it again.
-pub fn is_withdrawn_grant(name: &str) -> bool {
-    name == WITHDRAWN_GRANT
-}
-
-/// Whether a tool call's OWN failure says the browser took the open folder away.
-///
-/// **Two terms, and the first is the one the defect turned on.**  A call that SUCCEEDED says
-/// nothing about the grant however its result reads: on 2026-09-13 a `file_search` for
-/// `on the user's screen|ask_result|drawn` matched the sentence in `src/wasm/opfs.rs` that names
-/// `NotAllowedError`, the alarm fired on a result rather than on a failure, the page dropped to the
-/// sandbox, and every later read of the user's folder was refused against a grant the browser had
-/// never touched.  So the outcome is asked first, and a `Done` is never a loss.
-///
-/// The second term is the exception the file edge caught
-/// ([`crate::wasm::opfs::take_thrown`]), not the words the tool returned.  A failed `file_edit`
-/// whose `old_string` quoted that sentence would fail for its own reasons and say that word in its
-/// error; only something thrown is evidence about the grant.
-///
-/// # Arguments
-/// * `outcome` - What became of the call, read from the reply by [`call_outcome`].
-/// * `thrown` - The name of the exception the file edge caught, empty when nothing threw.
-pub fn folder_loss_reported(outcome: CallOutcome, thrown: &str) -> bool {
-    outcome != CallOutcome::Done && is_withdrawn_grant(thrown)
-}
-
 /// What a call says about one path, once it has returned.
 ///
 /// **Read off the ARGUMENTS, never off the reply.**  A reply is a sentence the tool composed, and
@@ -2572,14 +1585,25 @@ pub const SECRET_NAMES: &[&str] = &[
     ".env",                                 // a project's keys, by convention
     ".ssh", ".gnupg", ".aws", ".netrc", ".git-credentials",
     "key4.db",                              // a Firefox or Thunderbird profile's key store
+    "key3.db",                              // the same, as an older profile keeps it
     "logins.json", "logins-backup.json",    // its saved logins, which `key4.db` decrypts
+    "logins.db", "signons.sqlite",          // the same, as a newer and an older profile keep them
     "cookies.sqlite",                       // its signed-in sessions
     "encrypted-openpgp-passphrase.txt",     // Thunderbird's OpenPGP passphrase
     "privkey.pem",                          // a certificate's private key
+    "cert9.db", "cert8.db",                 // an NSS store: a mail or browser profile's client keys
+    "secring.gpg",                          // an older GnuPG's secret keyring
+    "rclone.conf",                          // rclone's cloud storage tokens
+    ".credentials.json",                    // Claude Code's OAuth tokens
 ];
 
-/// Endings that make a name a secret store: a KeePass vault, a private key, a certificate.
-pub const SECRET_SUFFIXES: &[&str] = &[".kdbx", ".key", ".pem"];
+/// Endings that make a name a secret store: a KeePass vault, a private key, a certificate, a
+/// named environment file (`flip.env`) holding keys as `.env` does.
+pub const SECRET_SUFFIXES: &[&str] = &[".kdbx", ".key", ".pem", ".env"];
+
+/// The files SQLite keeps beside a database, holding its recent pages (`cookies.sqlite-wal`): a
+/// secret name's is secret too.
+pub const SECRET_SIDECARS: &[&str] = &["-wal", "-shm", "-journal"]; // fixed: SQLite's names
 
 /// Folders Kimberlite's walk does not enter in `Walk` mode, for its cost: each is rebuilt by a
 /// tool, and each is large.  Never part of the judgement (RULE-ONE): a command can move a folder
@@ -2601,6 +1625,7 @@ pub const SECRET_PROFILE: &str = "kimberlite-command";
 /// `id_work`); one with an extension is code (`id_map.rs`) or a public key (`id_ed25519.pub`).
 pub fn secret_name(name: &str) -> bool {
     SECRET_NAMES.contains(&name)
+        || SECRET_SIDECARS.iter().any(|x| name.strip_suffix(x).is_some_and(|n| SECRET_NAMES.contains(&n)))
         || name.starts_with(".env.")
         || SECRET_SUFFIXES.iter().any(|s| name.len() > s.len() && name.ends_with(s))
         || (name.len() > 3 && name.len() <= 3 + SECRET_ID_MAX && name.starts_with("id_")
@@ -2657,6 +1682,8 @@ pub struct SecretScope {
 pub struct ProfileRows {
     pub rows:   Vec<String>,            // absolute, spelled from `[A-Za-z0-9._/-]`, no trailing `/`
     pub sealed: Vec<(String, String)>,  // a row left to Landlock's seal, and why
+    pub floor:  Vec<String>,            // denied every verb (UNBLOCK-82 TREE-1h): absolute, `*` in a name allowed
+    pub names:  Vec<String>,            // a folder name denied every verb at any depth below every root (TREE-1m: `.daimond`)
 }
 
 /// The AppArmor profile [`SECRET_PROFILE`], for `scopes`: the rule of [`secret_path`] by bytes,
@@ -2673,8 +1700,41 @@ pub struct ProfileRows {
 ///   spelled as a root is, strictly beneath one, and with no secret name in it; its ancestors up
 ///   to that root are kept from being renamed or removed.  Its sealed rows are noted only.
 pub fn secret_profile(scopes: &[SecretScope], rows: &ProfileRows) -> Outcome<String> {
-    let body = res!(secret_profile_body(scopes, rows));
-    Ok(fmt!("# rule {}\n{}", rule_hash_of(&body), body))
+    secret_profile_file(scopes, &[(SECRET_PROFILE, rows)])
+}
+
+/// The one `abi` statement of a profile file.  AppArmor takes one per file, before its first
+/// profile: parser 5.0.2 refuses a second ("unexpected TOK_ABI, expecting end of file").
+// fixed: the policy ABI these rules are written against.
+const SECRET_PROFILE_ABI: &str = "abi <abi/4.0>,\n";
+
+/// One profile file holding each `(name, rows)` profile in turn (UNBLOCK-82 TREE-1k: the runner
+/// stacks a second profile, `kimberlite-command-clean`, on a clean chat's commands, whose floor
+/// holds the stranger roots too).  Each profile is led by its own `# rule <sha256>` line, the hash
+/// of its body; the file's one `abi` line follows the first, so the file's first line is still the
+/// first profile's rule.  Until LINE-F8 each body carried its own `abi` line, and the two-profile
+/// file did not parse (UNBLOCK-82, 2 Nov 2026).
+///
+/// # Arguments
+/// * `scopes` - As for [`secret_profile`].
+/// * `profiles` - Each profile's name, spelled from `[A-Za-z0-9._-]`, and its rows, as for
+///   [`secret_profile`]; at least one.
+pub fn secret_profile_file(scopes: &[SecretScope], profiles: &[(&str, &ProfileRows)])
+    -> Outcome<String>
+{
+    if profiles.is_empty() {
+        return Err(err!("A profile file needs a profile."; Invalid, Input));
+    }
+    let mut t = String::new();
+    for (i, (name, rows)) in profiles.iter().enumerate() {
+        let body = res!(secret_profile_body_as(name, scopes, rows));
+        t.push_str(&fmt!("# rule {}\n", rule_hash_of(&body)));
+        if i == 0 {
+            t.push_str(SECRET_PROFILE_ABI);
+        }
+        t.push_str(&body);
+    }
+    Ok(t)
 }
 
 /// The sha256, in hex, of the profile [`secret_profile`] writes for `scopes`: its lists, its
@@ -2710,6 +1770,17 @@ pub(super) fn alternation(items: &[String]) -> String {
 
 /// The profile after its hash line.
 pub(super) fn secret_profile_body(scopes: &[SecretScope], rows: &ProfileRows) -> Outcome<String> {
+    secret_profile_body_as(SECRET_PROFILE, scopes, rows)
+}
+
+/// [`secret_profile_body`] under the profile name `name`.
+pub(super) fn secret_profile_body_as(name: &str, scopes: &[SecretScope], rows: &ProfileRows)
+    -> Outcome<String>
+{
+    if name.is_empty() || name.contains('/') || !profile_safe(name) {
+        return Err(err!("The profile name {:?} is not spelled from [A-Za-z0-9._-].", name;
+            Invalid, Input));
+    }
     if scopes.is_empty() {
         return Err(err!("A secret profile needs at least one root."; Invalid, Input, Missing));
     }
@@ -2733,7 +1804,8 @@ pub(super) fn secret_profile_body(scopes: &[SecretScope], rows: &ProfileRows) ->
         roots.push(r[1..].to_string());
     }
     // S: every secret name, as bytes.
-    let mut names: Vec<String> = SECRET_NAMES.iter().map(|n| n.to_string()).collect();
+    let side = fmt!("{{,{}}}", SECRET_SIDECARS.join(","));
+    let mut names: Vec<String> = SECRET_NAMES.iter().map(|n| fmt!("{}{}", n, side)).collect();
     names.push(fmt!(".env.*"));
     for s in SECRET_SUFFIXES {
         names.push(fmt!("?*{}", s));
@@ -2752,13 +1824,12 @@ pub(super) fn secret_profile_body(scopes: &[SecretScope], rows: &ProfileRows) ->
     let ra = fmt!("/{}", alternation(&rows_v.iter().map(|x| x[1..].to_string()).collect::<Vec<_>>()));
     let to_rows = fmt!("{}{{,/**}}", ra);
     let mut t = String::new();
-    t.push_str("abi <abi/4.0>,\n");
     // Enforce mode, with no flag: `default_allow` is packed as unconfined (parser 5.0.2
     // profile.h:96-98), and the kernel checks no file rule of an unconfined profile
     // (security/apparmor/file.c:234, 256), so its denies did nothing (F34b-4e).  `allow all,`
     // grants every class the kernel mediates instead, and a deny below still beats it.  Stacked,
     // the label is the intersection, so it only narrows.
-    t.push_str(&fmt!("profile {} {{\n", SECRET_PROFILE));
+    t.push_str(&fmt!("profile {} {{\n", name));
     t.push_str("  allow all,\n");
     // Exec is pinned to inherit, so no exec leaves the profile.
     t.push_str("  allow /** rwlkmix,\n");
@@ -2861,6 +1932,28 @@ pub(super) fn secret_profile_body(scopes: &[SecretScope], rows: &ProfileRows) ->
         t.push_str(&fmt!("  priority=2 deny {}/{{,**/}}{}/** wl,\n", ra, s));
         t.push_str(&fmt!("  priority=2 deny link {}/{{,**/}}{}/** -> {},\n", r, s, to_rows));
     }
+    // p2: the secret floor (UNBLOCK-82 TREE-1h): his credential stores, the config's denies and
+    // Kimberlite's own state, refused every verb inside any tree a command is granted, so Landlock
+    // grants a clean chat's commands the home whole and carves nothing for them.  A higher
+    // priority than the exempt prefixes, since `.cache/kimberlite` lies inside the exempt `.cache`.
+    // Each ancestor is named as a directory, with its `/`, so the store is not renamed away.
+    let floor_v = res!(profile_floor_checked(scopes, &rows.floor));
+    for f in &floor_v {
+        t.push_str(&fmt!("  priority=2 deny {}{{,/**}} rwlkmx,\n", f));
+        t.push_str(&fmt!("  priority=2 deny link /** -> {}{{,/**}},\n", f));
+    }
+    for a in &row_ancestors(scopes, &floor_v) {
+        t.push_str(&fmt!("  priority=2 deny {}{{,/}} w,\n", a));
+    }
+    // p2: a name held at any depth below every root (UNBLOCK-82 TREE-1m): each diamond's own
+    // `.daimond`, wherever the diamond lies in the home, refused every verb, and no hard link
+    // made to anything in it.
+    let names_v = res!(profile_names_checked(&rows.names));
+    if !names_v.is_empty() {
+        let n = fmt!("{}/{{,**/}}{}{{,/**}}", r, alternation(&names_v));
+        t.push_str(&fmt!("  priority=2 deny {} rwlkmx,\n", n));
+        t.push_str(&fmt!("  priority=2 deny link /** -> {},\n", n));
+    }
     // What is left to Landlock's seal, and why, so the rule hash changes with it too.
     for (at, why) in &rows.sealed {
         let one = |x: &str| x.replace(|c: char| c == '\n' || c == '\r', " ");
@@ -2907,6 +2000,50 @@ pub(super) fn profile_rows_checked(scopes: &[SecretScope], rows: &[String]) -> O
     out.sort();
     let all = out.clone();
     out.retain(|r| !all.iter().any(|o| abs_beneath(r, o)));
+    Ok(out)
+}
+
+/// The floor's paths checked, sorted, each once, and none beneath another.  As a row, but a
+/// name may hold `*`, which AppArmor reads within one name (`.config/google-chrome*`), and a
+/// secret name is allowed, since the floor is denied whole.
+pub(super) fn profile_floor_checked(scopes: &[SecretScope], floor: &[String]) -> Outcome<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for f in floor {
+        if !f.starts_with('/') || f.ends_with('/') || f.contains("//") || f.contains("**")
+            || !profile_safe(&f.replace('*', ""))
+            || f.split('/').any(|c| c == "." || c == "..")
+        {
+            return Err(err!("The floor path {:?} is not an absolute path spelled from \
+                [A-Za-z0-9._/*-] with no trailing '/' and no '**'.", f; Invalid, Input));
+        }
+        if scope_of(scopes, f).is_none() {
+            return Err(err!("The floor path {:?} is not beneath any scope's root.", f;
+                Invalid, Input));
+        }
+        if !out.contains(f) {
+            out.push(f.clone());
+        }
+    }
+    out.sort();
+    let all = out.clone();
+    out.retain(|r| !all.iter().any(|o| abs_beneath(r, o)));
+    Ok(out)
+}
+
+/// The names of [`ProfileRows::names`], each a single folder name spelled from `[A-Za-z0-9._-]`,
+/// neither `.` nor `..`, sorted and each once.
+pub(super) fn profile_names_checked(names: &[String]) -> Outcome<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for n in names {
+        if n.is_empty() || n == "." || n == ".." || n.contains('/') || !profile_safe(n) {
+            return Err(err!("The any-depth name {:?} is not one folder name spelled from \
+                [A-Za-z0-9._-].", n; Invalid, Input));
+        }
+        if !out.contains(n) {
+            out.push(n.clone());
+        }
+    }
+    out.sort();
     Ok(out)
 }
 
@@ -3211,10 +2348,15 @@ pub(super) fn start_key(tool: &Tool, key: &str) -> bool {
 /// guard, so every check after it -- the path convention, the bounds, the licence, the link
 /// proofs -- judges the root-relative path the act reaches ([`Workspace::based`]), never the
 /// path as written.  A walk or a command that names no start starts at the base.
+///
+/// With no base, only an absolute path inside a machine root is rebased (UNBLOCK-58), and a walk
+/// that names no start is left to start at the root.
 pub(crate) fn based_args(tool: &Tool, args: &str, ws: &Workspace) -> Option<String> {
-    if ws.base().is_empty() || folder_root_off() {
+    let rebase = !ws.base().is_empty() && !folder_root_off();
+    if !rebase && ws.machine_root().is_none() {
         return None;
     }
+    let place = |p: &str| if rebase { ws.based(p) } else { ws.based_absolute(p) };
     let mut out = args.to_string();
     for key in path_keys(tool) {
         if *key == "paths" {
@@ -3224,19 +2366,19 @@ pub(crate) fn based_args(tool: &Tool, args: &str, ws: &Workspace) -> Option<Stri
             };
             if let Some((from, to)) = array_span(&out, key) {
                 let items: Vec<String> = list.iter()
-                    .map(|p| fmt!("\"{}\"", json_escape(&ws.based(p)))).collect();
+                    .map(|p| fmt!("\"{}\"", json_escape(&place(p.as_str())))).collect();
                 out = fmt!("{}[{}]{}", &out[..from], items.join(","), &out[to..]);
             }
             continue;
         }
         match (extract_json_string(&out, key), crate::profile::string_span(&out, key)) {
             (Some(p), Some((from, to))) => {
-                out = fmt!("{}\"{}\"{}", &out[..from], json_escape(&ws.based(&p)), &out[to..]);
+                out = fmt!("{}\"{}\"{}", &out[..from], json_escape(&place(p.as_str())), &out[to..]);
             },
             // A walk that names no start, and a command that names no `cwd` (F2-FIX H1), start
             // at the base: the briefing says "You start in ~/<folder>", so `run ["rm","-rf",
             // "build"]` acts there, never on the home, and every check after judges the base.
-            _ => if start_key(tool, key) {
+            _ => if rebase && start_key(tool, key) {
                 if let Some(i) = out.find('{') {
                     let rest = out[i + 1..].trim_start();
                     let sep = if rest.starts_with('}') { "" } else { "," };

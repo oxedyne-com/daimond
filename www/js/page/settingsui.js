@@ -7,7 +7,6 @@ import { closeSkillMenu, daimonPrior, ensureApp, fitComposer, openSkillMenu, sen
 	syncConciseChip, toggleConcise } from './send.js';
 import { stopGeneration } from './steer.js';
 import { Workers } from './workers.js';
-import { Files } from './files_view.js';
 import { DaimondAdmin } from './admin.js';
 import { DaimondPanels, isMobile } from './layout.js';
 import { turnModelOf } from './rating.js';
@@ -1325,6 +1324,14 @@ export function applyFoldSettings(app, provider) {
 			app.set_fold_model(foldModelFor(provider));
 		}
 	} catch (e) { /* an older wasm build has no setter */ }
+	// And the engines a PDF or picture is read on (P2.5d), the gateway's as `/api/policy` served
+	// them; none served is '{}', which the engine reads as its own figures.
+	try {
+		if (typeof app.set_ocr === 'function') {
+			var ocr = (window.DaimondPolicy && DaimondPolicy.ocr && DaimondPolicy.ocr()) || {};
+			app.set_ocr(JSON.stringify(ocr));
+		}
+	} catch (e) { /* an older wasm build has no setter */ }
 	try {
 		if (typeof app.set_role_prompt === 'function') {
 			app.set_role_prompt('compactor', (Prompts && Prompts.md.compactor) || '');
@@ -1665,14 +1672,6 @@ export async function renderWire() {
 	// Two doors: a Diamond's thread is `wire_system(id, ...)`, a chat's own conversation is
 	// `wire_chat_system()`. An empty id at the first is refused, never read as "a chat".
 	if (!app || typeof (did ? app.wire_system : app.wire_chat_system) !== 'function') { dropWire(); return; }
-	// The toolkits ticked on this Diamond, from the same `Files.bounds` the turn reads them
-	// from. The marks are the engine's to read, for the band as for the turn (HIST-SAFE U2),
-	// so the two cannot come to different ideas of what is attached.
-	var marks = { toolkits: [] };
-	if (did) {
-		try { marks = await Files.bounds(did); }
-		catch (e) { marks = { toolkits: [] }; }
-	}
 	var seq = ++_wireSeq;
 	var w;
 	try {
@@ -1681,7 +1680,7 @@ export async function renderWire() {
 		w = JSON.parse(await (did
 			// The conversation the next steer starts from, as `doSteer` lays it, so the turn
 			// note drawn is the one that turn sends: only what changed since its last copy.
-			? app.wire_system(did, JSON.stringify(marks.toolkits  || []), daimonPrior(pg.current))
+			? app.wire_system(did, daimonPrior(pg.current))
 			: app.wire_chat_system()));
 	} catch (e) { dropWire(); return; }
 	// Still the thread this render was started for, and still wanted. Re-read rather than

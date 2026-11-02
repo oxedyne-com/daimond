@@ -32,7 +32,6 @@ use crate::{
         store::{Drained, HostStore},
         types::store::{CrystalHalf, FileAct},
     },
-    marks::{Live, Reach},
     rating::Author,
     store::{
         call::{
@@ -43,7 +42,7 @@ use crate::{
         diamond::{restore_ended, standing_split, Landed, Retire, SettlePhase},
         server::LoopLink,
     },
-    tools::{Bound, CrystalPassed, FileRoot, ToolContext},
+    tools::{CrystalPassed, FileRoot, ToolContext},
 };
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -1317,17 +1316,7 @@ impl<L: StoreLink> HostStore for RemoteStore<L> {
         let _ = self.link.call_blocking(&StoreCall::EndTurnCounts { id: s(id) });
     }
 
-    // Marks and the trail
-    async fn live_bounds(&self, live: &Live) -> Outcome<Vec<Bound>> {
-        res!(answer!(self.link.call(&StoreCall::LiveBounds { live: live.clone() }).await,
-            LiveBounds))
-    }
-    async fn reach(&self, target: &Live) -> Outcome<Reach> {
-        match answer!(self.link.call(&StoreCall::Reach { target: target.clone() }).await, Reach) {
-            Ok(r)   => r,
-            Err(e)  => Err(err!(e, "{}", crate::marks::UNREAD; Invalid, Input)),
-        }
-    }
+    // The trail
     fn trail(&self, what: &str, detail: &str) {
         let _ = self.link.call_blocking(&StoreCall::Trail { what: s(what), detail: s(detail) });
     }

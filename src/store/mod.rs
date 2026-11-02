@@ -173,8 +173,6 @@ pub trait StoreEnv {
     fn trail(what: &str, detail: &str);
     /// The heap in use, in MB, where the environment can tell (0 where not).
     fn heap_mb() -> u32;
-    /// Drop this device's press of the link `id` of the Diamond `owner`.
-    fn forget_press(owner: &str, id: &str) -> Outcome<()>;
     /// How a link sidecar read earlier is known to stand unchanged ([`LinksCheck`]).
     fn links_check() -> LinksCheck;
     /// A link sidecar, or a folder holding one, changed: move the mark, where the host keeps one.

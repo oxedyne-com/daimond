@@ -318,9 +318,9 @@ console.log('\n— B: the beat names its chats, and the switch reads them —');
 		ssrc.slice(sa, sb) + '\nreturn beatOnce;')(
 		() => true, async (m, body) => { sent.push(body); return { status: 500 }; },
 		() => false, () => {}, {}, () => {}, () => {}, () => {}, 'wk-test');
-	await beatPresence('arg', 'argonaut', false, true, true, false, true, true, 2, ['c1', 'c2']);
-	await beatPresence('arg', 'argonaut', false, true, true, false, true, true, 0, []);
-	await beatPresence('arg', 'argonaut', false, true, true, false, true, true, 0);
+	await beatPresence('arg', 'argonaut', false, true, true, false, true, 2, ['c1', 'c2']);
+	await beatPresence('arg', 'argonaut', false, true, true, false, true, 0, []);
+	await beatPresence('arg', 'argonaut', false, true, true, false, true, 0);
 	check('B1 the beat sends busy_chats, [] included, and omits it when unsaid',
 		sent.length === 3 && JSON.stringify(sent[0].busy_chats) === '["c1","c2"]'
 			&& JSON.stringify(sent[1].busy_chats) === '[]' && !('busy_chats' in sent[2]),
@@ -345,7 +345,7 @@ console.log('\n— B: the beat names its chats, and the switch reads them —');
 	check('B2c a runner row is busy at runBusy >= runLimit, by busy without them',
 		rs.rk1 && rs.rk1.busy === 0 && rs.rk2 && rs.rk2.busy === 2 && rs.rk3 && rs.rk3.busy === 1,
 		JSON.stringify([rs.rk1, rs.rk2, rs.rk3]));
-	PR.beat('me', 'me', now, false, true, null, true, false, true, true, 1, ['c9']);
+	PR.beat('me', 'me', now, false, true, null, true, false, true, 1, ['c9']);
 	check('B2b this device\'s own beat keeps its busyChats',
 		JSON.stringify(PR.snapshot().me && PR.snapshot().me.busyChats) === '["c9"]', JSON.stringify(PR.snapshot().me));
 }

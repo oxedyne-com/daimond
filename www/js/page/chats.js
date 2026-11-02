@@ -1019,8 +1019,8 @@ export async function keepAsDiamond(chatId) {
 			//
 			// NOT A MARK, AND NAMING NO WORKSPACE (M1, 2026-09-25). The file is in the
 			// Diamond's own directory, which every fence holds on every device, so the
-			// row lists it and grants nothing (`isMark` in markshere.js): there is no
-			// press here to record and nothing for "Use here" to confirm anywhere. And
+			// row lists it and grants nothing: there is no press here to record and
+			// nothing to confirm anywhere. And
 			// `diamonds/` is the store, which follows no folder (`is_store_path`), so a
 			// reference rooted in the folder open at the moment of Keep drew the tile
 			// shut, "in the folder usr", from every other workspace.

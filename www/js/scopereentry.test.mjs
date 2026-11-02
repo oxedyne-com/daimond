@@ -7,7 +7,7 @@
 // ends. `set_diamond_scope` was async and read the marks inside it, so the Agents panel redrawing
 // a tile during `spawn_agent` read `live_prompt_tokens` mid-call and threw "recursive use of an
 // object detected which would lead to unsafe aliasing in rust" (daimond-rig, verify_agents on
-// r568, 1 run in 2). The read is now an async `&self` call and the mutation a synchronous one.
+// r568, 1 run in 2). It is now one synchronous call on the id alone (D-20261031-11).
 
 import { readPage } from '../../dev/pagesrc.mjs';
 import { test } from 'node:test';
@@ -60,66 +60,60 @@ function shimPage() {
 	});
 }
 
-test("a tile's getter answers while a Diamond's scope is being read", { skip: !existsSync(join(PKG, 'oxedyne_daimond_bg.wasm')) && 'no www/pkg wasm here' }, async () => {
+test("set_diamond_scope scopes from the id alone, synchronously, and refuses a second argument", { skip: !existsSync(join(PKG, 'oxedyne_daimond_bg.wasm')) && 'no www/pkg wasm here' }, async () => {
 	shimPage();
 	const m = await import(join(PKG, 'oxedyne_daimond.js'));
 	m.initSync({ module: readPage(join(PKG, 'oxedyne_daimond_bg.wasm')) });
-	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'test-model', 4096, '', true);
+	const mk = () => new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'test-model', 4096, '', true);
+	const app = mk();
 	const id = '0da1000000e1';
-	// A build from before the split has only the one async call; it is the one that threw.
-	const split = typeof app.read_scope_reach === 'function';
-	const pending = split ? app.read_scope_reach(id) : app.set_diamond_scope(id, '[]');
-	await new Promise(r => setTimeout(r, 5));			// inside the late OPFS answer
+	// Nothing to await, so no borrow spans a getter's read (D-20261031-11: the reach is the id's).
+	assert.equal(app.set_diamond_scope(id), undefined);
 	let threw = null;
 	try { void app.live_prompt_tokens; void app.live_completion_tokens; } catch (e) { threw = String(e); }
-	const reach = await pending;
-	assert.equal(threw, null, 'the getter threw mid-read: ' + threw);
-	if (split) app.set_diamond_scope(reach, '[]');
+	assert.equal(threw, null, 'the getter threw: ' + threw);
 	const got = JSON.parse(app.diamond_scope());
 	assert.deepEqual(got.write_allow, ['diamonds/' + id]);
 	assert.equal(got.nowhere, false);
-	// The reach is spent by the apply: the same one cannot scope a second app.
-	if (split) {
-		const other = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'test-model', 4096, '', true);
-		assert.throws(() => other.set_diamond_scope(reach, '[]'));
-	}
+	assert.equal('toolkits' in got, false, 'no toolchain is granted per Diamond');
+	// The old toolkits argument is refused plainly, never ignored.
+	assert.throws(() => mk().set_diamond_scope(id, '[]'));
+	assert.equal(typeof app.read_scope_reach, 'undefined');
 });
 
-// SCOPEREACH (18 Oct 2026): b3c06a03 split the call and updated only the page, so three dev/
-// verifiers still passed a string id and died in `_assertClass` ("expected instance of
-// ScopeReach"). Every caller in dev/*.mjs and www/js must hand `set_diamond_scope` a value it
-// bound from `read_scope_reach`. The 4-argument page-asserted form (`'diamonds/' + id, marks,
-// …`) predates HIST-SAFE U2 and was refused before the split; the files still carrying it are
-// frozen below, so a NEW stale caller anywhere fails here.
+// SCOPE BY ID (D-20261031-11): the engine builds a Diamond's reach from its id, and refuses the
+// old second (toolkits) argument. Every caller in dev/*.mjs and www/js hands `set_diamond_scope`
+// one argument. The 4-argument page-asserted form (`'diamonds/' + id, marks, …`) predates
+// HIST-SAFE U2 and was refused long since; the probes still carrying it are frozen below, so a
+// NEW stale caller anywhere fails here.
 const DEV = join(HERE, '..', '..', 'dev');
 const JSDIR = HERE;
 const PRE_U2 = new Set([
 	'e5bprobe_store.mjs', 'e5probe_mint.mjs', 'q5probe_launder.mjs', 'q5probe_launder_hand.mjs',
 	'r51bprobe_store.mjs', 'r51cprobe_store.mjs', 'r51dprobe_store.mjs', 'r51hdprobe_hand.mjs',
 	'r51probe_store.mjs', 'r51qa_hand.mjs', 'r51qa_more.mjs', 'r51qa_store.mjs', 'r51qb_attack.mjs',
-	'r51qc_hand.mjs', 'r51qc_handguard.mjs', 'r51qc_store.mjs', 'r522hk1_tabs.mjs',
-	'r52hrprobe_hand.mjs', 'r52hrqa2_hand.mjs', 'r52hrqa2_sync.mjs', 'r52hrqa3_hand.mjs',
+	'r51qc_hand.mjs', 'r51qc_handguard.mjs', 'r51qc_store.mjs',
+	'r52hrprobe_hand.mjs', 'r52hrqa2_hand.mjs', 'r52hrqa3_hand.mjs',
 	'r52hrqa3_sync.mjs', 'r52hrqa_hand.mjs', 'verify_handmeterless.mjs', 'verify_scope.mjs',
 ]);
 
 export function staleScopeCalls(name, src) {
 	const bad = [];
-	const reaches = new Set();
-	for (const m of src.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?[^;\n]*\.read_scope_reach\s*\(/g)) reaches.add(m[1]);
 	const lines = src.split('\n');
 	lines.forEach((line, i) => {
 		const t = line.replace(/\/\/.*$/, '');
-		for (const m of t.matchAll(/\.set_diamond_scope\s*\(\s*([^,)]*)/g)) {
-			const first = m[1].trim();
-			if (reaches.has(first)) continue;
-			if (PRE_U2.has(name) && /^'diamonds\//.test(first)) continue;
-			bad.push(name + ':' + (i + 1) + ' set_diamond_scope(' + first + ', …)');
+		for (const m of t.matchAll(/\.set_diamond_scope\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)) {
+			const args = m[1];
+			if (PRE_U2.has(name) && /^\s*'diamonds\//.test(args)) continue;
+			// One argument: no comma outside a nested call.
+			if (args.replace(/\([^()]*\)/g, '').indexOf(',') < 0) continue;
+			bad.push(name + ':' + (i + 1) + ' set_diamond_scope(' + args.trim() + ')');
 		}
 	});
 	return bad;
 }
 
-test('every dev/ and www/js caller hands set_diamond_scope a read_scope_reach result', () => {
+test('every dev/ and www/js caller hands set_diamond_scope the id alone', () => {
 	const bad = [];
 	for (const [dir, ext] of [[DEV, /\.mjs$/], [JSDIR, /\.m?js$/]]) {
 		if (!existsSync(dir)) continue;
@@ -128,12 +122,12 @@ test('every dev/ and www/js caller hands set_diamond_scope a read_scope_reach re
 			bad.push(...staleScopeCalls(name, readPage(join(dir, name), 'utf8')));
 		}
 	}
-	assert.deepEqual(bad, [], 'set_diamond_scope given something other than a ScopeReach: ' + bad.join('; '));
+	assert.deepEqual(bad, [], 'set_diamond_scope given more than the id: ' + bad.join('; '));
 });
 
 test('the scan itself catches the stale forms', () => {
 	assert.equal(staleScopeCalls('x.mjs', "await e.set_diamond_scope(id, '[]');").length, 1);
-	assert.equal(staleScopeCalls('x.mjs', "e.set_diamond_scope(String(id), '[]');").length, 1);
-	assert.equal(staleScopeCalls('x.mjs', "const r = await e.read_scope_reach(String(id));\ne.set_diamond_scope(r, '[]');").length, 0);
+	assert.equal(staleScopeCalls('x.mjs', "e.set_diamond_scope(String(id), NO_KITS);").length, 1);
+	assert.equal(staleScopeCalls('x.mjs', "e.set_diamond_scope(String(id));").length, 0);
 	assert.equal(staleScopeCalls('x.mjs', "e.set_diamond_scope('diamonds/' + id, '[]', '[]', '[]');").length, 1);
 });

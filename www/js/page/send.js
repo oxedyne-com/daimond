@@ -6,11 +6,11 @@ import { ChatStore, applyChatTaint, chatDueAt, chatMsgCount, keepChatTaint, load
 	loadMsgTombs, markChatTainted, msgTombstone, noteCloudIndexStuck, persistChats, storageAlarm,
 	storageAlarmClear, storedChats, threadStarted, touchChat, touchMsg, trashList, trashPurge,
 	trashRestore, trashSweep, trashed } from './chatstore.js';
-import { SYNC_FOLDER_SHARE_MAX, _lastConflicts, adoptNomination, commitFileBaseline, deviceId,
+import { _lastConflicts, adoptNomination, commitFileBaseline, deviceId,
 	deviceName, deviceShownName, fileTombs, loadDevices, loadSupers, loadTombMap, mayCommitChunks,
-	mergeDevices, mergeTombMap, nominateDevice, nominatedDeviceId, noteFoldersLeft,
+	mergeDevices, mergeTombMap, nominateDevice, nominatedDeviceId,
 	offloadBlockedReason, parcelRefs, pruneGhosts, reconcileNominee, reconcileRoster, removeDevice,
-	renameDevice, rosterLiveness, syncForkPoint, syncIndexAt, syncIndexOwed, syncLocNow, syncWalkPlan,
+	renameDevice, rosterLiveness, syncForkPoint, syncIndexAt, syncIndexOwed, syncLocNow,
 	tombstoneIn, touchSelfDevice } from './parcel_collect.js';
 import { applySync, collectSync, peekDiamondLabel, takeDiamondLabel } from './parcel_apply.js';
 import { chatHoldingReport, chatHoldingTurn, ownsChat, peerSyncShim, peerUiStateFor,
@@ -1391,10 +1391,7 @@ export var _sharedClients = new WeakSet();
 
 /// What a Diamond's bounds are compared by, so a thread's app is rebuilt when they move.
 export function threadScopeKey(b) {
-	b = b || {};
-	var sorted = function (a) { return (Array.isArray(a) ? a : []).slice().sort(); };
-	return JSON.stringify([b.own_dir || '', sorted(b.attached), sorted(b.read_only),
-		sorted(b.toolkits), sorted(b.unconfirmed)]);
+	return String((b && b.own_dir) || '');
 }
 
 /// Confine the app a turn of `chat` runs on, as the record's reach says: an ordinary chat to
@@ -1418,7 +1415,7 @@ export async function scopeTurnApp(chat, app, bounds) {
 	var key = threadScopeKey(b);
 	if (_threadScope.has(app)) {
 		if (_threadScope.get(app) === key) return;
-		throw new Error('This Diamond\'s marks changed while its thread was being set up; '
+		throw new Error('This Diamond\'s folder changed while its thread was being set up; '
 			+ 'nothing was run. Send it again.');
 	}
 	await scopeAgentTo(app, chat.diamondId, b);
@@ -2796,45 +2793,6 @@ export function install() { // page-split: install
 		/// every address the parcel itself references, so the commit can never sweep a
 		/// chunk the parcel it just pushed points at. See `parcelRefs`.
 		parcelRefs:          parcelRefs,
-		/// What this device is sharing out of a real folder, and what it is refusing to.
-		///
-		/// Published for the same reason `syncMayCommitChunks` is: the panel's chip and
-		/// the census's own verdict can differ, and only one of them decides what
-		/// travels. `dev/verify_foldershare.mjs` asks this and never the tree.
-		syncFolderShare: async function () {
-			var plan = await syncWalkPlan();
-			return {
-				folder:   !!(plan && plan.folder),
-				// What is going: the flagged roots that fit under the ceiling.
-				roots:    plan ? plan.roots.slice() : [],
-				// What was flagged at all, so a verifier can tell "nobody flagged it"
-				// from "it was flagged and it is too big".
-				flagged:  (plan && plan.flagged) ? plan.flagged.slice() : [],
-				// `[{root, bytes}]` -- flagged, walked, and over the ceiling on its own.
-				left:     (plan && plan.left) ? plan.left.slice() : [],
-				max:      SYNC_FOLDER_SHARE_MAX,
-				bytes:    (plan && plan.walk) ? plan.walk.bytes : 0,
-				files:    (plan && plan.walk) ? plan.walk.entries.length : 0,
-				ignored:  (plan && plan.walk) ? plan.walk.ignored : 0,
-				complete: !!(plan && plan.walk && plan.walk.complete),
-			};
-		},
-		/// Draw the "these flagged folders are too big to travel" banner.
-		///
-		/// Published for `dev/verify_foldershare.mjs`, and for the engine that cannot
-		/// mount a folder at all: the sentence is a function of the list and the string
-		/// table alone, so WebKit can answer whether the folders are named in it even
-		/// though it can hold no workspace to have flagged one from.
-		noteFoldersLeft: function (left) { noteFoldersLeft(left || []); },
-		/// Drop the memoised walk, as if `daimond-file-written` had just fired.
-		///
-		/// Published for `dev/verify_foldershare.mjs`, which writes its fixture files
-		/// straight onto the OPFS folder -- the same thing an external editor does, and
-		/// exactly what `SYNC_WALKPLAN_TTL_MS` says waits for the next poll rather than
-		/// announcing itself. A verifier is not willing to wait out the TTL to prove an
-		/// ignore rule took, so it calls this instead of the event `opfs::write_file`
-		/// would have fired for a write the app made itself.
-		syncClearWalkCache: function () { pg._walkPlanCache = null; },
 		/// The file tombstones this device carries, and the conflict copies its last
 		/// merge wrote. Read-only: a deletion is recorded by the census, never by a
 		/// caller.

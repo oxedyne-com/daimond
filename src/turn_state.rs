@@ -56,7 +56,7 @@ impl Class {
 	pub fn of(name: &str) -> Self {
 		match Tool::from_name(name) {
 			Some(Tool::FileRead) | Some(Tool::Ocr) | Some(Tool::FileShow) | Some(Tool::FileList)
-			| Some(Tool::FileGlob) | Some(Tool::FileSearch) | Some(Tool::Recall)	=> Self::Read,
+			| Some(Tool::FileGlob) | Some(Tool::FileSearch) | Some(Tool::Recall) | Some(Tool::TurnGet)	=> Self::Read,
 			Some(Tool::FileWrite) | Some(Tool::FileEdit) | Some(Tool::FileDelete)
 			| Some(Tool::FileMove) | Some(Tool::DocEdit) | Some(Tool::SheetWrite)
 			| Some(Tool::TypstCompile) | Some(Tool::ImageEdit)						=> Self::Write,
@@ -95,7 +95,17 @@ pub struct TurnState {
 	stage:	Stage,
 	round:	usize,						// the turn's round count at the last `end_round`
 	moved:	usize,						// the last round with progress, 0 for the turn's start
-	reads:	Vec<(String, u64, usize)>,	// (call, result hash, round first returned)
+	calls:	Vec<Seen>,					// every completed call's last answer
+}
+
+/// One call's last answer, for "unchanged since round r" and the loop rule.
+#[derive(Clone, Debug)]
+struct Seen {
+	call:	String,	// tool and arguments, byte for byte
+	hash:	u64,	// its last result
+	first:	usize,	// the round it first returned that result
+	times:	usize,	// how often it has returned that result
+	whole:	String,	// the call id whose reply holds that result in full
 }
 
 impl TurnState {
@@ -106,7 +116,7 @@ impl TurnState {
 			stage:	Stage::Absent,
 			round:	0,
 			moved:	0,
-			reads:	Vec::new(),
+			calls:	Vec::new(),
 		}
 	}
 
@@ -131,6 +141,36 @@ impl TurnState {
 		self.reads_closed() && Class::of(name) == Class::Read
 	}
 
+	/// The refusal this exact call is answered with on any ask, bound or not, where it has
+	/// already returned the same result K times without it changing (P2.5c): repeating it cannot tell the
+	/// model anything new, and a turn that does is looping.  Unlike [`refuses`](Self::refuses)
+	/// this closes one call and not a class, so a research turn that reads forty different
+	/// things is untouched (R4b), and it holds every class, since a loop of successful runs or
+	/// rewrites is the one the failure counter (`agent::Setbacks`) cannot see.
+	pub fn looped(&self, name: &str, args: &str) -> Option<String> {
+		let key = args_key(name, args);
+		self.calls.iter()
+			.find(|s| s.call == key && s.times >= self.k)
+			.map(|s| fmt!("Refused: this exact {} call has returned the same result {} times \
+				since round {}, so it is not run again. Use what it returned then, change the \
+				call, or give your answer.", name, s.times, s.first))
+	}
+
+	/// The call id whose reply holds this call's last result in full, for a repeat to point at.
+	pub fn whole(&self, name: &str, args: &str) -> Option<&str> {
+		let key = args_key(name, args);
+		self.calls.iter().find(|s| s.call == key).map(|s| s.whole.as_str())
+	}
+
+	/// Say that reply `id` now holds this call's result in full, the copy [`whole`](Self::whole)
+	/// named having been retired or folded away, so the repeat was sent whole.
+	pub fn rehold(&mut self, name: &str, args: &str, id: &str) {
+		let key = args_key(name, args);
+		if let Some(s) = self.calls.iter_mut().find(|s| s.call == key) {
+			s.whole = id.to_string();
+		}
+	}
+
 	/// The refusal a closed read is answered with.  Opens "Refused" so every reader books it as
 	/// one ([`crate::tools::call_outcome`]).
 	pub fn refusal(&self) -> String {
@@ -147,9 +187,9 @@ impl TurnState {
 	}
 
 	/// Book one call that has run.  `paths` are its [`Tool::path_claims`]; `seen` the hash of its
-	/// result when it was a read.  Hands back the round an identical read first returned the same
-	/// result in, so the caller can say "unchanged since round r".
-	pub fn record(&mut self, name: &str, args: &str, outcome: CallOutcome,
+	/// result.  Hands back the round an identical call first returned the same result in, so the
+	/// caller can say "unchanged since round r".
+	pub fn record(&mut self, name: &str, args: &str, id: &str, outcome: CallOutcome,
 		paths: &[(String, PathClaim)], seen: Option<u64>, round: usize) -> Option<usize>
 	{
 		if outcome != CallOutcome::Done {
@@ -173,19 +213,23 @@ impl TurnState {
 				self.stage = Stage::Checked(round);
 			}
 		}
-		let hash = match (class, seen) {
-			(Class::Read, Some(h)) => h,
-			_                      => return None,
+		let hash = match seen {
+			Some(h) => h,
+			None    => return None,
 		};
-		match self.reads.iter_mut().find(|(c, _, _)| c.as_str() == args_key(name, args)) {
-			Some(slot) if slot.1 == hash => Some(slot.2),
-			Some(slot) => {
-				slot.1 = hash;
-				slot.2 = round;
+		let key = args_key(name, args);
+		match self.calls.iter_mut().find(|s| s.call == key) {
+			Some(s) if s.hash == hash => {
+				s.times += 1;
+				Some(s.first)
+			},
+			Some(s) => {
+				*s = Seen { call: key, hash, first: round, times: 1, whole: id.to_string() };
 				None
 			},
 			None => {
-				self.reads.push((args_key(name, args).to_string(), hash, round));
+				self.calls.push(Seen { call: key, hash, first: round, times: 1,
+					whole: id.to_string() });
 				None
 			},
 		}

@@ -109,7 +109,7 @@ impl NativeFs {
         if crate::store::diamond::off("store_owned") {
             return None;
         }
-        let id = match store_owned(root, path) {
+        let id = match store_owned(path) {
             Some(id)    => id,
             None        => return None,
         };
@@ -202,7 +202,7 @@ impl NativeFs {
                 };
                 if kind.is_dir() {
                     todo.push((e.path(), name));
-                } else if store_owned(FileRoot::Opfs, &name).is_some() {
+                } else if store_owned(&name).is_some() {
                     if named.len() < STRAYS_NAMED {
                         named.push(name);
                     } else {
@@ -223,19 +223,10 @@ impl NativeFs {
         }
     }
 
-    /// The workspace for `root`.  The machine root is the tab's name for a folder reached
-    /// through the hand; on the runner the workspace IS the machine, and nothing else is.
-    fn rooted(&self, root: FileRoot, method: &str) -> Outcome<&Workspace> {
-        match root {
-            FileRoot::Workspace | FileRoot::Opfs => self.ws(method),
-            FileRoot::Machine                    => unavailable("fs", method),
-        }
-    }
-
     /// Where `path` really lands for an act that follows links, or the refusal of a path a link
     /// carries out of the workspace.
     fn followed(&self, root: FileRoot, path: &str, method: &str) -> Outcome<PathBuf> {
-        let ws = res!(self.rooted(root, method));
+        let ws = res!(self.ws(method));
         match res!(ws.real_followed(path)) {
             Some(p) => Ok(p),
             None    => Err(err!("fs.{}: '{}' leads out of the workspace.", method, path;
@@ -568,7 +559,7 @@ impl HostFs for NativeFs {
         if let Some(r) = self.owned_act(root, lic.path(), FileAct::Delete, "delete_licensed").await {
             return r;
         }
-        let ws = res!(self.rooted(root, "delete_licensed"));
+        let ws = res!(self.ws("delete_licensed"));
         // Held, not just checked: the delete acts in the folder proved inside the workspace.
         let pin = match res!(ws.pin(lic.path(), false)) {
             Some(p) => p,
@@ -595,7 +586,7 @@ impl HostFs for NativeFs {
         {
             return r;
         }
-        let ws = res!(self.rooted(root, "move_licensed"));
+        let ws = res!(self.ws("move_licensed"));
         let a = match res!(ws.pin(from.path(), false)) {
             Some(p) => p,
             None    => return Err(err!("fs.move_licensed: '{}' leads out of the workspace.",
@@ -614,16 +605,9 @@ impl HostFs for NativeFs {
 
     // One folder, open: the tab's decision with its own folder open, as TestHost files it.
     fn storage_of(&self, root: FileRoot, path: &str) -> Storage {
-        match &self.ws {
-            Some(_) => storage_for(root, path, Some(0), ""),
-            None    => Storage::Nowhere,
-        }
+        storage_for(root, path, self.ws.as_ref().map(|_| 0), "")
     }
 
-    fn thrown(&self) -> String { String::new() }
-    fn take_thrown(&self) -> String { String::new() }
-    fn arm_folder_watch(&self) {}
-    fn notify_folder_lost(&self) {}
 
     // The cloud is the tab's storage, and the runner has none.
     fn children_of(&self, _dir: &str) -> Vec<(String, bool, u64)> { Vec::new() }

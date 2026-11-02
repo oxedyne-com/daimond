@@ -506,26 +506,19 @@ pub async fn store_list(path: String) -> Result<String, JsValue> {
     Ok(out)
 }
 
-/// One directory for the Workspace search (E5), with each file's time: the store's when `machine`
-/// is false, the open machine folder's when it is true.
+/// One directory of the store for the Workspace search (E5), with each file's time.
 ///
 /// One entry per line, `name\tdir|file\tbytes\tms`, where `ms` is the last-modified time in epoch
 /// milliseconds and empty when the backend keeps none.  [`store_list`]'s three columns plus one,
 /// as a door of its own so that no caller of that one meets a column it did not expect.
-///
-/// In the machine folder a path that names the store is left out ([`search_shows`]).
 #[wasm_bindgen]
-pub async fn list_stamped(path: String, machine: bool) -> Result<String, JsValue> {
-    let root = if machine { FileRoot::Machine } else { FileRoot::Opfs };
-    let entries = match opfs::list_dir_stamped(root, &path).await {
+pub async fn list_stamped(path: String) -> Result<String, JsValue> {
+    let entries = match opfs::list_dir_stamped(FileRoot::Opfs, &path).await {
         Ok(e)  => e,
         Err(e) => return Err(to_js_err(e)),
     };
     let mut out = String::new();
     for (name, is_dir, size, when) in entries {
-        if !search_shows(&path, &name, machine) {
-            continue;
-        }
         let ms = match when {
             Some(t) => fmt!("{}", t as u64),
             None    => String::new(),
@@ -536,35 +529,19 @@ pub async fn list_stamped(path: String, machine: bool) -> Result<String, JsValue
 }
 
 /// [`list_stamped`]'s entries without sizes or times, `name\tdir|file` per line: the Workspace
-/// search walks with this one and asks [`list_stamped`] only of a folder holding a match, so a
-/// real folder's files are not each opened for a time nobody will see (WS-SEARCH, 2026-10-12).
+/// search walks with this one and asks [`list_stamped`] only of a folder holding a match, so its
+/// files are not each opened for a time nobody will see (WS-SEARCH, 2026-10-12).
 #[wasm_bindgen]
-pub async fn list_names(path: String, machine: bool) -> Result<String, JsValue> {
-    let root = if machine { FileRoot::Machine } else { FileRoot::Opfs };
-    let entries = match opfs::list_dir_names(root, &path).await {
+pub async fn list_names(path: String) -> Result<String, JsValue> {
+    let entries = match opfs::list_dir_names(FileRoot::Opfs, &path).await {
         Ok(e)  => e,
         Err(e) => return Err(to_js_err(e)),
     };
     let mut out = String::new();
     for (name, is_dir) in entries {
-        if search_shows(&path, &name, machine) {
-            out.push_str(&fmt!("{}\t{}\n", name, if is_dir { "dir" } else { "file" }));
-        }
+        out.push_str(&fmt!("{}\t{}\n", name, if is_dir { "dir" } else { "file" }));
     }
     Ok(out)
-}
-
-/// Does the Workspace search list `name` in the folder `dir`?  In the machine folder a path that
-/// names the store (a `diamonds/` the project happens to hold) is left out: every Workspace reader
-/// resolves that name to the store, so a row for it would open a different file from the one it
-/// was found as.
-fn search_shows(dir: &str, name: &str, machine: bool) -> bool {
-    if !machine {
-        return true;
-    }
-    let dir = dir.trim_matches('/');
-    let full = if dir.is_empty() || dir == "." { name.to_string() } else { fmt!("{}/{}", dir, name) };
-    !crate::tools::is_store_path(&full)
 }
 
 /// Read a file from Daimond's own store (OPFS), never a real folder.

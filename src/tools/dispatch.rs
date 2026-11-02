@@ -151,7 +151,7 @@ impl Tool {
                         // not reach. `dev/BLOCKERS.md` B18.
                         let (from, _) = read_ask(args_json);
                         let got = res!(machine_op("file_read", "read", &abs, &cwd, &spec,
-                            &ctx.no_write, &read_fields(args_json), ctx.host()).await);
+                            &read_fields(args_json), ctx.host()).await);
                         let text = match got {
                             Ok(t)    => t,
                             Err(why) => {
@@ -445,7 +445,7 @@ impl Tool {
                 // through the hand where the file is on the machine.
                 let (before, refused) = match &reach {
                     Reach::Machine { abs, cwd, root: _, spec } =>
-                        machine_before(abs, cwd, spec, &ctx.no_write, ctx.host()).await,
+                        machine_before(abs, cwd, spec, ctx.host()).await,
                     _ => match Self::before_bytes(ctx, &path).await {
                         Ok(b)    => (b, None),
                         Err(why) => (None, Some(why)),
@@ -517,7 +517,7 @@ impl Tool {
                         };
                         let got = match machine_change("file_revert",
                             machine_write(false, &lic, &text, &crate::diamond_versions::Seen::Unread,
-                                Some(&bound)), &root, &cwd, &spec, &ctx.no_write, ctx.host()).await
+                                Some(&bound)), &root, &cwd, &spec, ctx.host()).await
                         {
                             Ok(g)  => g,
                             Err(e) => { Self::overwrite_failed(&over, ctx.host()).await; return Err(e); },
@@ -594,7 +594,7 @@ impl Tool {
                     Reach::Refuse(why) => return Ok(MessageContent::text(refusal_line(&why))),
                     Reach::Machine { abs, cwd, root: _, spec } => {
                         let got = res!(machine_op("file_list", "list", &abs, &cwd, &spec,
-                            &ctx.no_write, "", ctx.host()).await);
+                            "", ctx.host()).await);
                         // THE BOUND, PER ENTRY, ON THIS SIDE OF A MARK TOO (WALK check D3): the
                         // door is `may_walk`, so the hand's answer is filtered as storage's is.
                         let got = got.map(|t| machine_in_bounds(ctx, &raw, &t));
@@ -794,7 +794,7 @@ impl Tool {
                             SEARCH_MACHINE_MAX_FILE,
                         );
                         let got = res!(machine_op("file_search", "search", &abs[0], &cwd, &spec,
-                            &ctx.no_write, &fields, ctx.host()).await);
+                            &fields, ctx.host()).await);
                         let answer = match got {
                             Ok(t)    => t,
                             Err(why) => return Err(err!("{}", why; IO, File, Read)),
@@ -1088,7 +1088,7 @@ impl Tool {
                             WALK_ENTRIES_MAX,
                         );
                         let got = res!(machine_op("file_glob", "glob", &abs[0], &cwd, &spec,
-                            &ctx.no_write, &fields, ctx.host()).await);
+                            &fields, ctx.host()).await);
                         let answer = match got {
                             Ok(t)    => t,
                             Err(why) => return Err(err!("{}", why; IO, File, Read)),
@@ -1253,7 +1253,7 @@ impl Tool {
                     Reach::Refuse(why) => return Ok(MessageContent::text(refusal_line(&why))),
                     Reach::Machine { abs, cwd, root, spec } => {
                         let got = res!(machine_change("dir_create", MachineChange::Mkdir(&lic),
-                            &root, &cwd, &spec, &ctx.no_write, ctx.host()).await);
+                            &root, &cwd, &spec, ctx.host()).await);
                         return match got {
                             Ok(_)    => Ok(MessageContent::text(fmt!("Created {}.", abs))),
                             Err(why) => Err(err!("{}", why; IO, File, Write)),
@@ -1264,7 +1264,7 @@ impl Tool {
                 res!(ctx.host().fs().create_dir_licensed(ctx.root, &lic).await);
                 // A store's folder stands by the files in it (HL5c, lead ruling 2): one made with
                 // nothing in it yet is noted, not listed, and the reply says so plainly.
-                if store_owned(ctx.root, &path).is_some()
+                if store_owned(&path).is_some()
                     && !res!(ctx.host().fs().exists(ctx.root, &path).await)
                 {
                     return Ok(MessageContent::text(fmt!("Folder {} noted; it appears once a file \
@@ -1368,7 +1368,7 @@ impl Tool {
                             };
                             let keep = match ctx.keeper() {
                                 Some(d) => Some((d,
-                                    machine_before(&abs, &cwd, &spec, &ctx.no_write, ctx.host()).await)),
+                                    machine_before(&abs, &cwd, &spec, ctx.host()).await)),
                                 None    => None,
                             };
                             if let Some((_, (None, Some(why)))) = &keep {
@@ -1403,7 +1403,7 @@ impl Tool {
                             let got = match machine_change("web_fetch",
                                 machine_write(false, &lic, &text,
                                     &crate::diamond_versions::Seen::Unread, bound.as_ref()),
-                                &root, &cwd, &spec, &ctx.no_write, ctx.host()).await
+                                &root, &cwd, &spec, ctx.host()).await
                             {
                                 Ok(g)  => g,
                                 Err(e) => { Self::overwrite_failed(&over, ctx.host()).await; return Err(e); },
@@ -1678,6 +1678,8 @@ impl Tool {
             }
             // Half of `recall`.  The FOLD half needs the session, which no tool has, so it is
             // answered by `Agent::run_tool_loop` and prepended to this.
+            // Answered whole by `Agent::with_turn` from the session, which no tool has.
+            Tool::TurnGet => Ok(String::new()),
             Tool::Recall => {
                 let id = match ctx.daimon() {
                     Some(i) => i,
@@ -1943,7 +1945,7 @@ impl Tool {
             Reach::Refuse(why) => return Err(why),
             Reach::Machine { abs, cwd, root, spec } => {
                 let got = match machine_op("file_read", "read", &abs, &cwd, &spec,
-                    &ctx.no_write, &fmt!(r#","offset":1,"limit":{}"#, READ_LINES_MAX), ctx.host()).await
+                    &fmt!(r#","offset":1,"limit":{}"#, READ_LINES_MAX), ctx.host()).await
                 {
                     Ok(g)  => g,
                     Err(e) => return Err(fmt!("not read: {}", e.plain())),
@@ -2101,7 +2103,6 @@ impl Tool {
                 let mut bytes = 0usize;
                 loop {
                     let got = res!(machine_op("file_read", "read", &abs, &cwd, &spec,
-                        &ctx.no_write,
                         &fmt!(r#","offset":{},"limit":{}"#, from, READ_LINES_MAX), ctx.host()).await);
                     let text = match got {
                         Ok(t)    => t,
@@ -2484,27 +2485,28 @@ impl Tool {
     pub(super) async fn pdf_read<H: Host>(ctx: &ToolContext<H>, path: &str, stranger: bool, args_json: &str, bytes: &[u8])
         -> Outcome<MessageContent>
     {
+        let conf = ctx.ocr();
         let hash = content_hash(bytes);
         if let Some(hit) = OCR_CACHE.with(|c| c.borrow().get(&hash).cloned()) {
             return Ok(MessageContent::text(Self::mark_if_from(
-                ctx, path, stranger, Self::ocr_view(args_json, path, &hit, true))));
+                ctx, path, stranger, Self::ocr_view(&conf, args_json, path, &hit, true))));
         }
         let data_url = fmt!("data:application/pdf;base64,{}",
             oxedyne_fe2o3_text::base64::encode(bytes));
         // Free text layer first: a born-digital PDF is done here, at no cost.
         let free = res!(ctx.host().net().openrouter_chat(
-            &ocr_pdf_body(&data_url, PDF_ENGINE_FREE)).await);
+            &ocr_pdf_body(&conf, &data_url, &conf.pdf_free)).await);
         let mut text   = ocr_pdf_text(&free);
         let mut engine = "the free text layer".to_string();
         let mut paid   = false;
         let mut pages: Option<u32> = None;
         // Empty means a scanned page with no text layer.  Escalate to paid OCR with no
         // gate and no prompt -- the cost is stated in the note, after the fact.
-        if ocr_text_empty(&text) {
+        if ocr_text_empty(&conf, &text) {
             let ocr = res!(ctx.host().net().openrouter_chat(
-                &ocr_pdf_body(&data_url, PDF_ENGINE_OCR)).await);
+                &ocr_pdf_body(&conf, &data_url, &conf.pdf_ocr)).await);
             text   = ocr_pdf_text(&ocr);
-            engine = PDF_ENGINE_OCR.to_string();
+            engine = conf.pdf_ocr.clone();
             paid   = true;
             pages  = pdf_page_count(bytes);
         }
@@ -2517,7 +2519,7 @@ impl Tool {
         let hit = OcrHit { text, what: "a PDF", engine, pages, paid };
         OCR_CACHE.with(|c| { c.borrow_mut().insert(hash, hit.clone()); });
         Ok(MessageContent::text(Self::mark_if_from(
-            ctx, path, stranger, Self::ocr_view(args_json, path, &hit, false))))
+            ctx, path, stranger, Self::ocr_view(&conf, args_json, path, &hit, false))))
     }
 
     /// The generic OCR entry point: read the text off a PDF or a common image.
@@ -2529,6 +2531,7 @@ impl Tool {
     /// not take (TIFF, HEIC, BMP, ...) is NAMED and turned away rather than failing quietly.
     /// Either way only the words reach the turn; the picture stops at the throwaway call.
     pub(super) async fn ocr<H: Host>(args_json: &str, ctx: &ToolContext<H>) -> Outcome<MessageContent> {
+        let conf = ctx.ocr();
         let raw  = res!(Self::arg(args_json, "path"));
         let path = res!(Self::scoped(ctx, &raw));
         let bytes = res!(ctx.host().fs().read_file(ctx.root, &path).await
@@ -2543,7 +2546,7 @@ impl Tool {
         let hash = content_hash(&bytes);
         if let Some(hit) = OCR_CACHE.with(|c| c.borrow().get(&hash).cloned()) {
             return Ok(MessageContent::text(Self::mark_if_from(
-                ctx, &raw, stranger, Self::ocr_view(args_json, &raw, &hit, true))));
+                ctx, &raw, stranger, Self::ocr_view(&conf, args_json, &raw, &hit, true))));
         }
         // A PDF given to `ocr` is a request to OCR it: `mistral-ocr` straight away, since
         // the caller has said its pages are images. `file_read` keeps the free-first path.
@@ -2551,7 +2554,7 @@ impl Tool {
             let data_url = fmt!("data:application/pdf;base64,{}",
                 oxedyne_fe2o3_text::base64::encode(&bytes));
             let body = res!(ctx.host().net().openrouter_chat(
-                &ocr_pdf_body(&data_url, PDF_ENGINE_OCR)).await);
+                &ocr_pdf_body(&conf, &data_url, &conf.pdf_ocr)).await);
             let text = ocr_pdf_text(&body);
             if text.trim().is_empty() {
                 return Err(err!(
@@ -2559,12 +2562,12 @@ impl Tool {
                     Invalid, Data));
             }
             let hit = OcrHit {
-                text, what: "a PDF", engine: PDF_ENGINE_OCR.to_string(),
+                text, what: "a PDF", engine: conf.pdf_ocr.clone(),
                 pages: pdf_page_count(&bytes), paid: true,
             };
             OCR_CACHE.with(|c| { c.borrow_mut().insert(hash, hit.clone()); });
             return Ok(MessageContent::text(Self::mark_if_from(
-                ctx, &raw, stranger, Self::ocr_view(args_json, &raw, &hit, false))));
+                ctx, &raw, stranger, Self::ocr_view(&conf, args_json, &raw, &hit, false))));
         }
         // A picture: each page as one the OCR services accept, converted here where the file
         // is in any other format this can read, and the pages' text joined in order.
@@ -2574,7 +2577,7 @@ impl Tool {
         let mut pages: Option<u32> = Some(0);
         for data_url in &urls {
             let (route, body) = res!(ctx.host().net().image_ocr(
-                &ocr_image_mistral_body(data_url), &ocr_image_vision_body(data_url)).await);
+                &ocr_image_mistral_body(&conf, data_url), &ocr_image_vision_body(&conf, data_url)).await);
             let (t, e, n) = match route.as_str() {
                 "mistral" => (ocr_mistral_text(&body), "Mistral OCR",
                               ocr_mistral_pages(&body).or(Some(1))),
@@ -2596,14 +2599,16 @@ impl Tool {
         let hit = OcrHit { text, what: "an image", engine, pages, paid };
         OCR_CACHE.with(|c| { c.borrow_mut().insert(hash, hit.clone()); });
         Ok(MessageContent::text(Self::mark_if_from(
-            ctx, &raw, stranger, Self::ocr_view(args_json, &raw, &hit, false))))
+            ctx, &raw, stranger, Self::ocr_view(&conf, args_json, &raw, &hit, false))))
     }
 
     /// The windowed transcript plus the engine/cost note the two OCR paths share.
-    pub(super) fn ocr_view(args_json: &str, path: &str, hit: &OcrHit, cached: bool) -> String {
+    pub(super) fn ocr_view(conf: &OcrConf, args_json: &str, path: &str, hit: &OcrHit, cached: bool)
+        -> String
+    {
         let tag = "file_read";
         let mut out = Self::read_view(args_json, path, &hit.text);
-        out.push_str(&ocr_note(tag, hit.what, &hit.engine, hit.pages, hit.paid));
+        out.push_str(&ocr_note(conf, tag, hit.what, &hit.engine, hit.pages, hit.paid));
         if cached {
             out.push_str(" Cached from an earlier read, so this one was free.");
         }

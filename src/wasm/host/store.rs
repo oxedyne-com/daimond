@@ -12,16 +12,15 @@ use crate::{
         },
         types::store::CrystalHalf,
     },
-    marks::{Live, Reach},
     rating::Author,
-    tools::{Bound, CrystalPassed, FileRoot, ToolContext},
-    wasm::{diamond, entry, marks, store_opfs::OpfsBackend},
+    tools::{CrystalPassed, FileRoot, ToolContext},
+    wasm::{diamond, entry, store_opfs::OpfsBackend},
 };
 
 use oxedyne_fe2o3_core::prelude::*;
 
 /// WasmHost's store port: each method is one call to its namesake in `wasm::diamond`
-/// (`trail` to `wasm::entry`, `live_bounds` to `wasm::marks`).
+/// (`trail` to `wasm::entry`).
 #[derive(Clone, Debug, Default)]
 pub struct WasmStore;
 
@@ -336,12 +335,6 @@ impl HostStore for WasmStore {
         diamond::end_turn_counts(id)
     }
 
-    async fn live_bounds(&self, live: &Live) -> Outcome<Vec<Bound>> {
-        marks::live_bounds(live).await
-    }
-    async fn reach(&self, target: &Live) -> Outcome<Reach> {
-        marks::reach(target).await
-    }
     fn trail(&self, what: &str, detail: &str) {
         entry::trail(what, detail)
     }

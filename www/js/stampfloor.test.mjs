@@ -158,7 +158,7 @@ async function diamondCase(skew) {
 		};
 		const f = loadPage({ window: w, want: ['applyDiamonds'], stub: {
 			ChatStore: { putTombs: () => Promise.resolve(true) }, diamondApp: () => app, trail: () => {}, heapNote: () => '',
-			DaimondMarksHere: { dropAll: () => false, settle: () => false }, notePeerRef: () => {}, bumpDiamonds: () => {},
+			notePeerRef: () => {}, bumpDiamonds: () => {},
 			onDiamondsChangedElsewhere: async () => {}, signalLinksChanged: () => {}, setDiamondModel: () => {}, adoptDiamondModel: () => false, renderEffortStep: () => {},
 			storageAlarm: () => {}, tOr: (k, x) => x, DaimondCloud: undefined, DaimondChunks: undefined,
 		} });

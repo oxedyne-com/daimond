@@ -25,9 +25,8 @@ use crate::{
         store::JOURNAL_ROUND_MAX,
         types::store::{CrystalHalf, Drained, FileAct, SettlePhase},
     },
-    marks::{Live, Reach},
     rating::Author,
-    tools::{Bound, CrystalPassed, FileRoot},
+    tools::{CrystalPassed, FileRoot},
 };
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -548,8 +547,6 @@ store_calls! {
     sync Meta/Meta EndTurnCounts "end_turn_counts" { id: String } -> ();
 
     // Marks and the trail
-    wait Meta/Read LiveBounds "live_bounds" { live: Live } -> Outcome<Vec<Bound>>;
-    wait Meta/Read Reach "reach" { target: Live } -> Outcome<Reach>;
     sync Meta/Meta Trail "trail" { what: String, detail: String } -> ();
 
     // The body channel (§16.3a 3, §9.11 O2): the only bytes on the wire.

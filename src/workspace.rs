@@ -83,9 +83,13 @@ impl Workspace {
     /// path inside the root is its root-relative tail, so the rest of the home is still reached.
     /// Anything else -- an absolute path outside, a `..` -- is joined or left as written and
     /// meets the path convention's refusal unchanged.  With no base it is `path` untouched.
+    ///
+    /// An absolute path inside a [machine root](Self::machine_root) is its root-relative tail
+    /// with no base as well (UNBLOCK-58): the briefing names the root, the model writes paths
+    /// under it, and Claude Code reads them the same way.
     pub fn based(&self, path: &str) -> String {
         if self.base.is_empty() {
-            return path.to_string();
+            return self.based_absolute(path);
         }
         if path == "~" {
             return String::from(".");
@@ -94,16 +98,41 @@ impl Workspace {
             return if rest.is_empty() { String::from(".") } else { rest.to_string() };
         }
         if path.starts_with('/') {
-            return match Path::new(path).strip_prefix(&self.root) {
-                Ok(r) if r.as_os_str().is_empty() => String::from("."),
-                Ok(r)                             => r.to_string_lossy().to_string(),
-                Err(_)                            => path.to_string(),
-            };
+            return self.inside(path);
         }
         if path.is_empty() || path == "." {
             return self.base.clone();
         }
         fmt!("{}/{}", self.base, path)
+    }
+
+    /// The absolute `path` as its root-relative tail where it lies inside the root (`.` for the
+    /// root itself), else as written, for the path convention to refuse.
+    fn inside(&self, path: &str) -> String {
+        match Path::new(path).strip_prefix(&self.root) {
+            Ok(r) if r.as_os_str().is_empty() => String::from("."),
+            Ok(r)                             => r.to_string_lossy().to_string(),
+            Err(_)                            => path.to_string(),
+        }
+    }
+
+    /// `path` with no base applied: an absolute path inside a [machine root](Self::machine_root)
+    /// as its root-relative tail, anything else as written.
+    pub fn based_absolute(&self, path: &str) -> String {
+        if path.starts_with('/') && self.machine_root().is_some() {
+            return self.inside(path);
+        }
+        path.to_string()
+    }
+
+    /// The root as a folder on this machine, or `None` for the browser's store, whose root `/`
+    /// names no folder on any machine (UNBLOCK-58): an absolute path is then never rebased, and
+    /// the briefing names no root.
+    pub fn machine_root(&self) -> Option<&str> {
+        match self.root.to_str() {
+            Some("/") | Some("") | None => None,
+            Some(r)                     => Some(r),
+        }
     }
 
     /// A root-relative path as the model should write it back (UNBLOCK-32 F2b), the inverse of

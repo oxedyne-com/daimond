@@ -78,6 +78,7 @@ pub use web::*;
 pub use shown::*;
 pub use context::*;
 pub(crate) use pending::*;	// nothing in it is wider than the crate
+pub use pending::OcrConf;	// but this, which `TurnLimits` carries to the runner (P2.5d)
 pub use tool::*;
 pub use verify::*;
 pub use registry::*;
@@ -93,6 +94,10 @@ mod tests;
 #[cfg(test)]
 #[path = "../../tests/unit/tools/no_wasm_memory_views.rs"]
 mod no_wasm_memory_views;
+
+#[cfg(test)]
+#[path = "../../tests/unit/tools/no_marks_rule.rs"]
+mod no_marks_rule;
 
 #[cfg(test)]
 #[path = "../../tests/unit/tools/read_prefix_tests.rs"]

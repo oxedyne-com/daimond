@@ -15,19 +15,12 @@
 //! directory, a `..` climb, or a target whose scope names no folder at all.
 
 use crate::{
-    engine::host::{
-        Host,
-        store::HostStore,
-    },
-    marks::{
-        DiamondId,
-        Live,
-        Reach,
-        UNREAD,
-    },
+    engine::host::Host,
+    diamond_meta::DiamondId,
     tools::{
         self,
         Bound,
+        Scope,
         Tool,
         ToolContext,
     },
@@ -38,94 +31,66 @@ use oxedyne_fe2o3_core::prelude::*;
 
 const MAX_PATHS: usize = 32;
 
-/// Why a spawn is refused when the record of the marks cannot be read: [`UNREAD`]'s cause in a
-/// clause of its own, since a refused spawn neither writes nor deletes, and the sentence it
-/// completes ("the worker was NOT started, because ...") is already under way.
-pub const SPAWN_UNREAD: &str = "this device's record of the folders marked here could not be read \
-    (the account is locked, or this browser's storage could not be read, or the record is missing \
-    or damaged), so the worker could not be given the fence it would run in. Unlock the account \
-    and try again.";
-
-/// THE ONE CONSTRUCTION OF A SCOPED AGENT'S FENCE: the bounds and the marks waiting for a press.
+/// THE ONE CONSTRUCTION OF A SCOPED AGENT'S FENCE.
 ///
-/// `set_diamond_scope`, `set_chat_scope`, the live re-read at every call and the dispatch check
-/// all build it here, so the fence a brief is judged against is the one its worker then runs in.
-/// `toolkits` is `None` for a chat, which is granted no toolchain at all: [`tools::toolkit_bounds`]
-/// of an empty list is not empty (it grants the remote toolkit), so a chat must not reach it.
+/// `set_diamond_scope`, `set_chat_scope` and the dispatch check all build it here, so the fence a
+/// brief is judged against is the one its worker then runs in.
 ///
 /// # Arguments
 /// * `own` - The Diamond's own directory, or the chat's scratch.
-pub fn worker_fence(
-    own:      &str,
-    reach:    &Reach,
-    toolkits: Option<&[String]>,
-)
-    -> (Vec<Bound>, Vec<String>)
-{
-    let mut bounds = tools::diamond_bounds(own, &reach.places(), &reach.read_only);
-    // Appended, never merged in earlier: a toolkit widens what a COMMAND may touch and nothing else.
-    if let Some(kits) = toolkits {
-        bounds.extend(tools::toolkit_bounds(kits));
-    }
-    (bounds, reach.unconfirmed.clone())
+pub fn worker_fence(own: &str) -> Vec<Bound> {
+    tools::diamond_bounds(own)
 }
 
-/// The fence a worker for `target` runs in, given what `target` reaches now.
-pub fn fence_of(target: &Live, reach: &Reach) -> (Vec<Bound>, Vec<String>) {
+/// The fence a worker for `target` runs in.
+pub fn fence_of(target: &Scope) -> Vec<Bound> {
     match target {
-        Live::Diamond(id, kits) => worker_fence(&id.dir(), reach, Some(kits)),
-        Live::Chat(chat, _)     => worker_fence(&tools::chat_scratch(chat), reach, None),
+        Scope::Diamond(id)  => worker_fence(&id.dir()),
+        Scope::Chat(chat)   => worker_fence(&tools::chat_scratch(chat)),
     }
 }
 
 /// Whom a worker dispatched from this turn works for, as the page will scope it: the Diamond or
-/// chat whose marks hold the conductor, else the Diamond the conductor acts for.  `None` where the
+/// chat whose scope holds the conductor, else the Diamond the conductor acts for.  `None` where the
 /// engine cannot know, and then no early check is made; the worker's own fence still holds.
-pub fn target_of<H: Host>(ctx: &ToolContext<H>) -> Option<Live> {
-    match &ctx.live {
-        Some(live) => Some(live.clone()),
-        None       => match DiamondId::parse(&ctx.daimon_of) {
-            Ok(id) => Some(Live::Diamond(id, Vec::new())),
+pub fn target_of<H: Host>(ctx: &ToolContext<H>) -> Option<Scope> {
+    match &ctx.scope {
+        Some(scope) => Some(scope.clone()),
+        None        => match DiamondId::parse(&ctx.daimon_of) {
+            Ok(id) => Some(Scope::Diamond(id)),
             Err(_) => None,
         },
     }
 }
 
 /// The target as the spawn payload carries it: `diamond:<id>` or `chat:<id>`.
-pub fn target_word(target: &Live) -> String {
+pub fn target_word(target: &Scope) -> String {
     match target {
-        Live::Diamond(id, _) => fmt!("diamond:{}", id),
-        Live::Chat(chat, _)  => fmt!("chat:{}", chat),
+        Scope::Diamond(id) => fmt!("diamond:{}", id),
+        Scope::Chat(chat)     => fmt!("chat:{}", chat),
     }
 }
 
 /// The refusal a spawn of `task` from this turn meets, or `None` where it may start.
 ///
-/// The reach is read fresh from the store, never taken from the conductor's bounds: the worker is
-/// scoped afresh when it starts, and a conductor's own list may be composed with a skill's.  A
-/// record that cannot be read refuses, as the scope export would.
-pub async fn at_dispatch<H: Host + Clone>(task: &str, ctx: &ToolContext<H>) -> Option<String> {
-    let target = match target_of(ctx) {
-        Some(t) => t,
-        None    => return None,
-    };
-    let reach = match ctx.host().store().reach(&target).await {
-        Ok(r)  => r,
-        Err(_) => return Some(not_started(SPAWN_UNREAD)),
-    };
-    judge(task, ctx, &target, &reach)
+/// Judged against the worker's own fence, never the conductor's bounds: the worker is scoped
+/// afresh when it starts, and a conductor's own list may be composed with a skill's.
+pub fn at_dispatch<H: Host + Clone>(task: &str, ctx: &ToolContext<H>) -> Option<String> {
+    match target_of(ctx) {
+        Some(target) => judge(task, ctx, &target),
+        None         => None,
+    }
 }
 
-/// [`at_dispatch`] once the reach is read.
+/// [`at_dispatch`] for a known target.
 pub fn judge<H: Host + Clone>(
     task:   &str,
     ctx:    &ToolContext<H>,
-    target: &Live,
-    reach:  &Reach,
+    target: &Scope,
 )
     -> Option<String>
 {
-    let (bounds, unconfirmed) = fence_of(target, reach);
+    let bounds = fence_of(target);
     if bounds.iter().any(|b| matches!(b, Bound::Nowhere)) {
         return Some(not_started("the place it would work for names no folder at all, so it could \
             neither read nor write anything"));
@@ -133,8 +98,7 @@ pub fn judge<H: Host + Clone>(
     // The worker's context: the conductor's, with the worker's fence in place of its own.
     let mut fence = ctx.clone();
     fence.no_write = bounds;
-    fence.unconfirmed = unconfirmed;
-    fence.live = Some(target.clone());
+    fence.scope = Some(target.clone());
     fence.by_model = true;
     let bad = unreachable(&brief_paths(task), &fence);
     if bad.is_empty() {

@@ -6,15 +6,15 @@
    the decision to be taken at all, driven against the real
    www/js/peer.js and www/js/cloud.js in a simulated tab:
 
-     A. `hand` and `folder` on the beat are TRI-STATE, end to end
+     A. `hand` on the beat is TRI-STATE, end to end
         through `presenceBeat`, `presenceIngest` and
         `presenceAdopt`. Absent must never collapse to a stale
         `false`: a peer on a build that cannot say is NAMED as
         unknown by the placement and struck out by nobody, which
         is the seq-218 rollout rule. An EXPLICIT false must reach
-        the far side as a false, because a hand unplugged and a
-        folder grant withdrawn are live changes and only an
-        explicit answer can carry them.
+        the far side as a false, because a hand unplugged is a
+        live change and only an explicit answer can carry it.
+        No `folder` field travels: the folder grant is gone.
 
      B. A `@p/` live preview is the ONE content key that crosses a
         device on its stamp. Every other content manifest belongs
@@ -79,7 +79,7 @@ function makeTab(scripts) {
 	return win;
 }
 
-console.log('\n— A: `hand` and `folder` are tri-state end to end —');
+console.log('\n— A: `hand` is tri-state end to end, and no `folder` travels —');
 {
 	const win = makeTab(['peer.js']);
 	const P = win.DaimondPeer, Pr = win.DaimondPresence;
@@ -87,16 +87,13 @@ console.log('\n— A: `hand` and `folder` are tri-state end to end —');
 	const ARG = 'a0000000000000000000000000000000';
 	const OLD = 'o0000000000000000000000000000000';
 
-	// A device that SAYS both, and one on a build that cannot.
-	Pr.beat(ARG, 'argonaut', now, false, true, 'b1', true, false, true, true);
+	// A device that SAYS, and one on a build that cannot.
+	Pr.beat(ARG, 'argonaut', now, false, true, 'b1', true, false, true);
 	Pr.beat(OLD, 'oldbox',   now, false, true, 'b0', true, false);
 	let snap = Pr.snapshot();
-	check('A1 a device that says both carries both',
-		snap[ARG].hand === true && snap[ARG].folder === true,
-		JSON.stringify({ hand: snap[ARG].hand, folder: snap[ARG].folder }));
-	check('A1 a device that cannot say carries NEITHER FIELD — not a false',
-		!('hand' in snap[OLD]) && !('folder' in snap[OLD]),
-		JSON.stringify(snap[OLD]));
+	check('A1 a device that says carries `hand`', snap[ARG].hand === true, JSON.stringify(snap[ARG]));
+	check('A1 a device that cannot say carries NO `hand` — not a false',
+		!('hand' in snap[OLD]), JSON.stringify(snap[OLD]));
 
 	// The election must skip the one that cannot say, and seat the one that can.
 	const opts = { selfId: 'self', windowMs: P.DISPATCH_FRESH_MS };
@@ -108,46 +105,38 @@ console.log('\n— A: `hand` and `folder` are tri-state end to end —');
 
 	// A LIVE CHANGE. The hand is unplugged; the next beat says so explicitly, and
 	// the far side must read a false rather than keeping the last true.
-	Pr.beat(ARG, 'argonaut', now + 1000, false, true, 'b1', true, false, false, true);
+	Pr.beat(ARG, 'argonaut', now + 1000, false, true, 'b1', true, false, false);
 	snap = Pr.snapshot();
-	check('A3 an explicit false REPLACES a remembered true',
-		snap[ARG].hand === false && snap[ARG].folder === true,
-		JSON.stringify({ hand: snap[ARG].hand, folder: snap[ARG].folder }));
+	check('A3 an explicit false REPLACES a remembered true', snap[ARG].hand === false, JSON.stringify(snap[ARG]));
 	check('A3 and the election stops seating it for a hand-bearing task',
 		!P.handoffTarget(snap, Object.assign({ require: 'hand' }, opts), now + 1000).target);
 
 	// A BEAT THAT COULD NOT ASK is not the device saying no: it keeps what it said.
 	Pr.beat(ARG, 'argonaut', now + 2000, false, true, 'b1', true, false);
 	snap = Pr.snapshot();
-	check('A4 a beat carrying neither field keeps the last answers',
-		snap[ARG].hand === false && snap[ARG].folder === true,
-		JSON.stringify({ hand: snap[ARG].hand, folder: snap[ARG].folder }));
+	check('A4 a beat carrying no `hand` keeps the last answer', snap[ARG].hand === false, JSON.stringify(snap[ARG]));
 
-	// THE GATEWAY'S MAP. A relayed row carrying the fields sets them; one that omits
-	// them leaves them absent, so `recGenuine`-style fallbacks still apply and the
-	// placement names the peer as a maybe.
+	// THE GATEWAY'S MAP. A relayed row carrying `hand` sets it; one that omits it leaves
+	// it absent. A `folder` an older gateway still relays is not carried (D-20261031-11).
 	Pr.forget();
 	Pr.ingest({
-		[ARG]: { name: 'argonaut', last_seen: now, hand: true, folder: false },
+		[ARG]: { name: 'argonaut', last_seen: now, hand: true, folder: true },
 		[OLD]: { name: 'oldbox', last_seen: now },
 	}, now);
 	snap = Pr.snapshot();
-	check('A5 ingest relays an explicit pair verbatim',
-		snap[ARG].hand === true && snap[ARG].folder === false);
-	check('A5 and OMITS what the gateway did not send',
-		!('hand' in snap[OLD]) && !('folder' in snap[OLD]), JSON.stringify(snap[OLD]));
+	check('A5 ingest relays an explicit `hand` verbatim', snap[ARG].hand === true);
+	check('A5 and OMITS what the gateway did not send', !('hand' in snap[OLD]), JSON.stringify(snap[OLD]));
+	check('A5 a relayed `folder` is not carried', !('folder' in snap[ARG]), JSON.stringify(snap[ARG]));
 
-	// THE PARCEL MERGE. An incoming line without the fields must not blank what we
-	// know; one with them wins on the freshest stamp, like every other scalar here.
+	// THE PARCEL MERGE. An incoming line without `hand` must not blank what we know;
+	// one with it wins on the freshest stamp, like every other scalar here.
 	Pr.adopt({ [ARG]: { name: 'argonaut', lastSeen: now + 5000 } });
 	snap = Pr.snapshot();
-	check('A6 adopt preserves absent rather than clobbering to false',
-		snap[ARG].hand === true && snap[ARG].folder === false,
-		JSON.stringify({ hand: snap[ARG].hand, folder: snap[ARG].folder }));
+	check('A6 adopt preserves absent rather than clobbering to false', snap[ARG].hand === true, JSON.stringify(snap[ARG]));
 	Pr.adopt({ [ARG]: { name: 'argonaut', lastSeen: now + 9000, hand: false, folder: true } });
 	snap = Pr.snapshot();
-	check('A6 and takes an explicit pair from a fresher line',
-		snap[ARG].hand === false && snap[ARG].folder === true);
+	check('A6 and takes an explicit `hand` from a fresher line', snap[ARG].hand === false);
+	check('A6 an adopted `folder` is not carried', !('folder' in snap[ARG]), JSON.stringify(snap[ARG]));
 }
 
 console.log('\n— B: a `@p/` preview is the one content key that crosses —');

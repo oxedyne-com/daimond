@@ -103,6 +103,7 @@ pub struct TurnSpec {
     /// The turn is its conversation's own (a Diamond's thread), not a worker's: its Diamond
     /// keeper's turn is ended with it (`engine::turn::drive`).
     pub own:        bool,
+    pub n:          u32,    // the turn's number (TURN-NUM), 0 for none
 }
 
 impl Tagged for TurnSpec {
@@ -190,7 +191,9 @@ impl TurnEngine for Engine {
     async fn turn(&self, session: &mut Session, spec: TurnSpec, edge: &mut Edge<'_, Self>)
         -> Outcome<()>
     {
-        let TurnSpec { user_msg, on_event, pre, mid, tag, base, own } = spec;
+        let TurnSpec { user_msg, on_event, pre, mid, tag, base, own, n } = spec;
+        // THE TURN'S NUMBER (TURN-NUM), taken by the turn this spec runs and by no later one.
+        self.agent.set_turn_n(n);
         let (halt, stop) = self.arm(tag, base);
         obeying(self.turn_inner(session, user_msg, on_event, pre, mid, own, edge), stop, &halt).await
     }

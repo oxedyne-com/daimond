@@ -11,7 +11,7 @@ use crate::{
             Read,
             Shot,
         },
-        ui::HostUi,
+        ui::{HostUi, UiAct},
     },
     tools::{
         FileRoot,
@@ -41,6 +41,8 @@ impl HostUi for LocalUi {
     {
         false
     }
+    // No page: every page act below is unavailable, so none is offered.
+    fn can(&self, _act: UiAct) -> bool { false }
     async fn show(&self, _path: &str, _page: Option<u32>, _owner: &str, _turn: &str)
         -> Outcome<Shown>
     {

@@ -8,9 +8,8 @@ use crate::{
         VERSION_FILE_MAX,
     },
     engine::host::{Host, fs::HostFs, types::store::{CrystalHalf, Landed, SettlePhase}},
-    marks::{Live, Reach},
     rating::Author,
-    tools::{Bound, CrystalPassed, FileRoot, ToolContext},
+    tools::{CrystalPassed, FileRoot, ToolContext},
 };
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -25,7 +24,7 @@ pub use crate::engine::host::types::store::{Drained, JournalKey, JournalRun, LIS
 
 /// The store port a [`Host`](super::Host) carries: one method per free function of
 /// `crate::wasm::diamond` a tool reaches, of the same name, arguments and kind, plus
-/// `entry::trail` and `marks::live_bounds`, and the turn-end group the session's turn end drives
+/// `entry::trail`, and the turn-end group the session's turn end drives
 /// (`hold_versions` to `end_turn_counts`).
 ///
 /// **The store writes only its own area.**  Its mutators take no `&Licence`, because they never
@@ -236,11 +235,7 @@ pub trait HostStore {
     /// before anything is asked; a host that keeps no count ignores it.
     fn keeper_turn_ended(&self, _id: &str) {}
 
-    // Marks and the trail
-    async fn live_bounds(&self, live: &Live) -> Outcome<Vec<Bound>>;
-    /// What `target` reaches on this device now, read afresh; `marks::UNREAD` where the record
-    /// cannot be read (FAIL CLOSED).
-    async fn reach(&self, target: &Live) -> Outcome<Reach>;
+    // The trail
     fn trail(&self, what: &str, detail: &str);
 
     // The run journals (U4c, spec §4.4, X2): SETTLED ROUNDS ONLY, one record per round, keyed by

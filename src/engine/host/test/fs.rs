@@ -141,7 +141,7 @@ fn key(root: FileRoot, path: &str) -> Outcome<Key> {
     let store = match storage_for(root, &clean, Some(0), "") {
         Storage::Folder(_)  => 0,
         Storage::Sandbox(_) => 1,
-        Storage::Machine(_) | Storage::Nowhere => 2,
+        Storage::Machine(_) => 2,
     };
     Ok((store, clean))
 }
@@ -303,10 +303,6 @@ impl HostFs for TestFs {
         storage_for(root, path, Some(0), "")
     }
 
-    fn thrown(&self) -> String { String::new() }
-    fn take_thrown(&self) -> String { String::new() }
-    fn arm_folder_watch(&self) {}
-    fn notify_folder_lost(&self) {}
 
     // The cloud is another storage, and TestHost has none.
     fn children_of(&self, _dir: &str) -> Vec<(String, bool, u64)> { Vec::new() }

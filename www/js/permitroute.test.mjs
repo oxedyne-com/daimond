@@ -1,8 +1,7 @@
 /* ============================================================
    Test -- a handed-off turn's permits are asked at home (CONSENT-ROUTE).
    ------------------------------------------------------------
-   A write outside the Diamond (`place`), a toolkit on first use (`toolkit`) and a
-   command in the ask mode (`run`) were asked as a dialog on the RUNNER, a machine
+   A command in the ask mode (`run`) and a change to his file (`change`) were asked as a dialog on the RUNNER, a machine
    nobody is at. They now go to the device the turn was sent from, and a silence
    there is a refusal, never a park.
 
@@ -24,6 +23,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import vm from 'node:vm';
+import { makeWindow } from '../../dev/syncprobe.mjs';
+import { loadPage } from './test/page.mjs';
 import { webcrypto } from 'node:crypto';
 
 const HERE    = dirname(fileURLToPath(import.meta.url));
@@ -59,26 +60,31 @@ const NOW = 1_800_000_000_000;
 
 test('A1: a permit goes to the awake source that can answer it, and only there', () => {
 	const route = { action: 'ask', peer: { deviceId: 'PHONE' } };
-	for (const k of ['place', 'toolkit', 'run']) {
-		same(P.permitRouteDecision(k, route, 'PHONE', ['place', 'toolkit', 'run']),
+	for (const k of ['run', 'change']) {
+		same(P.permitRouteDecision(k, route, 'PHONE', ['run', 'change']),
 			{ action: 'ask', target: 'PHONE' });
 	}
+	// No place or toolchain is a grant (D-20261031-11): neither is a permit any device is asked.
+	for (const k of ['place', 'toolkit']) {
+		same(P.permitRouteDecision(k, route, 'PHONE', ['place', 'toolkit', 'run']), { action: 'refuse', why: 'unsupported' });
+		same(P.permitOutcome(k, 'allow'), { word: 'deny', why: '' });
+	}
+	assert.deepEqual(Array.from(P.PERMIT_ASKS), ['run', 'change']);
 	// A source that never said it can answer (an older build): refused, unsupported.
-	same(P.permitRouteDecision('place', route, 'PHONE', []), { action: 'refuse', why: 'unsupported' });
-	assert.equal(P.permitRouteDecision('run', route, 'PHONE', ['place']).why, 'unsupported');
+	same(P.permitRouteDecision('run', route, 'PHONE', []), { action: 'refuse', why: 'unsupported' });
+	assert.equal(P.permitRouteDecision('run', route, 'PHONE', ['change']).why, 'unsupported');
 	// The route found another device (the source is asleep), or none: never asked, never park.
-	same(P.permitRouteDecision('place', { action: 'ask', peer: { deviceId: 'TABLET' } }, 'PHONE', P.PERMIT_ASKS),
+	same(P.permitRouteDecision('run', { action: 'ask', peer: { deviceId: 'TABLET' } }, 'PHONE', P.PERMIT_ASKS),
 		{ action: 'refuse', why: 'unsupported' });
-	assert.equal(P.permitRouteDecision('place', { action: 'park', why: 'no-attended-device' }, 'PHONE', P.PERMIT_ASKS).why, 'unsupported');
+	assert.equal(P.permitRouteDecision('run', { action: 'park', why: 'no-attended-device' }, 'PHONE', P.PERMIT_ASKS).why, 'unsupported');
 	assert.equal(P.permitRouteDecision('web_type', route, 'PHONE', P.PERMIT_ASKS).action, 'refuse');
 });
 
 test('A2: the engine hears its own yes word, and every other answer as deny with a reason', () => {
-	same(P.permitOutcome('place', 'allow'),   { word: 'allow-place', why: '' });
-	same(P.permitOutcome('toolkit', 'allow'), { word: 'allow-kit', why: '' });
+	same(P.permitOutcome('change', 'allow'),  { word: 'allow-change', why: '' });
 	same(P.permitOutcome('run', 'allow'),     { word: 'allow', why: '' });
-	same(P.permitOutcome('place', 'deny'),    { word: 'deny', why: 'refused' });
-	same(P.permitOutcome('toolkit', null),    { word: 'deny-timeout', why: 'timeout' });
+	same(P.permitOutcome('run', 'deny'),      { word: 'deny', why: 'refused' });
+	same(P.permitOutcome('change', null),     { word: 'deny-timeout', why: 'timeout' });
 	// The engine reads the reason from the word (tools.rs `permit_of`).
 	same(P.permitNoWord('refused'),     'deny');
 	same(P.permitNoWord('timeout'),     'deny-timeout');
@@ -88,7 +94,7 @@ test('A2: the engine hears its own yes word, and every other answer as deny with
 });
 
 test('A3: only the runner\'s refusal, addressed to this device, is news here', () => {
-	const g = (o) => P.makeGrant(Object.assign({ cid: 'c', turnId: 't', kind: 'place', verdict: 'deny',
+	const g = (o) => P.makeGrant(Object.assign({ cid: 'c', turnId: 't', kind: 'run', verdict: 'deny',
 		choice: 'refused', by: 'RUNNER', to: 'PHONE' }, o));
 	assert.equal(P.permitNotice(g({}), 'PHONE'), 'refused');
 	assert.equal(P.permitNotice(g({ choice: 'timeout' }), 'PHONE'), 'timeout');
@@ -101,13 +107,13 @@ test('A3: only the runner\'s refusal, addressed to this device, is news here', (
 });
 
 test('A4: a permit takes only its own kind; an old device\'s plain consent is a no at once', () => {
-	const pend = { turnId: 't1', kind: 'place', target: 'PHONE' };
-	const yes = P.blockerAnswerDecision(pend, { turnId: 't1', kind: 'place', verdict: 'allow', by: 'PHONE' });
+	const pend = { turnId: 't1', kind: 'run', target: 'PHONE' };
+	const yes = P.blockerAnswerDecision(pend, { turnId: 't1', kind: 'run', verdict: 'allow', by: 'PHONE' });
 	assert.equal(yes.commit, true); assert.equal(yes.verdict, 'allow');
 	const old = P.blockerAnswerDecision(pend, { turnId: 't1', kind: 'consent', verdict: 'allow', by: 'PHONE' });
 	assert.equal(old.commit, true); assert.equal(old.verdict, 'deny'); assert.equal(old.why, 'old-answerer');
-	assert.equal(P.blockerAnswerDecision(pend, { turnId: 't1', kind: 'toolkit', verdict: 'allow', by: 'PHONE' }).commit, false);
-	assert.equal(P.blockerAnswerDecision(pend, { turnId: 't2', kind: 'place', verdict: 'allow', by: 'PHONE' }).commit, false);
+	assert.equal(P.blockerAnswerDecision(pend, { turnId: 't1', kind: 'change', verdict: 'allow', by: 'PHONE' }).commit, false);
+	assert.equal(P.blockerAnswerDecision(pend, { turnId: 't2', kind: 'run', verdict: 'allow', by: 'PHONE' }).commit, false);
 	// A consent is untouched.
 	const c = P.blockerAnswerDecision({ turnId: 't1', kind: 'consent' }, { turnId: 't1', kind: 'consent', verdict: 'allow' });
 	assert.equal(c.verdict, 'allow');
@@ -150,7 +156,7 @@ test('A4b: a permit is answered by its target alone, from the tile or the lease 
 });
 
 test('A5: a permit is raised only on its target; a consent still broadcasts', () => {
-	const ask = P.makeAsk({ turnId: 't', kind: 'place', target: 'PHONE', deadline: NOW + 60000 });
+	const ask = P.makeAsk({ turnId: 't', kind: 'run', target: 'PHONE', deadline: NOW + 60000 });
 	const o = { canAnswer: true };
 	assert.equal(P.askRaiseDecision(ask, 'PHONE', NOW, o).raise, true);
 	assert.equal(P.askRaiseDecision(ask, 'RUNNER', NOW, o).why, 'not-target');
@@ -161,14 +167,15 @@ test('A5: a permit is raised only on its target; a consent still broadcasts', ()
 });
 
 test('A6: an ask, a blocker and an errand carry what a permit needs', () => {
-	const ask = P.makeAsk({ kind: 'toolkit', about: '{"id":"d1","kits":["rust"]}' });
-	assert.equal(ask.kind, 'toolkit'); assert.equal(ask.about, '{"id":"d1","kits":["rust"]}');
+	const ask = P.makeAsk({ kind: 'change', about: '{"id":"d1"}' });
+	assert.equal(ask.kind, 'change'); assert.equal(ask.about, '{"id":"d1"}');
+	assert.equal(P.makeAsk({ kind: 'toolkit' }).kind, 'consent');
 	assert.equal(P.makeAsk({ kind: 'bogus' }).kind, 'consent');
-	const spec = P.blockerTileSpec({ kind: 'place', detail: '/etc/x', about: '{"id":"d1"}', target: 'PHONE' }, 'argonaut', 'PHONE');
+	const spec = P.blockerTileSpec({ kind: 'run', detail: 'rm -rf x', about: '{"id":"d1"}', target: 'PHONE' }, 'argonaut', 'PHONE');
 	same(spec.controls, ['grant', 'deny']);
 	assert.equal(spec.answerable, true);
-	const e = P.makeErrand({ turnId: 't', asks: ['run', 'bogus', 'run', 'place'] });
-	assert.deepEqual(Array.from(e.asks), ['run', 'place']);
+	const e = P.makeErrand({ turnId: 't', asks: ['run', 'bogus', 'run', 'place', 'toolkit', 'change'] });
+	assert.deepEqual(Array.from(e.asks), ['run', 'change']);
 	assert.deepEqual(Array.from(P.makeErrand({ turnId: 't' }).asks), []);
 });
 
@@ -214,7 +221,7 @@ const grants = (posted) => posted.filter((b) => b.t === 'consent-grant');
 const asks   = (posted) => posted.filter((b) => b.t === 'consent-ask');
 
 test('B1: a yes comes back as the kind\'s own word; the ask is targeted and blocked on the lease', async () => {
-	for (const [k, word] of [['place', 'allow-place'], ['toolkit', 'allow-kit'], ['run', 'allow']]) {
+	for (const [k, word] of [['run', 'allow'], ['change', 'allow-change']]) {
 		const r = runner({});
 		const v = await r.api.routePermitAsk(r.rc, k, 'shown', '{"id":"d1"}');
 		await settle();
@@ -229,11 +236,11 @@ test('B1: a yes comes back as the kind\'s own word; the ask is targeted and bloc
 
 test('B2: a no is deny, and the sender is told "refused"', async () => {
 	const r = runner({ answer: { kind: 'same', verdict: 'deny' } });
-	assert.equal(await r.api.routePermitAsk(r.rc, 'place', '/x', '{}'), 'deny');
+	assert.equal(await r.api.routePermitAsk(r.rc, 'run', 'ls', '{}'), 'deny');
 	await settle();
 	const g = grants(r.posted);
 	assert.equal(g.length, 1); assert.equal(g[0].choice, 'refused'); assert.equal(g[0].to, 'PHONE');
-	assert.equal(g[0].kind, 'place'); assert.equal(g[0].verdict, 'deny');
+	assert.equal(g[0].kind, 'run'); assert.equal(g[0].verdict, 'deny');
 });
 
 test('B3: silence is a refusal at the unchanged deadline, told "timeout", never a park', async () => {
@@ -242,7 +249,7 @@ test('B3: silence is a refusal at the unchanged deadline, told "timeout", never 
 	assert.equal(await r.api.routePermitAsk(r.rc, 'run', 'ls', '{}'), 'deny-timeout');
 	await settle();
 	assert.equal(grants(r.posted)[0].choice, 'timeout');
-	// A permit with no wait of its own (place, toolkit, run) keeps the 60 s; only a change
+	// A permit with no wait of its own (run) keeps the 60 s; only a change
 	// passes its ten minutes (r573, changeask.test B4).
 	assert.match(lift('putPermitAsk'), /var wait = \(Number\(waitMs\) > 0\) \? Number\(waitMs\) : \(DaimondPeer\.CONSENT_DEADLINE_MS \|\| 60000\);/);
 	assert.doesNotMatch(lift('putPermitAsk'), /parkRunnerTurn/);
@@ -250,7 +257,7 @@ test('B3: silence is a refusal at the unchanged deadline, told "timeout", never 
 
 test('B4: an old device\'s plain consent "yes" is a no', async () => {
 	const r = runner({ answer: { kind: 'consent', verdict: 'allow' } });
-	assert.equal(await r.api.routePermitAsk(r.rc, 'toolkit', 'cargo build', '{}'), 'deny');
+	assert.equal(await r.api.routePermitAsk(r.rc, 'run', 'cargo build', '{}'), 'deny');
 });
 
 test('B4b: a third device\'s Allow, from its footer or anywhere, lets nothing through', async () => {
@@ -265,7 +272,7 @@ test('B4b: a third device\'s Allow, from its footer or anywhere, lets nothing th
 
 test('B5: an old sender is not asked at all: "unsupported", at once', async () => {
 	const r = runner({ asks: [] });
-	assert.equal(await r.api.routePermitAsk(r.rc, 'place', '/x', '{}'), 'deny-unasked');
+	assert.equal(await r.api.routePermitAsk(r.rc, 'run', 'ls', '{}'), 'deny-unasked');
 	await settle();
 	assert.equal(asks(r.posted).length, 0);
 	assert.equal(grants(r.posted)[0].choice, 'unsupported');
@@ -274,7 +281,7 @@ test('B5: an old sender is not asked at all: "unsupported", at once', async () =
 
 test('B6: a sleeping sender is not asked: "could not ask", at once, never "timeout" (B-F3)', async () => {
 	const r = runner({ awake: false });
-	assert.equal(await r.api.routePermitAsk(r.rc, 'place', '/x', '{}'), 'deny-unasked');
+	assert.equal(await r.api.routePermitAsk(r.rc, 'run', 'ls', '{}'), 'deny-unasked');
 	await settle();
 	assert.equal(asks(r.posted).length, 0);
 	assert.equal(grants(r.posted)[0].choice, 'unsupported');
@@ -314,34 +321,53 @@ test('F1: the asking turn is the one the question\'s tag names; this device\'s o
 test('F5: two permits of one turn are asked one after the other, the second when the first settles', async () => {
 	const r = runner({});
 	const both = await Promise.all([
-		r.api.routePermitAsk(r.rc, 'place', '/a', '{}'),
-		r.api.routePermitAsk(r.rc, 'place', '/b', '{}'),
+		r.api.routePermitAsk(r.rc, 'run', 'ls a', '{}'),
+		r.api.routePermitAsk(r.rc, 'run', 'ls b', '{}'),
 	]);
-	assert.deepEqual(both, ['allow-place', 'allow-place']);
+	assert.deepEqual(both, ['allow', 'allow']);
 	assert.equal(asks(r.posted).length, 2, 'both were put to the sender');
 	// Raise, clear, raise, clear: never two questions up at once.
-	assert.deepEqual(r.blockers.map((b) => (b ? b.detail : null)), ['/a', null, '/b', null]);
+	assert.deepEqual(r.blockers.map((b) => (b ? b.detail : null)), ['ls a', null, 'ls b', null]);
 });
 
 test('B8: each egress branch routes a handed-off turn before its own dialog, B\'s own grants first', () => {
 	const eg = lift('egressAllowed');
 	const at = (s) => { const i = eg.indexOf(s); assert.ok(i >= 0, s); return i; };
 	assert.ok(at("routePermitAsk(rrc, 'run'") < at('var okRun = await confirmDialog('));
-	assert.ok(at("if (kwant.every(") < at("routePermitAsk(krc, 'toolkit'"));
-	assert.ok(at("routePermitAsk(krc, 'toolkit'") < at("ask: 'toolkit',"));
-	assert.ok(at('markForce(pd.id, pl)') < at("routePermitAsk(prc, 'place'"));
-	assert.ok(at("routePermitAsk(prc, 'place'") < at("ask: 'place',"));
-	// A place yes writes nothing on either device: no grantHoldHere on the routed path.
-	assert.doesNotMatch(lift('answerPermitHere'), /grantHoldHere|confirmMarkHere|add_link/);
-	assert.match(lift('answerPermitHere'), /kind !== 'toolkit' \|\| verdict !== 'allow'/);
+	// No toolchain or place is asked any more (D-20261031-11): neither branch is left.
+	assert.doesNotMatch(eg, /routePermitAsk\([a-z]+, '(toolkit|place)'/);
+});
+
+test('B8b: a place or toolkit ask is DENIED in every branch, the posture and a hand-off included (D-20261031-11)', async () => {
+	// The ONE deny case that replaced verify_handoff_permit's place-yes cases. The peer table
+	// here still knows `place` and `toolkit`, as an older device's does: before the deny moved
+	// above the posture, both of these branches answered them with a yes word.
+	for (const mode of ['plain', 'posture', 'handoff']) {
+		const w = makeWindow({});
+		let drawn = 0;
+		w.DaimondPeer = { permitAsk: (k) => ['run', 'change', 'place', 'toolkit'].includes(k),
+			PERMIT_YES: { run: 'allow', change: 'allow-change', place: 'allow-place', toolkit: 'allow-kit' },
+			permitNoWord: () => 'deny-timeout' };
+		const Pg = loadPage({ window: w, stub: {
+			confirmDialog: async () => { drawn++; return true; }, dialog: async () => { drawn++; return true; },
+			autonomousPosture: () => mode === 'posture', someoneCanAnswer: () => false, publishWithheld: () => false,
+			permitRunnerTurn: () => (mode === 'handoff' ? { auto: true } : null),
+			routePermitAsk: async () => { drawn++; return 'allow'; },
+		}, want: ['egressAllowed'] });
+		const ask = (tool) => Pg.egressAllowed(JSON.stringify({ tool, path: 'docs/permit/a.txt', cmd: 'ls', turn: 't1', alone: true }));
+		assert.equal(await ask('place'), 'deny', mode + ' place');
+		assert.equal(await ask('toolkit'), 'deny', mode + ' toolkit');
+		assert.equal(drawn, 0, mode + ': nothing was drawn or routed for them');
+		if (mode !== 'plain') assert.equal(await ask('run'), 'allow', '[ctl] ' + mode + ' still answers a run');
+	}
 });
 
 test('A9: a third device\'s grant does not take a permit question down on the device it was asked of', () => {
-	const ask = { cid: 'c1', turnId: 't1', kind: 'place', target: 'HOME', dispatchedBy: 'RUNNER' };
-	assert.equal(P.grantSettlesAsk(ask, { cid: 'c1', by: 'TABLET', verdict: 'allow', kind: 'place' }), false);
-	assert.equal(P.grantSettlesAsk(ask, { cid: 'c1', by: '', verdict: 'allow', kind: 'place' }), false);
-	assert.equal(P.grantSettlesAsk(ask, { cid: 'c1', by: 'HOME', verdict: 'deny', kind: 'place' }), true);	// its own answer, from another tab
-	assert.equal(P.grantSettlesAsk(ask, { cid: 'c1', by: 'RUNNER', verdict: 'deny', choice: 'timeout', kind: 'place' }), true);
+	const ask = { cid: 'c1', turnId: 't1', kind: 'run', target: 'HOME', dispatchedBy: 'RUNNER' };
+	assert.equal(P.grantSettlesAsk(ask, { cid: 'c1', by: 'TABLET', verdict: 'allow', kind: 'run' }), false);
+	assert.equal(P.grantSettlesAsk(ask, { cid: 'c1', by: '', verdict: 'allow', kind: 'run' }), false);
+	assert.equal(P.grantSettlesAsk(ask, { cid: 'c1', by: 'HOME', verdict: 'deny', kind: 'run' }), true);	// its own answer, from another tab
+	assert.equal(P.grantSettlesAsk(ask, { cid: 'c1', by: 'RUNNER', verdict: 'deny', choice: 'timeout', kind: 'run' }), true);
 	// A plain consent keeps the broadcast rule: the first device to answer settles it everywhere.
 	assert.equal(P.grantSettlesAsk({ cid: 'c2', kind: 'consent', dispatchedBy: 'RUNNER' }, { cid: 'c2', by: 'TABLET' }), true);
 	assert.equal(P.grantSettlesAsk(null, { cid: 'c3', by: 'TABLET' }), true);

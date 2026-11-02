@@ -226,6 +226,14 @@ pub(super) fn compound_cut_said(cut: &[usize]) -> String {
 }
 
 
+/// The loader's wire name, which its own index names.
+pub const TOOL_SEARCH: &str = "tool_search";
+pub const TOOL_SEARCH_DESC: &str =
+    "Answer the full schema of tools held back from this list, so you can call them. Each line \
+     below is one such tool and what it does; call this with its name in 'names' (or a 'query' \
+     word) once, then call the tool itself by that name.";
+pub const TOOL_SEARCH_PARAMS: &str = r#"{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"},"description":"Tool names from the index."},"query":{"type":"string","description":"A word to find tools by."}}}"#;
+
 /// The set of tools available to the agent, plus the context they run in.
 #[derive(Clone, Debug)]
 pub struct ToolRegistry<H: Host = DefaultHost> {
@@ -387,8 +395,8 @@ impl<H: Host> ToolRegistry<H> {
     /// One door rather than two, because the two must be reset together -- a hint held over from
     /// a previous turn is a line the model never sees.
     ///
-    /// Answers the guard that ends the turn: what the turn holds (a toolkit or a place the user
-    /// said yes to) is dropped when the guard is, however the turn left.
+    /// Answers the guard that ends the turn: what the turn holds (a place the user said yes to) is
+    /// dropped when the guard is, however the turn left.
     #[must_use]
     pub fn begin_turn(&self) -> TurnEnd<H> {
         self.ctx.begin_turn();
@@ -457,7 +465,7 @@ impl<H: Host> ToolRegistry<H> {
     /// as a copy of the parent's request, tools array included, so its first round reuses the
     /// parent's cache.  What a worker may not do -- `file_show`, `ask`, `spawn_agent`, `gather` --
     /// is refused AT THE CALL with a plain tool error; see [`Tool::worker_may_not_show`] and
-    /// [`Self::try_dispatch_asking`].  An offer that differed was a cache miss on every worker.
+    /// [`Self::try_dispatch`].  An offer that differed was a cache miss on every worker.
     ///
     /// **The `say` tool stood here beside it and no longer exists.**  Folding an answer is written
     /// into the model's own prose as a `<details>` element now, so what withholds it from a worker
@@ -487,6 +495,10 @@ impl<H: Host> ToolRegistry<H> {
         // it probes for a tool it cannot see and reports the app as broken.
         self.tools.iter()
             .filter(|t| !self.wants_machine(t))
+            // AND NOT A TOOL WHOSE PAGE ACT THIS HOST CANNOT DO (UNBLOCK-51): the runner has no
+            // page, so `file_show`, `capture` and `crystal_look` were offered there and answered
+            // "not available on this build".  The offer is the host's own word.
+            .filter(|t| t.ui_act().map_or(true, |a| self.ctx.host.ui().can(a)))
             // AND NOT A TOOL THE ACCOUNT HAS NOT BOUGHT, which is the prefix half of the gate
             // `guard` already holds.  A locked tool's description and schema were sent on every
             // request of every round -- the four mail tools and the Typst compiler come to
@@ -520,7 +532,7 @@ impl<H: Host> ToolRegistry<H> {
     ///
     /// The one test [`offered`](Self::offered) and the turn's engine both read (UNBLOCK-32 F4).
     /// A call to such a tool can only be refused, so the engine does not send it: the turn ends
-    /// on one plain question saying what is missing -- see `agent::wanting_told`.  Probing on
+    /// on one plain question saying what is missing -- see `agent::no_hand_told`.  Probing on
     /// with the file tools is what the Nancy Hopkins turn of 22 Oct did for 15 minutes after it
     /// had named the blocker itself.
     pub fn wants_machine(&self, t: &Tool) -> bool {
@@ -596,10 +608,68 @@ impl<H: Host> ToolRegistry<H> {
     /// session with the alias switch on is told `Read`, `Edit`, `Grep`… in the tools sentence
     /// as well as the schema, never one and not the other.  `run`'s alias `Bash` therefore
     /// appears here only when `run` itself is offered, exactly as `run` would.
+    ///
+    /// Every offered tool, deferred ones included, since each is a tool the model has; and
+    /// `tool_search` where any is deferred, since that is how it learns their schemas.
     pub fn tool_names(&self) -> Vec<String> {
-        self.offered().iter()
+        let offered = self.offered();
+        let mut names: Vec<String> = offered.iter()
             .map(|t| t.wire_name(self.family.get(), self.claude_names.get()).to_string())
-            .collect()
+            .collect();
+        if offered.iter().any(|t| t.deferred()) {
+            names.push(TOOL_SEARCH.to_string());
+        }
+        names
+    }
+
+    /// The `tool_search` schema, its description the index of the `offered` tools whose schemas
+    /// it holds back, or `None` where none is held back.
+    pub fn tool_search_json(&self, offered: &[Tool]) -> Option<String> {
+        let (fam, alias) = (self.family.get(), self.claude_names.get());
+        let index: Vec<String> = offered.iter()
+            .filter(|t| t.deferred())
+            .map(|t| fmt!("{}: {}", t.wire_name(fam, alias), t.summary()))
+            .collect();
+        if index.is_empty() {
+            return None;
+        }
+        Some(fmt!(
+            r#"{{"type":"function","function":{{"name":"{}","description":"{}","parameters":{}}}}}"#,
+            TOOL_SEARCH, json_escape(&fmt!("{}\n{}", TOOL_SEARCH_DESC, index.join("\n"))),
+            TOOL_SEARCH_PARAMS,
+        ))
+    }
+
+    /// What `tool_search` answers: the full schema of each deferred tool `names` lists, or whose
+    /// name, summary or description holds `query`, one per line.
+    ///
+    /// Answered as text into the conversation, which only grows, and never by adding to the
+    /// tools array, which would change the first bytes of every request after it.
+    pub fn tool_search(&self, args_json: &str) -> String {
+        let (fam, alias) = (self.family.get(), self.claude_names.get());
+        let kept = runner_keeps(&self.ctx);
+        let names = crate::llm::extract_json_string_array(args_json, "names").unwrap_or_default();
+        let query = crate::llm::extract_json_string(args_json, "query")
+            .map(|q| q.to_lowercase())
+            .unwrap_or_default();
+        let found: Vec<String> = self.offered().iter()
+            .filter(|t| t.deferred())
+            .filter(|t| {
+                let wire = t.wire_name(fam, alias);
+                names.iter().any(|n| n == wire || n == t.name())
+                    || (!query.is_empty()
+                        && (wire.to_lowercase().contains(&query)
+                            || t.summary().to_lowercase().contains(&query)
+                            || t.description_for(fam, alias).to_lowercase().contains(&query)))
+            })
+            .map(|t| t.definition_json_where(fam, alias, kept))
+            .collect();
+        match found.is_empty() {
+            true  => fmt!("No deferred tool matches. The index in tool_search's description \
+                names every one; give 'names' from it."),
+            false => fmt!("Each schema below is a tool you may now call by its name.\n{}",
+                found.join("\n")),
+        }
     }
 
     /// The `tools` JSON array for the LLM request, or `None` if empty.
@@ -609,9 +679,14 @@ impl<H: Host> ToolRegistry<H> {
             return None;
         }
         let kept = runner_keeps(&self.ctx);
+        // THE CORE IN FULL AND THE REST AS ONE INDEX (P2.5c): a deferred tool's schema is
+        // answered by `tool_search` into the conversation, never added here, so the array stays
+        // the bytes it was on the first round.
         let mut defs: Vec<String> = offered.iter()
+            .filter(|t| !t.deferred())
             .map(|t| t.definition_json_where(self.family.get(), self.claude_names.get(), kept))
             .collect();
+        defs.extend(self.tool_search_json(&offered));
         // Not in `tool_names`: the briefing says plainly that run is not on the belt.
         defs.extend(self.machine_stub_json());
         Some(fmt!("[{}]", defs.join(",")))
@@ -677,33 +752,9 @@ impl<H: Host> ToolRegistry<H> {
     pub async fn try_dispatch(&self, name: &str, args_json: &str)
         -> Outcome<MessageContent>
     {
-        self.try_dispatch_asking(name, args_json, |pa, id, turn| place_door(pa, id, turn, self.ctx.host())).await
-    }
-
-    /// [`Self::try_dispatch`], with the door a refused write is asked through given (E2).
-    ///
-    /// A write refused for being outside what the Diamond may change, where a yes could lift
-    /// it, is put to `ask`.  A yes holds the place for the rest of the turn -- the page has
-    /// written its mark -- and the call is made again, once.  A no answers with
-    /// [`place_refusal`].  No door (`None`) leaves the refusal as it was.
-    pub async fn try_dispatch_asking<A, F>(&self, name: &str, args_json: &str, ask: A)
-        -> Outcome<MessageContent>
-    where
-        A: FnOnce(PlaceAsk, String, String) -> F,
-        F: std::future::Future<Output = Option<Permit>>,
-    {
-        // THE MARKS AS THEY STAND AT THIS CALL, not as they stood when the turn began: a mark
-        // withdrawn, or made read-only, while the turn waits on a question is not written
-        // through by the turn's next call (QA B F3).
-        let now = match self.ctx.bounds_now().await {
-            Ok(b)  => ToolContext { no_write: b, ..self.ctx.clone() },
-            Err(e) => return Ok(MessageContent::text(refusal_line(&e.plain()))),
-        };
         // A MODEL IS CALLING, so the call is answered as a model's and never as the user's own
         // door: the record's fence holds whatever the turn's bounds (`ToolContext::may_write`).
-        let model = || ToolContext { by_model: true, no_write: now.write_bounds(),
-            ..now.clone() };
-        let ctx = model();
+        let ctx = ToolContext { by_model: true, ..self.ctx.clone() };
         // A WORKER DOES NOT DISPATCH WORKERS.  It is offered `spawn_agent` and `gather` because its
         // tools array is its parent's (r578c), and refused here, at the call.
         if ctx.is_unsupervised() && matches!(Tool::from_name(name), Some(Tool::SpawnAgent | Tool::Gather)) {
@@ -725,23 +776,7 @@ impl<H: Host> ToolRegistry<H> {
                 Diamond's links are your parent's to change: say in your report what should \
                 change and why.")));
         }
-        ctx.take_place_ask();
-        let mut out = self.dispatch_in(name, args_json, &ctx).await;
-        if let (Ok(_), Some(pa)) = (&out, ctx.take_place_ask()) {
-            if ctx.can_ask_writes(mode()) {
-                match ask(pa.clone(), ctx.daimon_of.clone(), ctx.turn_tag()).await {
-                    Some(Permit::Allow) => {
-                        ctx.grant_place(&pa.place);
-                        let again = model();
-                        out = self.dispatch_in(name, args_json, &again).await;
-                        // Once: a second refusal is answered as it was said.
-                        again.take_place_ask();
-                    },
-                    Some(Permit::No(no)) => out = Ok(MessageContent::text(place_refusal(&pa, no))),
-                    None                 => {},
-                }
-            }
-        }
+        let out = self.dispatch_in(name, args_json, &ctx).await;
         // Charged only on the answer.  A road failure carried nothing into the conversation --
         // it is about to be retried, and a turn that paid for each attempt would run out of
         // budget for having been on a train.
@@ -779,8 +814,7 @@ impl<H: Host> ToolRegistry<H> {
     ///
     /// A file-browser listing is not in the conversation, so it costs the turn nothing and must
     /// not narrow it.  The split is here and not at the two call sites because everything else
-    /// about the two doors is identical, the folder-lost check included, and two copies of that
-    /// would eventually be two different checks.
+    /// about the two doors is identical, and two copies of that would eventually drift apart.
     ///
     /// # Arguments
     /// * `name` - The tool's wire name.
@@ -792,18 +826,10 @@ impl<H: Host> ToolRegistry<H> {
     /// A page door's write of `bytes` at `path`, byte for byte ([`Tool::write_bytes_page`]),
     /// answered as [`Self::put_back`] is.  The Files panel's Undo of a delete; in no model's roster.
     pub async fn write_bytes_door(&self, path: &str, bytes: Vec<u8>) -> MessageContent {
-        self.ctx.host().fs().arm_folder_watch();
-        let out = match Tool::write_bytes_page(path, bytes, &self.ctx).await {
+        match Tool::write_bytes_page(path, bytes, &self.ctx).await {
             Ok(c)  => c,
             Err(e) => MessageContent::text(error_line(&e.plain())),
-        };
-        let thrown = self.ctx.host().fs().take_thrown();
-        if self.ctx.host().fs().folder_open()
-            && folder_loss_reported(call_outcome(&out.as_text()), &thrown)
-        {
-            self.ctx.host().fs().notify_folder_lost();
         }
-        out
     }
 
     /// The page's look before a restore asks ([`Tool::restore_look_page`]).
@@ -815,21 +841,12 @@ impl<H: Host> ToolRegistry<H> {
     }
 
     /// A restore's put-back of a stored body, byte for byte ([`Tool::put_back_page`]), answered as
-    /// [`Self::dispatch_op`] answers a tool call: a failure as its sentence, and a lost folder
-    /// reported.  A verb of the restore door alone, so it is in no model's roster.
+    /// [`Self::dispatch_op`] answers a tool call: a failure as its sentence.  A verb of the restore door alone, so it is in no model's roster.
     pub async fn put_back(&self, args_json: &str) -> MessageContent {
-        self.ctx.host().fs().arm_folder_watch();
-        let out = match Tool::put_back_page(args_json, &self.ctx).await {
+        match Tool::put_back_page(args_json, &self.ctx).await {
             Ok(c)  => c,
             Err(e) => MessageContent::text(error_line(&e.plain())),
-        };
-        let thrown = self.ctx.host().fs().take_thrown();
-        if self.ctx.host().fs().folder_open()
-            && folder_loss_reported(call_outcome(&out.as_text()), &thrown)
-        {
-            self.ctx.host().fs().notify_folder_lost();
         }
-        out
     }
 
     /// The panel's door, with a ROAD failure kept as an error.
@@ -856,6 +873,10 @@ impl<H: Host> ToolRegistry<H> {
         // -- so each is normalised, belt-checked, guarded and executed exactly as it would be
         // had the model called it on its own.  No recursion: `compound_tool` answers five reads
         // and never this, so a compound cannot hold a compound.
+        // AND THE LOADER, which answers from the offer and touches nothing (P2.5c).
+        if name == TOOL_SEARCH {
+            return Ok(MessageContent::text(self.tool_search(args_json)));
+        }
         if matches!(Tool::from_name(name), Some(Tool::Compound))
             && self.tools.contains(&Tool::Compound)
         {
@@ -901,13 +922,6 @@ impl<H: Host> ToolRegistry<H> {
             Some(u) => u.as_str(),
             None    => args_json,
         };
-        // ARMED BEFORE THE CALL, so the alarm below can only ever be about this one. An exception
-        // an earlier call caught and recovered from is not evidence about this one's folder.
-        // The hosted half's alone, as every port reach below is: the native half has no folder
-        // that can be taken away and no store to window.
-        if H::HOSTED {
-            ctx.host().fs().arm_folder_watch();
-        }
         let out = match Tool::from_name(name) {
             // A tool must be REGISTERED, not merely known. Resolving by name
             // alone let a caller run a tool it was never offered: a chat that
@@ -951,23 +965,6 @@ impl<H: Host> ToolRegistry<H> {
                 error_line(&fmt!("tool '{}' is not available here.", name))),
             None    => MessageContent::text(error_line(&fmt!("unknown tool '{}'.", name))),
         };
-        // A real folder can be taken away mid-session, and every tool call that touches it then
-        // fails while the app goes on believing the folder is open. This is where every tool
-        // result becomes text -- the agent's and the panel's alike -- so it is the one place that
-        // sees the failure whoever provoked it. Saying so here, rather than in the panel's own
-        // listing, is the difference between the user being told and the agent failing quietly
-        // against a folder the panel still names.
-        //
-        // ON THE CALL'S OUTCOME AND ON WHAT IT THREW, never on what it returned: see
-        // `folder_loss_reported`, and turn 53, where a SEARCH HIT cost the user their folder.
-        if H::HOSTED {
-            let thrown = ctx.host().fs().take_thrown();
-            if ctx.host().fs().folder_open()
-                && folder_loss_reported(call_outcome(&out.as_text()), &thrown)
-            {
-                ctx.host().fs().notify_folder_lost();
-            }
-        }
         Ok(self.guided(name, args_json, out))
     }
 
@@ -1317,6 +1314,8 @@ impl Tool {
             Tool::TypstCompile => Err(err!(
                 "typst_compile needs the browser's bundled compiler."; Unimplemented)),
             Tool::LinkList | Tool::LinkAdd | Tool::LinkRemove => Self::links_unavailable(),
+            // Answered whole by the agent from the session it holds (TURN-NUM).
+            Tool::TurnGet => Ok(String::new()),
             Tool::CrystalRead | Tool::Recall => Err(err!(
                 "crystal_read and recall reach the Diamond store, which is the browser's.";
                 Unimplemented)),

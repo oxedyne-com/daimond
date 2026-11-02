@@ -1508,37 +1508,9 @@ button.tag-pool { cursor: pointer; }
    the document it is meant to sit under. Ordered explicitly rather than moved
    in the markup, because the chat face wants the source order it already has. */
 .panel.ai.crystal-face .crystal-view   { order: 1; }
-.panel.ai.crystal-face .mark-notice    { order: 2; }
 .panel.ai.crystal-face .chat-input-bar { order: 2; }
 .panel.ai.crystal-face .composer-row   { order: 3; }
 
-/* MARKS NOT IN FORCE ON THIS DEVICE. It asks something of the person, so it is drawn
-   as the crystal's fallback note is -- a warning band, in the text ink that holds its
-   contrast on every palette -- and it sits straight over the composer on both faces
-   (ordered with it above, since it comes first in the document). Each row carries its
-   own press; a long path gives way before the button does. */
-.mark-notice {
-	margin: 0 12px 8px;
-	padding: 8px 10px;
-	background: var(--warn-bg);
-	border: 1px solid var(--warn);
-	border-radius: var(--radius-sm);
-	color: var(--text-primary);
-	font-size: var(--fs-sm);
-	line-height: 1.45;
-}
-.mark-notice[hidden] { display: none; }
-.mark-notice-head { margin: 0; font-weight: 600; }
-.mark-notice-why { margin: 2px 0 6px; font-size: var(--fs-xs); }
-.mark-notice-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 0; }
-/* The path is what the row is about, so it keeps its width and the where-it-was-made text
-   gives way first: "ol..." beside a whole sentence was the first draw of this row. */
-.mark-notice-path { flex: 0 1 auto; min-width: 2.5em; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mark-notice-where { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); }
-.mark-notice-row .chip-btn,
-.mark-notice-all { flex: 0 0 auto; }
-.mark-notice-all { margin-top: 6px; }
-:root[data-cfull] .panel.ai .mark-notice { display: none !important; }
 
 /* ── Full screen: the crystal, alone ─────────────────────────────────
    A capp is an application, and an application inside a panel inside an app

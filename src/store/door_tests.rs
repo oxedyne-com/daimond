@@ -176,7 +176,7 @@ async fn a_door_reads_the_folder_and_only_reads_it() {
                 .map(|e| is_unreadable(&e)),
             own::user_read_file_capped(ws, "notes/d.md", 3).await.err()
                 .map(|e| is_unreadable(&e)),
-            own::user_read_file_capped(FileRoot::Machine, "../x", 3).await.err()
+            own::user_read_file_capped(ws, "../x", 3).await.err()
                 .map(|e| is_unreadable(&e)),
             (own::user_exists(ws, "notes/a.md").await.ok(),
                 own::user_exists(ws, "notes/z.md").await.ok()),

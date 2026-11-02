@@ -26,7 +26,6 @@ import { effortClearedNote, renderSessionList } from './tilestyle.js';
 import { diamondEffort, diamondFolder, diamondModel, loadDiamonds, setDiamondEffort, sourceLabel,
 	sourceMenuRows, sourceMovedPair, sourceOf, switchChatSource } from './diamonds.js';
 import { awaitDiamondIdle, endRetryWait, refreshDiamondAfterChange, runSteer } from './crystal.js';
-import { rootHere } from './marks.js';
 import { openSettings } from './settingsui.js';
 // page-split: end imports
 let seatHereBtn, seatRunBtn, seatWhyEl, effDn, effUp, srcBtn, _beatBusy, _beatAt, _beatOwed; // page-split: hoisted
@@ -112,7 +111,6 @@ export function seatOpts(chat) {
 		globalDefault:  handoffWhenAway(),
 		freshWindowMs:  DaimondPeer.DISPATCH_FRESH_MS,
 		toggle:         (c && chatSeatHere(c)) ? false : null,
-		needFolder:     chatNeedsFolder(c),
 		runnerOnly:     true,
 		provider:       electProvider(c),
 		sources:        electSources(c),
@@ -145,18 +143,6 @@ function electSources(chat) {
 		if (p && out.indexOf(p) < 0) out.push(p);
 	});
 	return out;
-}
-
-/// Is this chat's folder ROOTED on this device (F4c, UNBLOCK-32): the real folder open
-/// here, and a mark of its Diamond or a workspace holding of its own pressed in it? Then
-/// the turn runs only where a folder is held too, since a runner with none reaches none
-/// of it and a switch that offers one which then cannot do the turn is a fault (§1).
-export function chatNeedsFolder(chat) {
-	// A Diamond naming its own folder (HATE-7) needs no workspace folder held at the runner.
-	if (chat && chat.diamondId && diamondFolder(chat.diamondId)) return false;
-	if (!chat || !selfHoldsFolder() || !window.DaimondMarksHere || !DaimondMarksHere.rootedHere) return false;
-	try { return DaimondMarksHere.rootedHere(chat.diamondId || '', chat.id || '', rootHere()); }
-	catch (e) { return false; }
 }
 
 // ── THE PERSON'S CHOICE, per chat (owner, D-20261009-23) ──
@@ -344,7 +330,6 @@ function seatWhyKey(sw) {
 		case 'runner-checking':	return { k: 'runner_checking',	vars: v };
 		case 'runner-busy':		return { k: 'runner_busy',		vars: v };
 		case 'runner-phone':		return { k: 'runner_phone',		vars: v };
-		case 'runner-require':		return { k: 'runner_require',		vars: v };
 		case 'runner-nosource':	return { k: 'runner_nosource',	vars: v };
 		case 'runner-unchecked':	return { k: 'runner_unchecked',	vars: v };
 		case 'page-old':			return { k: 'page_old',			vars: v };
@@ -363,7 +348,6 @@ var NOTRUN_KEYS = {
 	'models':        'notrun_models',
 	'models-behind': 'notrun_models_behind',
 	'refused':       'notrun_refused',
-	'place':         'notrun_place',
 	'busy':          'notrun_busy',
 	'unable':        'notrun_unable',
 	'gone':          'notrun_gone',
@@ -1143,8 +1127,6 @@ export async function maybeAutoDispatch(chat, text, words, mid, app, drawn, how)
 			// The person's switch: Here pins the chat; otherwise only the runner the
 			// switch names may take the turn (D-20261009-23).
 			toggle:        chatSeatHere(chat) ? false : null,
-			// The chat's folder is rooted here: only a runner holding one is offered (F4c).
-			needFolder:    chatNeedsFolder(chat),
 			runnerOnly:    true,
 			// The provider the turn runs on, as the errand will carry it (`electProvider`).
 			provider:      electProvider(chat),
@@ -1385,32 +1367,23 @@ var _presenceTimer = null;
 // bump `seen`, and a bumped `seen` pushes the whole parcel.
 // ══════════════════════════════════════════════════════════════
 
-var PLACE_SEEN_KEY = 'daimond-place-seen';	// id -> { name, at, hand, folder, mobile }
+var PLACE_SEEN_KEY = 'daimond-place-seen';	// id -> { name, at, hand, mobile }
 var PLACE_SEEN_MAX = 24;					// bounded: a roster, not a log
-
-/// Does this device hold the REAL, mounted workspace folder -- the machine's own
-/// files, complete by construction -- rather than a browser replica?
-export function selfHoldsFolder() {
-	try { return !!(Files && Files.folder && Files.folder()); } catch (e) { return false; }
-}
 
 /// Can this device reach a machine hand at all?
 ///
 /// The extension announcing itself on this page, or a link already open. NOT
 /// `DaimondHand.status()`, which OPENS the link -- and opening it is what puts the
 /// approval window on somebody's screen, so a presence beat must never do it.
-/// The real folder is required beside it because `run` fences every command against
-/// the granted folder and refuses outright without one, so a hand with no folder
-/// under it cannot run anything and saying otherwise would seat a publish on a
-/// machine that must then refuse it.
+/// ALWAYS FALSE SINCE THE MACHINE FOLDER LEFT THE PAGE (G5, D-20261031-11): `run` fences
+/// every command against an open folder and refuses outright without one, and the page
+/// no longer opens one, so saying yes would seat a publish on a machine that must refuse it.
 export function selfHoldsHand() {
-	if (!selfHoldsFolder()) return false;
-	try { if (window.DaimondHand && DaimondHand.hasHand && DaimondHand.hasHand()) return true; } catch (e) { /* fall through */ }
-	try { return !!document.documentElement.dataset.daimondHands; } catch (e) { return false; }
+	return false;
 }
 
 /// Fold the live beats into the remembered roster: for each device that SAID
-/// either field, what it said and when. Absence is never written -- a beat that
+/// its hand, what it said and when. Absence is never written -- a beat that
 /// could not say leaves the last answer standing, which is the whole point.
 function notePlaceSeen() {
 	var snap = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
@@ -1420,13 +1393,9 @@ function notePlaceSeen() {
 	Object.keys(snap).forEach(function (id) {
 		var rec = snap[id];
 		if (!rec) return;
-		var hasHand = typeof rec.hand === 'boolean';
-		var hasFold = typeof rec.folder === 'boolean';
-		if (!hasHand && !hasFold) return;
+		if (typeof rec.hand !== 'boolean') return;
 		var was = kept[id] || {};
-		var line = { name: String(rec.name || was.name || ''), at: now,
-			hand: hasHand ? rec.hand : was.hand,
-			folder: hasFold ? rec.folder : was.folder };
+		var line = { name: String(rec.name || was.name || ''), at: now, hand: rec.hand };
 		if (typeof rec.mobile === 'boolean') line.mobile = rec.mobile;
 		else if (typeof was.mobile === 'boolean') line.mobile = was.mobile;
 		if (JSON.stringify(was) !== JSON.stringify(line)) { kept[id] = line; moved = true; }
@@ -1444,7 +1413,7 @@ function notePlaceSeen() {
 }
 
 /// The roster the placement names a sleeping machine from: what each device last
-/// said about its hand and its folder, with a label to say it by.
+/// said about its hand, with a label to say it by.
 export function placeRoster() {
 	var kept = readJson(PLACE_SEEN_KEY, {});
 	if (!kept || typeof kept !== 'object') kept = {};
@@ -1452,7 +1421,7 @@ export function placeRoster() {
 	Object.keys(kept).forEach(function (id) {
 		var r = kept[id] || {};
 		out[id] = { name: deviceLabelFor(id) || r.name || '', lastSeen: r.at | 0,
-			hand: r.hand, folder: r.folder, mobile: r.mobile };
+			hand: r.hand, mobile: r.mobile };
 	});
 	return out;
 }
@@ -1518,12 +1487,9 @@ function postureNow() {
 		// routed like a phone. Explicit and per-device; the name inference is now only
 		// the fallback for a peer on a build that predates the field.
 		var mob = isMobileDeviceSelf();
-		// THE TWO PLACEMENT FIELDS: does this machine hold the real mounted folder,
-		// and can it reach a machine hand. They are what lets ANOTHER device place a
-		// compile or a publish without asking -- a phone that cannot hold a book's
-		// files hands the layout to a machine that can, and names it before the button
+		// THE PLACEMENT FIELD: can this machine reach a machine hand. It is what lets
+		// ANOTHER device place a publish without asking, and name it before the button
 		// is drawn rather than after a failure.
-		var fold = selfHoldsFolder();
 		var hnd  = selfHoldsHand();
 		// HOW BUSY THIS MACHINE IS: the turns it is running or holding (H1). The election
 		// on every other device passes a busy machine over for an idle one.
@@ -1532,8 +1498,8 @@ function postureNow() {
 		var bsy = 0, bchats = [];
 		try { var bh = busyHere(); bsy = DaimondPeer.busyForRec(bh, ''); bchats = bh.busyChats; } catch (e) { bsy = 0; bchats = []; }
 		return { id: id, name: name, att: att, svc: svc, run: run, mob: mob, hnd: hnd,
-			fold: fold, bsy: bsy, bchats: bchats,
-			args: [id, name, att, svc, run, mob, hnd, fold, bsy, bchats] };
+			bsy: bsy, bchats: bchats,
+			args: [id, name, att, svc, run, mob, hnd, bsy, bchats] };
 	} catch (e) { return null; }
 }
 
@@ -1550,14 +1516,14 @@ export function presenceTick(p) {
 		if (window.DaimondSync && DaimondSync.presenceDerived && DaimondSync.presenceDerived()
 			&& DaimondSync.postureDue && !DaimondSync.postureDue.apply(null, p.args)) return;
 		var id = p.id, name = p.name, att = p.att, svc = p.svc, run = p.run, mob = p.mob;
-		var hnd = p.hnd, fold = p.fold, bsy = p.bsy, bchats = p.bchats;
+		var hnd = p.hnd, bsy = p.bsy, bchats = p.bchats;
 		// Optimistic self-update, then beat the gateway on its OWN lightweight,
 		// non-waking presence path and adopt the authoritative map it answers
 		// with. NOT DaimondSync.push(): presence left the content parcel, so a
 		// beat no longer re-uploads ~163K nor wakes every other device -- the
 		// defect this replaces. A missed beat is safe.
 		_beatBusy = bsy > 0;
-		DaimondPresence.beat(id, name, Date.now(), att, svc, null, run, mob, hnd, fold, bsy, bchats);
+		DaimondPresence.beat(id, name, Date.now(), att, svc, null, run, mob, hnd, bsy, bchats);
 		// A beat the door could not take yet is OWED, not made. After a reload the first
 		// beat comes at unlock, before the gateway has signed this device in, so it sent
 		// nothing -- and the next was a whole interval away. For those 45 s every other
@@ -1569,7 +1535,7 @@ export function presenceTick(p) {
 			if (window.DaimondSync && DaimondSync.beatPresence
 				&& (!DaimondSync.canBeat || DaimondSync.canBeat())) {
 				sent = true;
-				DaimondSync.beatPresence(id, name, att, svc, run, mob, hnd, fold, bsy, bchats);
+				DaimondSync.beatPresence(id, name, att, svc, run, mob, hnd, bsy, bchats);
 			}
 		} catch (e) { /* the next beat carries it */ }
 		_beatOwed = !sent;

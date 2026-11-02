@@ -31,10 +31,9 @@ use crate::{
     diamond_link::{Link, LinksPage, Node, PageLink},
     diamond_versions::{Act, BodyRef, Cause, Found, OpenDelete, Route, Seen, Short, Stamp, Unplaced},
     engine::host::types::store::{CrystalHalf, Drained, FileAct, JournalKey, JournalRun, SettlePhase, Wants},
-    marks::{DiamondId, Hold, Live, Reach},
     rating::Author,
     store::call::{Fault, Handle, StoreBusy, StoreDown, StoreUnknown, Unbound, Unreadable},
-    tools::{Bound, CrystalPassed, FileRoot, Toolkit},
+    tools::{Bound, CrystalPassed, FileRoot},
 };
 
 use super::wire::{
@@ -97,7 +96,6 @@ macro_rules! no_bytes_enum {
 
 // Each one field is a private `String`.
 impl NoBytes for HexHash {}
-impl NoBytes for DiamondId {}
 
 no_bytes_tuple! {
     struct Handle(n);
@@ -117,8 +115,6 @@ no_bytes! {
     struct FoldNotes { task, next, open, decisions, found, edited, read }
     struct CrystalPassed { version, at, page, data, debug }
     struct Drained { captured }
-    struct Reach { attached, read_only, unconfirmed, nested }
-    struct Hold { r, path, ws, read }
     struct Link { id, ts, from, to, rel, note, by, share }
     struct Node { kind, rest }
     struct LinksPage { stamp, links, next }
@@ -147,17 +143,15 @@ no_bytes_enum! {
     enum SettlePhase { Archive, Record }
     enum FileAct { Mkdir, Delete, Move(a) }
     enum JournalKey { Round(a), Open }
-    enum FileRoot { Workspace, Opfs, Machine }
+    enum FileRoot { Workspace, Opfs }
     enum Short { Count, Bytes(a), Kept(a, b), Store(a) }
     enum OpenDelete { Go(a), Ask(a, b), Stopped(a) }
     enum Unplaced { Unrecorded, Unknown }
     enum Route { Go, Left, Ask(a) }
     enum Act { Go, Same, Changed, Left, Ask(a), Unasked, Unanswered }
-    enum Live { Diamond(a, b), Chat(a, b) }
     enum Bound {
-        NoWrite(a), NoRead(a), MayRead(a), OnlyUnder(a), OnlyWriteUnder(a), Toolkit(a), Nowhere,
-        NoSecretNames,
+        NoWrite(a), NoRead(a), MayRead(a), OnlyUnder(a), OnlyWriteUnder(a), Nowhere,
+        NoSecretNames, NoWriteTainted(a), NoReadTainted(a),
     }
-    enum Toolkit { Rust, Node, Python, Go, Git, Remote }
     enum Fault { Down(a), Busy(a), Unbound(a), Unknown(a) }
 }

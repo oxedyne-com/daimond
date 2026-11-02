@@ -733,7 +733,7 @@ for (let i = 0; i < 2; i++) { await pull(A); await push(A); await pull(B); await
 // `section('files', ...)` logs ITS OWN START unconditionally -- the trail always
 // carries one 'sync files' line whether or not anything inside it ran, so a count
 // of THAT line cannot tell a skip from a full re-apply. `file_list` calls can: A is
-// the folder-mounted desktop from guard (vii) above, and re-applying is precisely
+// the folder-mounted desktop, and re-applying is precisely
 // the walk this lane exists to stop paying for on an unchanged version. B has no
 // folder and is carried alongside for the settle-quiet half only -- a sandboxed
 // device's own `file_list` traffic (fonts, the typeset view) is not this guard's
@@ -947,7 +947,7 @@ for (const [label, s_] of [['B', B], ['C', C]]) {
 // TWO COMMITTERS, BY PREMISE. Since COMMIT-MERGED (2026-09-27) a device commits only an index known to
 // be the account's whole one at the version it stands at (daimond.js "A commit declares only an index
 // merged in full"). This account has two folder desktops beside the phone, and their parcels are never
-// whole, so after (vii) neither B nor the new C can be known whole: that is the gate's own corner
+// whole, so neither B nor the new C can be known whole: that is the gate's own corner
 // (specs/daimond_fixbrief_r53_commitmerged_20260927.md, decision 1; QCMG's two-desktop fleet), and
 // the gate holding here is its subject, not this section's. This section is about what two devices
 // that DO commit do with one file at two sets of addresses, so both are stated whole where they stand,
@@ -1061,7 +1061,7 @@ for (let r = 0; r < 2; r++) {
 // ASKED OF THIS FILE, AND SAID RATHER THAN QUIETLY NARROWED. Every section of this
 // verifier shares ONE mailbox and ONE chunk store, and B and C are the only devices
 // in this one: their commits name what THEY hold, so the Diamond, the chat and the
-// two desktops' book that sections (i) to (vii) offloaded from contexts now closed
+// the files that sections (i) to (vi) offloaded from contexts now closed
 // are swept here and stand missing for the rest of the run. That is this file's own
 // arrangement rather than a property of anything, and a whole-index count reads it as
 // a fault. What (viii) is about is one file held by two committers, so the question is

@@ -20,7 +20,6 @@ use crate::{
         turn::TurnLimits,
     },
     llm::LlmClient,
-    marks::Reach,
     prompts::{
         Block,
         Role,
@@ -52,7 +51,7 @@ pub struct Ask<'a> {
     pub steer:          &'a str,            // this Diamond's steering notes
     pub instructions:   &'a str,            // the person's standing instructions
     pub today:          &'a str,            // the `Today` block, composed where the clock's zone is known
-    pub reach:          Option<&'a Reach>,  // what the marks put in reach, `None` where unread here
+    pub focus:          Option<&'a [String]>,   // what the user attached, to look at first; `None` for none sent
     pub limits:         Limited<'a>,
     pub liveness_ms:    u64,                // zero leaves the engine's own
     pub words:          Option<(&'a str, &'a str)>, // a runner's: the tab's keeper and words log (U2a)
@@ -189,8 +188,8 @@ pub async fn compose_onto<H: Host>(agent: &Agent, ask: &Ask<'_>, registry: &Tool
         blocks.set(Block::Requirements,  &shown.requirements_text());
         blocks.set(Block::State,         &shown.state_text());
         blocks.set(Block::Decisions,     &shown.decisions_text());
-        if let Some(reach) = ask.reach {
-            blocks.set(Block::Attached, &attached(reach));
+        if let Some(focus) = ask.focus {
+            blocks.set(Block::Attached, &attached(focus));
         }
         // WHAT THIS DIAMOND'S TURNS DID, on every device (UNBLOCK-11), newest first.
         let activity: Vec<String> = host.store().activity_read_all(id).await
@@ -293,52 +292,31 @@ fn held_diamond(keeper: &str) -> Option<&str> {
     }
 }
 
-/// What the marks put in reach, as the turn's `Attached` block says it.
+/// What the user attached, as the turn's `Attached` block says it: where to look, never a grant
+/// (D-20261031-11).  Where this turn may write is the fence's, said with the folder above.
 ///
-/// Naming the marks is worth its tokens: a daimon whose user had just attached a book globbed
-/// for it, found nothing where it was pinned, and reported that the book did not exist.  A mark
-/// made on another device is out of reach here until confirmed, and a daimon told so asks the
-/// user for the one press rather than working around the refusal.
-pub fn attached(reach: &Reach) -> String {
-    let marked = reach.places();
-    let consult = &reach.read_only;
-    let waiting = &reach.unconfirmed;
+/// Naming them is worth its tokens: a daimon whose user had just attached a book globbed for it,
+/// found nothing where it was pinned, and reported that the book did not exist.
+pub fn attached(focus: &[String]) -> String {
+    let mut look: Vec<&String> = Vec::new();
+    for p in focus {
+        if !look.contains(&p) {
+            look.push(p);
+        }
+    }
     let mut out = String::new();
-    if marked.is_empty() && consult.is_empty() && waiting.is_empty() {
-        out.push_str(" Nothing is attached to this Diamond yet, so the folder above is the \
-            only place you may write. If the user asks for work on files that are not there, \
-            say which folder to add with the + in the Workspace group rather than creating it.");
-    } else if marked.is_empty() && consult.is_empty() {
-        out.push_str(" Nothing attached to this Diamond is in force on this device yet, so \
-            the folder above is the only place you may write.");
-    } else {
-        out.push_str("\n\nAttached to this Diamond, and reachable now:\n");
-        for p in &marked {
-            out.push_str("- `");
-            out.push_str(p);
-            out.push_str("` (yours to edit)\n");
-        }
-        for p in consult {
-            out.push_str("- `");
-            out.push_str(p);
-            out.push_str("` (read it; do not edit it)\n");
-        }
-        out.push_str("Look at what is attached before you answer a question about it. You \
-            may READ anywhere in the workspace, and you may write only in the places above.");
+    if look.is_empty() {
+        out.push_str(" Nothing is attached to this Diamond.");
+        return out;
     }
-    if !waiting.is_empty() {
-        out.push_str("\n\nAdded to this Diamond on another device, or before this \
-            device recorded added folders, and NOT yet in use on this device until the user confirms \
-            them here:\n");
-        for p in waiting {
-            out.push_str("- `");
-            out.push_str(p);
-            out.push_str("` (unconfirmed on this device)\n");
-        }
-        out.push_str("You may read these but not write in them yet. If the work needs one, \
-            tell the user it is unconfirmed on this device and ask them to confirm it -- one \
-            press on the notice above the message box -- rather than working around it.");
+    out.push_str("\n\nAttached to this Diamond, for you to look at first:\n");
+    for p in &look {
+        out.push_str("- `");
+        out.push_str(p);
+        out.push_str("`\n");
     }
+    out.push_str("Look at what is attached before you answer a question about it. Attaching \
+        points you at it; it does not change where you may write.");
     out
 }
 

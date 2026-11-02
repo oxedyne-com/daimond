@@ -306,6 +306,13 @@ pub fn runs_read_report(id: &str, answer: &str) -> String {
     s
 }
 
+/// Whom a scoped turn works for: a Diamond or a chat.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Scope {
+    Diamond(crate::diamond_meta::DiamondId),    // the Diamond
+    Chat(String),                               // the chat
+}
+
 /// Shared context every tool executes against.
 #[derive(Clone, Debug)]
 pub struct ToolContext<H: Host = DefaultHost> {
@@ -332,7 +339,7 @@ pub struct ToolContext<H: Host = DefaultHost> {
     /// underneath it.  Per agent, so two agents each track their own view.
     pub read_seen: ReadCache,
     /// The prefix rules this turn runs under, however a path is spelled (see [`Bound`] and
-    /// [`skill_bounds`]), and any toolchain the user granted it (see [`Toolkit`]).
+    /// [`skill_bounds`]).
     ///
     /// A turn bounded by a skill's declaration is bounded only for as long as the declaration
     /// cannot be edited.  Skills live in the workspace, so a skill that asked for nothing but
@@ -346,8 +353,7 @@ pub struct ToolContext<H: Host = DefaultHost> {
     /// Empty for an ordinary turn, where the user is the author and may edit their own skills.  A
     /// chat carries [`chat_bounds`] -- its own turn and every worker it dispatches alike, so a
     /// worker cannot reach what the conversation that sent it could not.  A Diamond's worker
-    /// carries [`diamond_bounds`] plus any [`toolkit_bounds`] the user granted that Diamond; a
-    /// skill's turn carries [`skill_bounds`].
+    /// carries [`diamond_bounds`]; a skill's turn carries [`skill_bounds`].
     //
     // Named `no_write` for the write lockout it began as.  `bounds` is the right name for it now,
     // and renaming it reaches `src/handler.rs`, which is not this change's remit.
@@ -381,15 +387,9 @@ pub struct ToolContext<H: Host = DefaultHost> {
     /// set, from its own folder ([`keeper_of_dir`]); empty for the Files panel and for the
     /// History's own write-back, whose changes are the user's.
     pub keeper: String,
-    /// The places the user marked into this turn's Diamond or chat that are NOT in force on this
-    /// device: marked on another device, or before marks recorded who made them, and not yet
-    /// confirmed here.  Information and never a rule -- they are in no allow-list -- so a turn
-    /// refused one of them is told why ([`ToolContext::refusal`]) and asks the user to confirm
-    /// it, rather than concluding the folder is not its to use or hunting another way in.
-    pub unconfirmed: Vec<String>,
-    // WHOSE MARKS this turn's writes are held to, read afresh at every call a model makes
-    // ([`ToolContext::bounds_now`]): `None` for a turn no mark scopes.
-    pub live: Option<crate::marks::Live>,
+    // Whom this turn works for, the Diamond or the chat its scope was set from: `None` for an
+    // unscoped turn.  Read by the dispatch check, which scopes a worker the same way.
+    pub scope: Option<Scope>,
     // Answering a MODEL's call rather than the user's own door (a panel): see `may_write`.
     // Set by `ToolRegistry::try_dispatch`, the door a turn's calls come through, and by no one
     // else.
@@ -471,8 +471,10 @@ impl<H: Host> ToolContext<H> {
         // A deny compares folded, so a disk that folds case or Unicode cannot be told one
         // spelling and write another (see [`fold`]).
         !self.no_write.iter().any(|b| match b {
-            Bound::NoWrite(prefix) => denied_under(&p, prefix),
-            _                      => false,
+            Bound::NoWrite(prefix)                  => denied_under(&p, prefix),
+            Bound::NoWriteTainted(prefix)
+                | Bound::NoReadTainted(prefix)      => self.is_tainted() && denied_under(&p, prefix),
+            _                                       => false,
         })
     }
 
@@ -516,7 +518,7 @@ impl<H: Host> ToolContext<H> {
     /// * outside the workspace, and the caller was WRITING -- *"that is not in this chat's
     ///   workspace"*, with the folders that are, since a model that knows where it may write
     ///   recovers in this turn rather than in the next one;
-    /// * inside the workspace and marked to be consulted -- *"added to be read, not edited"*;
+    /// * behind a deny this device keeps -- *"a guard"*;
     /// * Daimond's own directory -- *"those are not yours"*, for either verb;
     /// * and outside a both-verb allow-list, which nothing in this build declares but every rule
     ///   here still honours -- the same sentence as the first, because it is the same problem.
@@ -537,41 +539,15 @@ impl<H: Host> ToolContext<H> {
         let outside = !self.within_allow_list(&p)
             || (writing && !self.within_write_allow_list(&p));
         if outside {
-            // MARKED IN, BUT NOT ON THIS DEVICE.  Said before anything else is suggested, because
-            // the repair is one press by the user and not a new mark: a model told only "not in
-            // the workspace" asks for a mark that already exists, or goes looking for a way round.
-            let waiting = match self.unconfirmed_mark(&p) {
-                Some(m) => fmt!(
-                    " '{}' IS added, but on another device or before this device recorded added \
-                    folders, so it is not yet in use here until the user confirms it on this device: \
-                    tell them so and ask for that one press, on the notice above the message box, \
-                    rather than working around it.", m),
-                None    => String::new(),
-            };
-            // A chat's own words. The Diamond sentence below points at a Diamond that does not
-            // exist and at a panel that is not where a chat's scope is changed, and a model told to
-            // repair the wrong thing repairs the wrong thing.
-            if self.is_chat_scoped() {
-                return ("outside", fmt!(
-                    "Refused: '{}' is not in this chat's workspace, so it cannot be written or run \
-                    in. This chat's workspace is: {}. Inside it you may write and create freely and \
-                    need ask nobody for anything. Reading is not fenced -- you may read anything the \
-                    user can -- so if you only meant to look at it, read it. To CHANGE it, say which \
-                    path you need and let the user add the folder with the + in the Workspace group. The \
-                    paperclip attaches for reading and grants no writing. Note and Read add \
-                    nothing: they only decide what is quoted into the conversation.{}",
-                    path, self.allowed_places(), waiting));
-            }
-            // The control named is the one that grants writing: the folder's row in the
-            // Workspace panel, its \u{22ef}, "Add to <Diamond>" (`files.add_to`).  "Attach" sent
-            // people to the paperclip, which grants reading only (UNBLOCK-25).
+            // THE ONE REFUSAL (D-20261031-11): no folder is granted, so none is suggested.  A
+            // bounded turn here writes only its own files; the whole agreed tree is Kimberlite's.
+            let whose = if self.is_chat_scoped() { "this chat" } else { "this Diamond" };
             return ("outside", fmt!(
-                "Refused: '{}' is not in this Diamond's workspace, so it cannot be written or run \
-                in. This Diamond's workspace is: {}. Reading is not fenced -- you may read anything \
-                the user can -- so if you only meant to consult it, read it. To CHANGE it, say which \
-                folder you need and ask the person to add it: the \u{22ef} on that folder's row in \
-                the Workspace panel, then \"Add to\" this Diamond.{}",
-                path, self.allowed_places(), waiting));
+                "Refused: '{}' is outside {}'s own files, so it cannot be written or run in here. \
+                On this device {} writes only its own files: {}. Reading is not fenced -- you may \
+                read anything the user can -- so if you only meant to consult it, read it. To \
+                change files elsewhere, say so: on Kimberlite a chat reaches the whole agreed tree.",
+                path, whose, whose, self.allowed_places()));
         }
         if writing && self.by_model && self.is_tainted() && runs_as_him(path) {
             return ("runs_as_him", fmt!(
@@ -607,10 +583,12 @@ impl<H: Host> ToolContext<H> {
                 directory. Nothing was changed. If the task needs it, tell the person what you \
                 need from it.", path, why));
         }
+        // A deny no mark made (D-20261031-11): a guard this device keeps, such as Kimberlite's
+        // secret floor, which no turn writes through.
         if writing {
-            return ("read_only", fmt!(
-                "Refused: '{}' may be read here but not written. It was added to be consulted \
-                rather than edited.", path));
+            return ("guard", fmt!(
+                "Refused: '{}' is behind a guard this device keeps, so no tool writes, moves or \
+                deletes it. Nothing was changed. Tell the user what you would change there.", path));
         }
         let mut out = fmt!(
             "Refused: '{}' is inside Daimond's own directory, which holds the rules about what \
@@ -845,13 +823,6 @@ impl<H: Host> ToolContext<H> {
         })
     }
 
-    /// The place in [`ToolContext::unconfirmed`] that `p` -- normalised -- falls under, if any.
-    pub(super) fn unconfirmed_mark(&self, p: &str) -> Option<String> {
-        self.unconfirmed.iter()
-            .map(|m| normalise(m))
-            .find(|m| !m.is_empty() && under(p, m))
-    }
-
     /// The places this turn may WRITE, spelled for a model to read, or `"nothing at all"`.
     ///
     /// A refusal that says only where a path is NOT leaves the model guessing at where it may go,
@@ -950,10 +921,12 @@ impl<H: Host> ToolContext<H> {
         if self.read_grants().iter().any(|g| self.grant_admits(g, &p)) {
             return true;
         }
-        // Compared folded, as the write deny is (see [`denied_under`]).
+        // Compared folded, as the write deny is (see [`denied_under`]).  A tainted-only rule
+        // holds while the turn is tainted (R8, [`in_force`]).
         !self.no_write.iter().any(|b| match b {
-            Bound::NoRead(prefix) => denied_under(&p, prefix),
-            _                     => false,
+            Bound::NoRead(prefix)           => denied_under(&p, prefix),
+            Bound::NoReadTainted(prefix)    => self.is_tainted() && denied_under(&p, prefix),
+            _                               => false,
         })
     }
 
@@ -1358,10 +1331,7 @@ impl<H: Host> ToolContext<H> {
         c.probed.remove(&who);
         c.proof.remove(&who);
         // The holds are this TURN's and not the conversation's: another turn of the same
-        // Diamond may be mid-flight, and its yes is neither cleared nor inherited here.
-        c.kits.remove(&key);
-        c.places.remove(&key);
-        c.place_ask.remove(&key);
+        // Diamond may be mid-flight, and its refusals are neither cleared nor inherited here.
         c.refused.remove(&key);
         c.stopped.remove(&key);
         // THE WORKERS GO WITH THE TURN, unlike the taint and the network answer above.  A model
@@ -1373,171 +1343,6 @@ impl<H: Host> ToolContext<H> {
         w.spawned.clear();
         w.gathered.clear();
         w.worker_usd = 0.0;
-    }
-
-    /// The turn's bounds with any toolkit the user granted in the consent door since it began.
-    pub fn run_bounds(&self) -> Vec<Bound> {
-        let mut b = self.write_bounds();
-        let have = toolkits(&b);
-        let key = self.hold_key();
-        if let Some(ks) = lock_cache(&self.read_seen).kits.get(&key) {
-            for k in ks {
-                if !have.contains(k) {
-                    b.push(k.bound());
-                }
-            }
-        }
-        b
-    }
-
-    /// Hold toolkits the user just granted in the consent door, for the rest of this turn.
-    pub fn grant_kits(&self, kits: &[Toolkit]) {
-        let who = self.hold_key();
-        let mut c = lock_cache(&self.read_seen);
-        let held = c.kits.entry(who).or_default();
-        for k in kits {
-            if !held.contains(k) {
-                held.push(*k);
-            }
-        }
-    }
-
-    /// The bounds a call runs under: the turn's, intersected with what its marks give NOW.
-    ///
-    /// Read afresh at every call a model makes rather than kept from the turn's start, and that
-    /// is the fix for QA B F3 (2026-10-12): the scope was composed once per turn, so a mark
-    /// withdrawn while the turn waited on a question was written through by its next call.  A
-    /// live read at the call, rather than a generation counter bumped by every press and
-    /// removal, because the presses are the page's writes to local storage and a counter would
-    /// hold only for the writers that remembered to bump it; the read sees every writer.  It is
-    /// at the call and not inside `may_write`, which is synchronous and cannot read a sidecar.
-    /// The intersection only ever narrows: a mark pressed mid-turn waits for the next turn.
-    /// "A call" is each tool call, so every write and delete is checked at its own act.  A
-    /// record that cannot be read is an error, which the call answers in the UNREAD sentence
-    /// (QA A F1).
-    pub async fn bounds_now(&self) -> Outcome<Vec<Bound>> {
-        // A host with no store (LocalHost, the native half) reads no live record: the turn's own.
-        if let (true, Some(live)) = (H::HOSTED, &self.live) {
-            let b = res!(self.host().store().live_bounds(live).await);
-            return Ok(compose(&self.no_write, &b));
-        }
-        Ok(self.no_write.clone())
-    }
-
-    /// The turn's bounds with any place the user let it change in the consent door since it
-    /// began (E2).  A place is the same [`Bound::OnlyWriteUnder`] its mark gives the next turn.
-    pub fn write_bounds(&self) -> Vec<Bound> {
-        let mut b = self.no_write.clone();
-        let key = self.hold_key();
-        if let Some(ps) = lock_cache(&self.read_seen).places.get(&key) {
-            for p in ps {
-                let w = Bound::OnlyWriteUnder(p.clone());
-                if !b.contains(&w) {
-                    b.push(w);
-                }
-            }
-        }
-        b
-    }
-
-    /// Hold a place the user just let this turn change, for the rest of the turn.
-    pub fn grant_place(&self, place: &str) {
-        let who = self.hold_key();
-        let mut c = lock_cache(&self.read_seen);
-        let held = c.places.entry(who).or_default();
-        let p = normalise(place);
-        if !p.is_empty() && !held.contains(&p) {
-            held.push(p);
-        }
-    }
-
-    /// Can a write question be put on this turn?  A model's call in a Diamond's own scoped turn,
-    /// watched, and not in Bypass, whose promise is that nothing is asked.
-    pub fn can_ask_writes(&self, mode: Mode) -> bool {
-        self.by_model && !self.daimon_of.is_empty() && !self.is_unsupervised()
-            && !matches!(mode, Mode::Bypass) && self.is_write_scoped() && !self.is_chat_scoped()
-    }
-
-    /// The question a refused write of `path` could put, or `None` where the refusal is not one
-    /// a yes may lift: the record, Daimond's own directory, the app's store, a read-only mark,
-    /// or a turn that may change nothing.
-    pub fn place_ask_for(&self, path: &str) -> Option<PlaceAsk> {
-        let p = normalise(path);
-        if p.is_empty() || is_keeper_record(&p) || is_store_path(&p)
-            || in_daimond_dir(&p)
-            || !self.within_allow_list(&p) || self.within_write_allow_list(&p)
-            || self.no_write.iter().any(|b| matches!(b, Bound::Nowhere))
-        {
-            return None;
-        }
-        let denied = self.no_write.iter().any(|b| match b {
-            Bound::NoWrite(pre) => denied_under(&p, pre),
-            _                   => false,
-        });
-        if denied {
-            return None;
-        }
-        Some(match self.unconfirmed_mark(&p) {
-            Some(m) => PlaceAsk { path: p, place: m, waiting: true },
-            None    => PlaceAsk { place: narrowest_place(&p), path: p, waiting: false },
-        })
-    }
-
-    /// Keep the first askable write refused in this call, for its dispatch to ask about.
-    pub(super) fn note_place_ask(&self, path: &str) {
-        if !self.by_model {
-            return;
-        }
-        if let Some(a) = self.place_ask_for(path) {
-            let key = self.hold_key();
-            lock_cache(&self.read_seen).place_ask.entry(key).or_insert(a);
-        }
-    }
-
-    /// The write question this call left, taken so the next call starts with none.
-    pub fn take_place_ask(&self) -> Option<PlaceAsk> {
-        let key = self.hold_key();
-        lock_cache(&self.read_seen).place_ask.remove(&key)
-    }
-
-    /// Can a toolchain question be put on this turn?  See [`kits_to_ask`].
-    ///
-    /// # Arguments
-    /// * `mode` - Which rung the user is in.
-    /// * `home` - Whether the hand reported a home directory.
-    pub fn can_ask_kits(&self, mode: Mode, home: bool) -> bool {
-        home && !self.daimon_of.is_empty() && !self.is_unsupervised()
-            && !matches!(mode, Mode::Bypass)
-    }
-
-    /// Which toolkits to ask for before `argv` runs, given what this turn already holds.
-    ///
-    /// # Arguments
-    /// * `argv` - The command.
-    /// * `mode` - Which rung the user is in.
-    /// * `home` - Whether the hand reported a home directory.
-    pub fn kits_to_ask(&self, argv: &[String], mode: Mode, home: bool) -> Vec<Toolkit> {
-        kits_to_ask(argv, &toolkits(&self.run_bounds()), self.can_ask_kits(mode, home))
-    }
-
-    /// [`Self::can_ask_kits`] on `machine`: never on a whole-home fence, where there is no
-    /// toolkit to grant ([`Machine::whole_home`]).
-    ///
-    /// # Arguments
-    /// * `mode` - Which rung the user is in.
-    /// * `machine` - The machine the command runs on.
-    pub fn can_ask_kits_on(&self, mode: Mode, machine: &Machine) -> bool {
-        !machine.whole_home() && self.can_ask_kits(mode, machine.home.is_some())
-    }
-
-    /// [`Self::kits_to_ask`] on `machine`: none on a whole-home fence.
-    ///
-    /// # Arguments
-    /// * `argv` - The command.
-    /// * `mode` - Which rung the user is in.
-    /// * `machine` - The machine the command runs on.
-    pub fn kits_to_ask_on(&self, argv: &[String], mode: Mode, machine: &Machine) -> Vec<Toolkit> {
-        kits_to_ask(argv, &toolkits(&self.run_bounds()), self.can_ask_kits_on(mode, machine))
     }
 
     /// Record that the page has started a worker for this turn.
@@ -1625,7 +1430,7 @@ impl<H: Host> ToolContext<H> {
         self.turn_tag_for(&self.daimon_of)
     }
 
-    /// The key this turn's holds (`kits`, `places`, `place_ask`) are filed under: the
+    /// The key this turn's holds (`kits`, `refused`, `forks`) are filed under: the
     /// conversation and the turn, so one turn's yes is never another's.
     //
     // Call it BEFORE locking the cache: with no tag of its own it reads the setting there.
@@ -1637,9 +1442,6 @@ impl<H: Host> ToolContext<H> {
     pub fn end_turn(&self) {
         let key = self.hold_key();
         let mut c = lock_cache(&self.read_seen);
-        c.kits.remove(&key);
-        c.places.remove(&key);
-        c.place_ask.remove(&key);
         c.refused.remove(&key);
         c.stopped.remove(&key);
         c.forks.remove(&key);
@@ -1703,6 +1505,17 @@ impl<H: Host> ToolContext<H> {
     /// * `on` - Whether the tool is in the schema array this agent's requests carry.
     pub fn set_compound(&self, on: bool) {
         lock_cache(&self.read_seen).compound = on;
+    }
+
+    /// Read PDFs and pictures on `conf` from here on (P2.5d), written by
+    /// [`crate::agent::Agent::run_turn`] at every turn from [`crate::agent::compact::Limits`].
+    pub fn set_ocr(&self, conf: &OcrConf) {
+        lock_cache(&self.read_seen).ocr = conf.clone();
+    }
+
+    /// The engines and figures this agent reads a PDF or a picture on.
+    pub fn ocr(&self) -> OcrConf {
+        lock_cache(&self.read_seen).ocr.clone()
     }
 
     /// Is `compound` offered on this agent?
@@ -1888,7 +1701,6 @@ pub(super) mod licence {
         ///   handed to the primitive.
         pub fn licence(&self, path: &str) -> Result<Licence, String> {
             if !self.may_write(path) {
-                self.note_place_ask(path);
                 return Err(refusal_line(&self.refuse(path, true)));
             }
             if let Some(inner) = self.fenced_beneath(path) {
@@ -1898,17 +1710,6 @@ pub(super) mod licence {
                     time, or tell the user what you would move.", path, inner, path)));
             }
             Ok(Licence { path: path.to_string() })
-        }
-
-        /// [`ToolContext::licence`] under the marks as they stand now, not as they stood when this
-        /// call began: for an act that waited on the person, while a mark may have been withdrawn
-        /// or made read-only (UNBLOCK-26 U3).  Narrower or the same, never wider.
-        pub async fn licence_now(&self, path: &str) -> Result<Licence, String> {
-            let now = match self.bounds_now().await {
-                Ok(b)  => ToolContext { no_write: b, ..self.clone() },
-                Err(e) => return Err(refusal_line(&e.plain())),
-            };
-            ToolContext { no_write: now.write_bounds(), ..now.clone() }.licence(path)
         }
 
         /// The first fenced place strictly beneath `path`, or `None` where everything under it may
@@ -1926,7 +1727,13 @@ pub(super) mod licence {
             }
             let p = normalise(path);
             for b in &self.no_write {
-                if let Bound::NoWrite(prefix) = b {
+                let held = match b {
+                    Bound::NoWrite(prefix)          => Some(prefix),
+                    Bound::NoWriteTainted(prefix)
+                        | Bound::NoReadTainted(prefix) if self.is_tainted() => Some(prefix),
+                    _                               => None,
+                };
+                if let Some(prefix) = held {
                     let q = normalise(prefix);
                     // Folded, as every deny is (see [`super::denied_under`]): on a folding disk a
                     // move spelled `proj/sub` carries a mark spelled `proj/Sub/ro`.

@@ -1,7 +1,7 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
 import { Wasm } from './wasm.js';
-import { KITS, crystalRunning, pg, setKitsWaiting } from './state.js';
-import { friendlyError, getSecret, hideSecret, installSecretMask, mark, secretEye, t, tn, trail } from './util.js';
+import { crystalRunning, pg } from './state.js';
+import { getSecret, hideSecret, installSecretMask, mark, secretEye, t, tn, trail } from './util.js';
 import { persistChats } from './chatstore.js';
 import { chatHoldingTurn, deviceLabelFor, dispatchedChat, handOffTurn, peerSyncShim, peerTakeBack,
 	renderDispatchedBadges, selfDeviceId } from './handoff.js';
@@ -10,14 +10,12 @@ import { waitingOn } from './steer.js';
 import { Workers } from './workers.js';
 import { Files } from './files_view.js';
 import { continueTurn, retryTurn } from './sourcemenu.js';
-import { signalLinksChanged } from './links.js';
 import { diag, toast } from './passkey_phrase.js';
 import { ASK_CHOSE, CLOSE_SVG, askDrawable, askHolds } from './turns.js';
 import { busySay, selectChat, syncSendMode } from './chats.js';
 import { Pending, Prompts } from './pending.js';
-import { diamondApp, loadDiamonds, publishWithheld } from './diamonds.js';
-import { chatAttachList, chatScopePaths, chatScratchDir, chatWaiting, confirmMarkHere, grantHoldHere,
-	linkTo, markDevice, markForce, marksNotSaved, rootHere, rootedRef, waitingMarkAt } from './marks.js';
+import { publishWithheld } from './diamonds.js';
+import { chatScratchDir, placeHere } from './marks.js';
 import { tOr } from './settingsui.js';
 // page-split: end imports
 
@@ -390,8 +388,8 @@ export function closeTurnAsks(tag) {
 /// `opts.guard` marks a question whose yes must not fire from a stray or a held
 /// key: a running turn's own question (R6), raised while the person may be
 /// typing elsewhere, or a person's own press whose yes grants more than the row
-/// on screen (F1, 2026-09-25: "Use here" opened focused on itself, and a held
-/// Enter granted a mark nobody meant to confirm). It is focused on its safe
+/// on screen (F1, 2026-09-25: a card opened focused on its own yes, and a held
+/// Enter answered a question nobody had read). It is focused on its safe
 /// button and guarded against a stray key; see `guardUntil`. `opts.turn`, the tag of
 /// the turn whose question this is, lets that turn's Stop close it (`holdTurnAsk`).
 export function dialog(opts) {
@@ -538,8 +536,8 @@ export function dialog(opts) {
 		// onto "Let it go on", and one Space in the composer let a turn delete ten
 		// files); or a person's own press whose yes reaches wider than what is on
 		// screen, where the OS's own key-repeat can fire it before they have read
-		// the question (F1, 2026-09-25: one held Enter opened and then granted
-		// "Use here" in the same stroke). So such a card takes focus onto the SAFE
+		// the question (F1, 2026-09-25: one held Enter opened a card and then
+		// answered it yes in the same stroke). So such a card takes focus onto the SAFE
 		// button, and for `GUARD_MS` after it appears neither Enter nor Space
 		// answers it and its yes cannot be pressed: nobody has read a question that
 		// has been up for less than a second, so no key or click in that time is an
@@ -1013,7 +1011,6 @@ export function applyPermissionMode(name) {
 /// * `diamondId` - The Diamond this agent works for.
 export async function scopeAgentTo(app, diamondId, given) {
 	if (!app || typeof app.set_diamond_scope !== 'function'
-		|| typeof app.read_scope_reach !== 'function'
 		|| typeof app.diamond_scope !== 'function') {
 		throw new Error('This build of the engine cannot confine an agent to a diamond.');
 	}
@@ -1025,11 +1022,8 @@ export async function scopeAgentTo(app, diamondId, given) {
 	if (!b.own_dir) {
 		throw new Error('That diamond has no directory, so there is nothing to confine it to.');
 	}
-	// The marks are the engine's to read (HIST-SAFE U2); only the toolkits are the page's.
-	// The read is an async call and the apply a synchronous one, so the marks are read by the
-	// engine and applied in one step (ENGINE-REENTRY; both take `&self` since U3a).
-	var reach = await app.read_scope_reach(String(diamondId));
-	app.set_diamond_scope(reach, JSON.stringify(b.toolkits || []));
+	// The engine builds the reach from the id alone (D-20261031-11).
+	app.set_diamond_scope(String(diamondId));
 
 	// What the engine actually holds now. Compared rather than trusted: everything that can
 	// go wrong here is silent, and every silent failure is in the direction of more reach.
@@ -1047,15 +1041,6 @@ export async function scopeAgentTo(app, diamondId, given) {
 	if (allow.indexOf(b.own_dir) < 0) {
 		throw new Error('The scope took, but not for this diamond: the engine holds '
 			+ allow.join(', ') + ' and not ' + b.own_dir + '.');
-	}
-	// A toolkit the user granted and the engine dropped is a grant that will not work, and
-	// the daimon is about to be TOLD it has that toolchain. Better to say so than to let it
-	// meet a refusal it can do nothing about.
-	var want = (b.toolkits || []).slice().sort().join(',');
-	var have = (Array.isArray(got.toolkits) ? got.toolkits : []).slice().sort().join(',');
-	if (want !== have) {
-		throw new Error('This diamond is granted ' + (want || 'no toolchain')
-			+ ', but the engine took ' + (have || 'none') + '.');
 	}
 	return got;
 }
@@ -1159,27 +1144,10 @@ export function markAlone(app) {
 	}
 }
 
-/// A chat's fence inputs, in the shape `Files.bounds` gives a Diamond's. The one
-/// source for both `scopeChatTo` and the Workspace "Can change" rows, so the two
-/// cannot disagree about what the chat may write.
-/// A chat's holdings as the engine reads them, `[{ref, path, ws, state}]`: the synced half
-/// only. The engine counts each where this device's record has the press (HIST-SAFE U2).
-export function chatHoldsJson(chatId) {
-	return JSON.stringify(chatAttachList(chatId).map(function (a) {
-		return { ref: String(a.ref || ''), path: String(a.path || ''), ws: !!a.ws,
-			state: String(a.state || '') };
-	}));
-}
-
+/// A chat's own folder, in the shape `Files.bounds` gives a Diamond's: the one place a
+/// browser turn writes. Nothing attached widens it (D-20261031-11).
 export async function chatBounds(chatId) {
-	return {
-		own_dir:     chatScratchDir(chatId),
-		attached:    await chatScopePaths(chatId),
-		read_only:   [],
-		toolkits:    [],
-		unconfirmed: chatWaiting(chatId).filter(function (a) { return !!a.ws; })
-			.map(function (a) { return a.path; }),
-	};
+	return { own_dir: chatScratchDir(chatId) };
 }
 
 // ── Recent: the files a daimon, chat or worker last wrote ─────
@@ -1197,7 +1165,7 @@ var _recentChain = {};
 export function noteRecent(who, tool, args) {
 	var path = window.DaimondRecent ? DaimondRecent.pathOf(tool, args) : '';
 	if (!path || !who) return;
-	var e = { path: path, place: DaimondMarksHere.isStorePath(path) ? '' : rootHere(), at: Date.now() };
+	var e = { path: path, place: DaimondAppPaths.isStorePath(path) ? '' : placeHere(), at: Date.now() };
 	if (who.chat) {
 		var c = pg.chats.find(function (x) { return x.id === who.chat; });
 		if (!c) return;
@@ -1222,7 +1190,7 @@ export async function readRecent(id) {
 	catch (e) { return []; }		// none written yet
 }
 
-/// Confine a chat to its WORKSPACE: the folders the user marked into it, and nothing else.
+/// Confine a chat to its own directory, and nothing else (D-20261031-11).
 ///
 /// **One function for the conversation and for every worker it dispatches**, because they
 /// are one blast radius. The asymmetry that used to live here was a SURFACE one — a worker
@@ -1230,16 +1198,11 @@ export async function readRecent(id) {
 /// ordinary chat edited two files of the user's own book in a directory under no version
 /// control. No worker was involved, so a worker-only fence could not have helped.
 /// `chat_bounds` in src/tools.rs IS `diamond_bounds`, so both surfaces are fenced by one
-/// rule — and that rule fences the VERB: writing and running go where the user marked, and
-/// reading is free inside the workspace they already opened.
+/// rule — and that rule fences the VERB: writing and running go only in the chat's own
+/// directory.
 ///
-/// **The mark is the permission, and nothing here asks anything.** The friction is paid once,
-/// when a folder is marked into the workspace; inside it the model works as freely as before.
-///
-/// **What is handed over is the MARKED set and not the paperclip's whole list** — see
-/// `chatScopePaths`. Note and Read are a cost decision about what is quoted into the prompt
-/// and grant no reach whatever, so a caller passing everything attached would have made Note
-/// into a grant.
+/// **Nothing here asks anything, and nothing attached widens it.** What the paperclip adds is
+/// focus, a list for the turn to look at first, and never reach.
 ///
 /// Set, then read back and compared, exactly as `scopeAgentTo` is. A scope that failed
 /// silently would leave a turn with the reach of the whole workspace.
@@ -1257,13 +1220,9 @@ export async function scopeChatTo(app, chatId) {
 	}
 	var b = await chatBounds(chatId);
 	var scratch = b.own_dir;
-	// THE ENGINE SAYS WHAT IS IN FORCE (HIST-SAFE U2): it is handed the chat's holdings, the
-	// synced half, and counts each only where this device's record has the press. What is
-	// waiting for a press is worked out there too, and named in a refusal so the model asks
-	// the user to confirm it here (audit finding 6).
-	// The engine derives the scratch from the chat id itself (QA B F1); `scratch` is only
-	// the read-back check below.
-	app.set_chat_scope(String(chatId), chatHoldsJson(chatId));
+	// The engine derives the scratch from the chat id itself (QA B F1) and grants nothing
+	// beside it (D-20261031-11); `scratch` is only the read-back check below.
+	app.set_chat_scope(String(chatId));
 
 	var got = {};
 	try { got = JSON.parse(app.diamond_scope() || '{}') || {}; }
@@ -1516,28 +1475,10 @@ export function consentActPhrase(ask) {
 	return t('turn.consent_act_reach', { host: host });
 }
 
-/// A permit's `about` (`{ id, kits | place }`), read against THIS device's Diamonds:
-/// the Diamond, its name, and the kits named that this build knows.
-function permitAbout(about) {
-	var a = {};
-	try { a = JSON.parse(String(about || '{}')) || {}; } catch (e) { a = {}; }
-	var d = pg.diamonds.find(function (x) { return x.id === a.id; }) || null;
-	var kits = (Array.isArray(a.kits) ? a.kits : []).filter(function (n) {
-		return KITS.some(function (k) { return k.name === n; });
-	});
-	return {
-		diamond: d, name: d ? d.name : '', place: String(a.place || ''), kits: kits,
-		labels: kits.map(function (n) { return KITS.find(function (k) { return k.name === n; }).label; }),
-	};
-}
-
 /// What a handed-off turn wants to do, as a phrase after "permission to".
 ///
 /// `shown` is the ask's quoted thing (a change's path), read when `about` was cut short.
 function permitActPhrase(kind, about, shown) {
-	var a = permitAbout(about);
-	if (kind === 'place')   return t('permit.act_place', { place: a.place });
-	if (kind === 'toolkit') return t('permit.act_toolkit', { kits: a.labels.join(', ') });
 	if (kind === 'change') {
 		var c = changeAbout(about);
 		return t('permit.act_change', { name: changeName(c ? c.path : shown).name });
@@ -1555,39 +1496,15 @@ function changeAbout(about) {
 /// The headline and body for a permit asked from another device, in the words the
 /// runner's own dialog uses, the device that asked named, and what a yes keeps.
 function permitTileText(ask) {
-	var kind = String(ask.kind || ''), a = permitAbout(ask.about);
+	var kind = String(ask.kind || '');
 	var dev = deviceLabelFor(String(ask.dispatchedBy || ''));
 	var shown = String(ask.detail || '');
-	var head;
 	if (kind === 'change') {
 		var c = changeAbout(ask.about);
 		return { head: c ? changeHead(c) : t('permit.act_change', { name: changeName(shown).name }),
 			body: t('change.remote', { device: dev }) };
 	}
-	if (kind === 'toolkit')    head = t('kit.ask_title', { name: a.name, kits: a.labels.join(', ') });
-	else if (kind === 'place') head = t('place.ask_title', { name: a.name, place: a.place });
-	else                       head = t('permmode.run_title');
-	var keep = kind === 'toolkit' ? t('permit.kit_kept', { device: dev }) : t('permit.turn_only', { device: dev });
-	return { head: head, body: shown + '\n\n' + keep };
-}
-
-/// What THIS device keeps of its yes to a permit. A toolkit is a Diamond's record,
-/// synced, so the kits asked for are added to it here, those and no others. A place
-/// and a command keep nothing: the place is in force for the turn only (a mark is in
-/// force only where it was pressed, markshere.js R2), and a command is asked every time.
-async function answerPermitHere(kind, about, verdict) {
-	if (kind !== 'toolkit' || verdict !== 'allow') return;
-	var a = permitAbout(about);
-	if (!a.diamond || !a.kits.length) return;
-	var has = Array.isArray(a.diamond.toolkits) ? a.diamond.toolkits.slice() : [];
-	a.kits.forEach(function (n) { if (has.indexOf(n) < 0) has.push(n); });
-	try {
-		await diamondApp().set_toolkits(a.diamond.id, JSON.stringify(has));
-	} catch (e) {
-		trail('toolkit', 'the yes could not be recorded: ' + friendlyError(e));
-		toast(t('kit.save_failed') + ': ' + friendlyError(e), true);
-	}
-	try { await loadDiamonds(); } catch (e) { /* the list repaints on its next load */ }
+	return { head: t('permmode.run_title'), body: shown + '\n\n' + t('permit.turn_only', { device: dev }) };
 }
 
 // The permits this device was asked, by cid, so the runner's word on one can say what it was.
@@ -2472,16 +2389,8 @@ function permitAnswerGate(cid) {
 	return act;
 }
 
-/// Carry a permit's answer through, in the order that cannot leave a yes behind
-/// that nobody is waiting for (F3). Nothing happens for a press that was spent or
-/// late. A toolkit's yes is a WRITE to the Diamond, so before it the lease is read
-/// again and the question must still be up there under this cid: the runner takes
-/// it down the moment it stops waiting. Then the answer is posted, and only an
-/// answer that was posted is kept here. A no, a place and a command keep nothing.
-///
-/// A runner that stops waiting between the lease read and its receipt of the answer
-/// still leaves the kit written with the turn gone on without it; closing that needs
-/// the runner to acknowledge the answer, which this does not do.
+/// Carry a permit's answer through. Nothing happens for a press that was spent or
+/// late; otherwise the answer is posted, and nothing of it is kept on this device.
 ///
 /// # Arguments
 /// * `q`    - The question: `{ cid, kind, about }`, an ask or a blocker.
@@ -2489,20 +2398,9 @@ function permitAnswerGate(cid) {
 /// * `post` - Posts the answer; resolves true when the relay took it.
 async function settlePermitAnswer(turnId, q, v, act, post) {
 	if (act !== 'answer') return false;
-	var kit = String(q.kind) === 'toolkit' && v === 'allow';
-	if (kit) {
-		try { if (window.DaimondSync && DaimondSync.pull) await DaimondSync.pull(true); }
-		catch (e) { /* offline: the lease as held is read, and the post below fails */ }
-		var up = null;
-		try { up = (window.DaimondLease && DaimondLease.blocker) ? DaimondLease.blocker(String(turnId)) : null; }
-		catch (e) { up = null; }
-		if (!up || String(up.cid || '') !== String(q.cid || '')) return false;
-	}
 	var sent = false;
 	try { sent = !!(await post()); } catch (e) { sent = false; }
-	if (!sent) return false;
-	await answerPermitHere(String(q.kind), q.about, v);
-	return true;
+	return sent;
 }
 
 // HOW LONG A NETWORK QUESTION MAY STAND UNANSWERED.
@@ -2610,6 +2508,10 @@ async function egressAllowed(payloadJson, opts) {
 	// it would guard the case that was never in danger and miss the one that was.
 	// See `WITHHELD`.
 	if (req.tool === 'social_send' && publishWithheld()) return 'deny';
+	// NO TOOLKIT OR PLACE IS ASKED ANY MORE (D-20261031-11): a daimon reaches the agreed
+	// tree without a grant, so an older engine's ask is refused, never granted. Above the
+	// posture and the hand-off, so no branch below can answer it with a yes word.
+	if (req.tool === 'toolkit' || req.tool === 'place') return 'deny';
 	// THIS COMPUTER FINISHES WHAT IT WAS DISPATCHED, WITHOUT ASKING. When its
 	// owner has set the autonomous posture on this machine (`autonomousPosture`)
 	// AND the turn is unattended — a dispatched worker with nobody driving it,
@@ -2636,8 +2538,7 @@ async function egressAllowed(payloadJson, opts) {
 	var hrc = (!strict && pkind) ? permitRunnerTurn(req) : null;
 	if (hrc && hrc.auto) return DaimondPeer.PERMIT_YES[pkind];
 	if (!hrc && !strict && autonomousPosture() && (req.alone || !someoneCanAnswer())) {
-		// A permit takes its own yes word too: a bare `allow` for a place or a toolkit
-		// is read by the engine as "the user said not now".
+		// A permit takes its own yes word too (`PERMIT_YES`).
 		if (pkind) return DaimondPeer.PERMIT_YES[pkind];
 		// The yes WORD differs by tool: `run_net` and `social_send` read a bare
 		// `allow` as a refusal (each takes only its own word, see those branches
@@ -2695,142 +2596,6 @@ async function egressAllowed(payloadJson, opts) {
 		trail('run consent', 'nobody answered within ' + Math.round(runWaitMs / 1000)
 			+ 's, so the command did not run: ' + cmd.slice(0, 120));
 		return DaimondPeer.permitNoWord('timeout');
-	}
-	// A TOOLCHAIN ON FIRST USE (Workspace round 2, E1). The engine asks before a
-	// command that needs a toolkit this Diamond has not been granted: "Let <Diamond>
-	// use Rust?", the command shown as it will run, Allow / Not now. A yes is written
-	// to the Diamond here, as the head's Toolchains entry writes it, and comes back as
-	// `allow-kit` and nothing else: the posture above, the same-origin shortcut below
-	// and an older bundle all say `allow` or `deny`, and both mean no to the engine.
-	// So no path but a press on this card grants a toolkit (N3). A no is not written
-	// anywhere: the next command that needs it asks again (N2).
-	if (req.tool === 'toolkit') {
-		var kcmd = String(req.url || '');
-		var kreq = {};
-		try { kreq = JSON.parse(String(req.detail || '{}')) || {}; } catch (e) { kreq = {}; }
-		var kwant = (Array.isArray(kreq.kits) ? kreq.kits : []).filter(function (n) {
-			return KITS.some(function (k) { return k.name === n; });
-		});
-		var kd = pg.diamonds.find(function (x) { return x.id === kreq.id; });
-		if (!kcmd.trim() || !kwant.length || !kd) return 'deny';
-		// A HANDED-OFF TURN: this device's own Diamond record is read first, and a kit
-		// it already grants needs nobody (arm 7); otherwise the device the turn came
-		// from is asked, and it writes the yes (`answerPermitHere`), not this one.
-		var krc = strict ? null : permitRunnerTurn(req);
-		if (krc) {
-			var khave = Array.isArray(kd.toolkits) ? kd.toolkits : [];
-			if (kwant.every(function (n) { return khave.indexOf(n) >= 0; })) return 'allow-kit';
-			return await routePermitAsk(krc, 'toolkit',
-				kcmd.length > 300 ? (kcmd.slice(0, 300) + '…') : kcmd,
-				JSON.stringify({ id: kd.id, kits: kwant }));
-		}
-		if (!someoneCanAnswer()) {
-			trail('toolkit', 'nobody could answer, so the command was refused: ' + kcmd.slice(0, 120));
-			setKitsWaiting(kd.id, kwant, true);
-			return DaimondPeer.PERMIT_ABSENT_WORD;
-		}
-		var klabels = kwant.map(function (n) {
-			return KITS.find(function (k) { return k.name === n; }).label;
-		});
-		var kshown = document.createElement('pre');
-		kshown.className = 'dlg-pre';
-		kshown.textContent = kcmd.length > 300 ? (kcmd.slice(0, 300) + '…') : kcmd;
-		var kyes = await dialog({
-			turn:    req.turn,		// its Stop closes it (D2)
-			kind: 'confirm',
-			ask: 'toolkit',
-			title: t('kit.ask_title', { name: kd.name, kits: klabels.join(', ') }),
-			message: kshown,
-			okLabel: t('kit.ask_ok'),
-			cancelLabel: t('kit.ask_no'),
-			danger: false,
-			guard: true,
-			deadlineMs: netAskDeadline(opts),
-		});
-		// "Not now", or no answer before the deadline: kept as a ghost to grant later.
-		if (!kyes) {
-			setKitsWaiting(kd.id, kwant, true);
-			return 'deny';
-		}
-		setKitsWaiting(kd.id, kwant, false);
-		var khas = Array.isArray(kd.toolkits) ? kd.toolkits.slice() : [];
-		kwant.forEach(function (n) { if (khas.indexOf(n) < 0) khas.push(n); });
-		try {
-			await diamondApp().set_toolkits(kd.id, JSON.stringify(khas));
-		} catch (e) {
-			// The press still answers this command; only the record failed, so the grant
-			// holds for this turn and the next one asks again. Said where the user is
-			// looking, or they would believe it saved.
-			trail('toolkit', 'the yes could not be recorded: ' + friendlyError(e));
-			toast(t('kit.save_failed') + ': ' + friendlyError(e), true);
-		}
-		try { await loadDiamonds(); } catch (e) { /* the list repaints on its next load */ }
-		return 'allow-kit';
-	}
-	// A WRITE ON FIRST USE (Workspace round 2, E2). The engine asks after a model's write
-	// was refused for being outside what this Diamond may change: "Let <Diamond> change
-	// <place>?", the path shown, Allow / Not now. The place is the narrowest folder holding
-	// the file, or a mark made on another device, named with that device. A yes writes the
-	// same `holds` row and marks-here entry the ◈ writes (`grantHoldHere`), and comes back
-	// as `allow-place` alone, so no other answer grants (N3). A no is written nowhere (N2).
-	if (req.tool === 'place') {
-		var ppath = String(req.url || '');
-		var preq = {};
-		try { preq = JSON.parse(String(req.detail || '{}')) || {}; } catch (e) { preq = {}; }
-		var pplace = String(preq.place || '');
-		var pd = pg.diamonds.find(function (x) { return x.id === preq.id; });
-		if (!ppath.trim() || !pplace || !pd) return 'deny';
-		// A HANDED-OFF TURN: a mark in force on THIS device needs nobody (arm 7).
-		// Otherwise the sending device is asked, and its yes is this turn's only: a
-		// mark is in force only where it was pressed (markshere.js R2), so no row is
-		// written on either device.
-		var prc = strict ? null : permitRunnerTurn(req);
-		if (prc) {
-			var pks = ['dir', 'file'];
-			for (var pk = 0; pk < pks.length; pk++) {
-				var pl = await linkTo(pd.id, rootedRef(pks[pk], pplace));
-				if (pl && markForce(pd.id, pl)) return 'allow-place';
-			}
-			return await routePermitAsk(prc, 'place',
-				ppath.length > 300 ? (ppath.slice(0, 300) + '…') : ppath,
-				JSON.stringify({ id: pd.id, place: pplace }));
-		}
-		if (!someoneCanAnswer()) {
-			trail('place', 'nobody could answer, so the write was refused: ' + ppath.slice(0, 120));
-			return DaimondPeer.PERMIT_ABSENT_WORD;
-		}
-		var pwait = preq.waiting ? await waitingMarkAt(pd.id, pplace) : null;
-		var pbody = document.createElement('div');
-		var pshown = document.createElement('pre');
-		pshown.className = 'dlg-pre';
-		pshown.textContent = ppath.length > 300 ? (ppath.slice(0, 300) + '…') : ppath;
-		pbody.appendChild(pshown);
-		if (pwait) {
-			var pon = document.createElement('p');
-			pon.textContent = t('place.allowed_on', { device: markDevice(pwait) });
-			pbody.appendChild(pon);
-		}
-		var pyes = await dialog({
-			turn:    req.turn,		// its Stop closes it (D2)
-			kind: 'confirm',
-			ask: 'place',
-			title: t(pwait ? 'place.ask_here_title' : 'place.ask_title', { name: pd.name, place: pplace }),
-			message: pbody,
-			okLabel: t('kit.ask_ok'),
-			cancelLabel: t('kit.ask_no'),
-			danger: false,
-			guard: true,
-			deadlineMs: netAskDeadline(opts),
-		});
-		if (!pyes) return 'deny';
-		// The press answers this write whatever the record does; a record that did not
-		// land is said (`marksNotSaved`), and the next turn asks again.
-		try {
-			if (pwait) await confirmMarkHere(pd.id, pwait);
-			else await grantHoldHere(pd.id, pplace, pplace !== ppath);
-		} catch (e) { marksNotSaved(); }
-		signalLinksChanged();
-		return 'allow-place';
 	}
 	// MAY THIS TURN REACH THE NETWORK AT ALL — a different question from "may
 	// this command run", and asked once per turn rather than every time.

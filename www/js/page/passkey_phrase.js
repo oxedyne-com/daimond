@@ -1645,10 +1645,11 @@ var FORGET_CLEARS = [
 	// this device, which an account made here afterwards has not given, and
 	// the one-time notice about them.
 	'daimond-pause', 'daimond-pause-here', 'daimond-trig-here-notice',
-	// The marks pressed on this device (markshere.js). An account made here
-	// afterwards has pressed none of them, and must not inherit the grants.
+	// The marks pressed on this device, retired with the folder grants
+	// (D-20261031-11); still erased, since a device may hold one from before.
 	'daimond-marks-here',
-	// Toolchain questions not granted here (E3): the same press, the same reason.
+	// Toolchain questions not granted here (E3), retired with the grants
+	// (D-20261031-11); still erased, since a device may hold one from before.
 	'daimond-kits-waiting',
 	// The device roster and this device's own id. An account made here
 	// afterwards is a new account, and it must not inherit the erased
@@ -2409,7 +2410,7 @@ async function writeOpfsBytes(path, bytes) {
 	}
 	var leaf = parts[parts.length - 1];
 	// Under the file's write lock, so a restore's compare-and-swap cannot land over it.
-	var w = await DaimondCloud.fileLock().writable('sandbox', path,
+	var w = await DaimondCloud.fileLock().writable(path,
 		async function () { return await (await dir.getFileHandle(leaf, { create: true })).createWritable(); });
 	try { await w.write(bytes); }
 	catch (e) { try { await w.abort(); } catch (e2) { /* already gone */ } throw e; }
@@ -2570,11 +2571,6 @@ export async function doExport() {
 		'daimond-backup-' + new Date().toISOString().slice(0, 10) + '.json');
 }
 
-// A Diamond's link sidecar among a backup's files, the Diamond's id captured. The
-// store's own name only: a `.red/` or `facets/` copy from before the renames is
-// migrated into place only where the Diamond has no store here, and then this
-// device holds no entry for it to settle (`migrate` in src/wasm/diamond.rs).
-var SIDECAR_PATH_RE = /^diamonds\/([^/]+)\/\.daimond\/links\.jsonl$/;
 
 /// Restore a backup written by `doExport`. Chats and the ledger are merged
 /// into local storage, diamonds are recreated with their crystals, and every
@@ -2706,15 +2702,6 @@ export async function doImport() {
 				}
 				if (fdead) continue;
 			}
-			// A Diamond's link sidecar is written over whole, so a mark the backup
-			// no longer carries, or carries narrower, is removed or narrowed here --
-			// and this device's record must follow, or a later replay of the row is
-			// in force with no press here (QA 2026-09-24, F1). Settled from the bytes
-			// arriving and before the write, as the sync settles before its import:
-			// a write that fails leaves the entry narrowed and the row standing,
-			// which errs closed. Nothing is unioned back, so there is no loser's text.
-			var sc = SIDECAR_PATH_RE.exec(fp);
-			if (sc) DaimondMarksHere.settle(sc[1], new TextDecoder().decode(bytes), '');
 			try { await writeOpfsBytes(fp, bytes); restored++; wrotePaths.push(fp); }
 			catch (e) { /* skip one bad file, keep going */ }
 		}
@@ -2752,11 +2739,8 @@ export async function doImport() {
 				}
 				var st = byId[r.id];
 				if (!st) {
-					// Adopted whole: what was pressed on it here, before its record was
-					// lost, narrows to the copy restored (QA 2026-09-24, F1).
 					if (r.messages == null) r.messages = [];
 					byId[r.id] = r;
-					DaimondMarksHere.chatSettle(r.id, r.holds);
 					continue;
 				}
 				// `st` is a SUMMARY since seq 213: union the backup against the real local
@@ -2781,9 +2765,6 @@ export async function doImport() {
 					localSession:  localSession, remoteSession: r.session,
 					mtombs:        mtombs });
 				byId[r.id] = merged;
-				// As the sync does (`applyChats`): what the merged record no longer
-				// claims, this device no longer grants (R2).
-				DaimondMarksHere.chatSettle(r.id, merged.holds);
 			}
 			ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));
 		}

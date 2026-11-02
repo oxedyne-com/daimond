@@ -383,13 +383,8 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	out.hCap.rows = mc ? (mc.files || []).filter((f) => /^vault\/cap\//.test(f.path) && f.gone).length : 0;
 
 	// 3. A chat's delete, kept in the chat's own store.
-	// A chat's holding, pressed as the chat's workspace row presses it (chatGrant), and the
-	// holdings handed over as `chatAttachList` gives them: the engine reads the press itself.
+	// A chat's holding, handed over as `chatAttachList` gives them (a mark is focus only, GRANT-G2).
 	const CHAT = 'c1001';
-	for (const m of ['vault']) {
-		if (!window.DaimondMarksHere.chatGrant(CHAT, { ref: refOf(m), path: m }, here().root, { ws: true }))
-			throw new Error('chat holding not pressed: ' + m);
-	}
 	const chatEng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
 	chatEng.set_chat_scope(CHAT, chatHolds(['vault']));
 	const chatTurn = async (text) => {
@@ -432,8 +427,7 @@ const r = await p.evaluate(async ({ folder, mock }) => {
 	// 3. A Diamond's worker: kept in its Diamond's store, recorded at the daimon's turn end.
 	const wEng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
 	await press(['vault']);
-	const wReach = await wEng.read_scope_reach(String(id));
-	wEng.set_diamond_scope(wReach, '[]');
+	wEng.set_diamond_scope(String(id));
 	const workText = 'the worker deletes me';
 	await mod.write_file('vault/worker.md', workText);
 	let wSaid = '';

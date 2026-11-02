@@ -192,7 +192,7 @@ export function chatIdOk(id) {
 export function chatDiamondOk(c) {
 	var d = c && c.diamondId;
 	if (d == null || d === '') return true;
-	var m = window.DaimondMarksHere;
+	var m = window.DaimondAppPaths;
 	return !!(m && typeof m.isDiamondId === 'function' && m.isDiamondId(d));
 }
 

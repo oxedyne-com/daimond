@@ -34,7 +34,6 @@ function menu(focus, st, e) {
 		t:             (k, a) => k + (a ? JSON.stringify(a) : ''),
 		rootedRef:     (k, p) => k + ':' + p,
 		attachedOf:    () => null,
-		isUsersMark:   () => false,
 		fetchEntry() {}, downloadPath() {}, renameEntry() {}, deleteEntry() {},
 		fmtBytes: String, list() {}, curDir: '', freeEntry() {}, window: {},
 	};
@@ -69,19 +68,25 @@ test('an ordinary chat is named as this chat', () => {
 	assert.equal(menu(CHAT, ON).items[0].text, 'files.remove_from_chat');
 });
 
-test('no item where the press would not add or remove: waiting, own folder, nothing in focus', () => {
+// G2: a row in focus is in focus; there is no "waiting" state left for a press here to confirm.
+test('no item where the press would not add or remove: own folder, nothing in focus', () => {
 	const acts = (f, s) => menu(f, s).items.map((i) => i.act);
-	for (const a of [acts(DIAMOND, { on: true, away: true }), acts(DIAMOND, { on: true, own: true }), acts(null, OFF)]) {
+	for (const a of [acts(DIAMOND, { on: true, own: true }), acts(null, OFF)]) {
 		assert.ok(!a.includes('attach') && !a.includes('detach'), a.join(' '));
 	}
 });
 
 test('a phone draws the ghost ◈ at rest: its touch rule outranks the hover-only hide', () => {
-	// The hide is `.files-row .dm.ghost:not(.wait)` (0,4,0); a touch rule of three classes lost to it, and a
-	// phone, which has no visible ⋯ either, was left with no visible way to add anything.
-	const touch = css.slice(css.indexOf('@media (max-width: 760px), (pointer: coarse)'));
+	// The hide is `.files-row .dm.ghost` (0,3,0) since G2 took the waiting ◈'s `:not(.wait)`; the touch
+	// rule has the same weight, so it wins by coming later. A phone, which has no visible ⋯ either, would
+	// otherwise be left with no visible way to add anything.
+	const hide = css.search(/^\.files-row \.dm\.ghost, \.files-row \.files-more \{ visibility: hidden; \}/m);
+	assert.ok(hide >= 0, 'the hover-only hide is not where this test reads it');
+	const at = css.indexOf('@media (max-width: 760px), (pointer: coarse)');
+	assert.ok(at > hide, 'the touch rule must come after the hide it outranks');
+	const touch = css.slice(at);
 	const rule = touch.slice(0, touch.indexOf('\n}\n')).split('\n').find((l) => /\.dm\.ghost/.test(l) && /visibility:\s*visible/.test(l)) || '';
-	assert.match(rule, /\.files-row \.dm\.ghost:not\(\.wait\)/);
+	assert.match(rule, /\.files-row \.dm\.ghost\b/);
 });
 
 // HATE-8: the `+` picker shows the disk as it is. A folder made while it stands open (in a terminal, say)

@@ -1,57 +1,53 @@
 // gateway: none
-// verify_chatworkspace.mjs — a chat's footer says two different things, and only
-// one of them is a permission.
+// verify_chatworkspace.mjs — a chat's footer: what it holds, what each holding
+// costs, and the `+` that adds to it, drawn in every state including the empty one.
 //
-// The paperclip used to carry Note and Read as if they were the whole story. They
-// are not, and they never were two alternatives to a third thing: an attachment
-// carries TWO INDEPENDENT marks.
+// RE-AIMED 2026-11-02 (TRAIN-15b) to what the page draws now. The workspace MARK
+// is gone: no `Workspace` pill on a folder, no `DaimondAttach.chatScope`, and so no
+// fence built from the footer (D-20261031-11: neither Note nor Read grants anything).
+// The sections that asserted the mark ('the mark', 'independence' of the mark from
+// the cost) and their breaks (attachmarks, inertmark, notegrants, filemark) went
+// with it. What the footer still claims is asserted here:
 //
-//   * NOTE | READ is a COST decision about what goes into the turn's prompt. Note
-//     names a path so the user need not type it; Read quotes the contents. They
-//     are mutually exclusive, they are both reading, and NEITHER GRANTS ANY REACH.
-//   * IN THE WORKSPACE is the other one, and it is the blast radius: the folders
-//     this chat may read and change. A path can be in the workspace AND Read.
-//
-// So the footer is two groups, workspace first, and the difference between how
-// they are DRAWN is part of the claim. The workspace is one bounded box with a
-// rail down its edge, because its meaning is collective -- take a folder out and
-// the fence shrinks. The attachments below are a plain list of individuals.
-//
-// THE EMPTY STATE IS THE POINT. The fence exists from the moment a folder is
-// marked, so the group is drawn when it holds nothing and says, in words, that the
-// chat can reach nothing of the user's. The crystal footer hid itself at zero
-// until 4216383 and took the `+` inside it out of reach in exactly the state that
-// control exists for; this asserts that lesson rather than rediscovering it.
+//   * ONE GROUP, `.ws-group`, whose head band carries the fold, the view toggle and
+//     the `+`. A holding is a row with one control of its own: NOTE | READ, a COST
+//     decision about what goes into the turn's prompt. Note names the path; Read
+//     quotes the contents. Neither offers any reach, and no row draws a control
+//     that says it does.
+//   * THE EMPTY STATE IS THE POINT. The group is drawn when it holds nothing, the
+//     band says so in words (`dws.none_yet`; the old `.ws-empty` sentence is gone),
+//     and the `+` that ends the state is on the band. The crystal footer hid itself
+//     at zero until 4216383 and took the `+` with it; this asserts that lesson.
+//   * The holdings and their cost are written down: they survive a reload, and the
+//     sync parcel stays a fixed point however often the footer is drawn.
 //
 // EACH CHECK IS PROVED AGAINST BROKEN CODE FIRST. `--break <name>` serves a
 // deliberately damaged file to the real page through `page.route`; the run is then
 // expected to FAIL, and a break whose anchor does not match aborts rather than
 // passing quietly.
 //
-//   node dev/verify_chatworkspace.mjs --break hideatzero  # 1 fails: the empty group hides
-//   node dev/verify_chatworkspace.mjs --break attachmarks # 2 fails: attaching grants
-//   node dev/verify_chatworkspace.mjs --break inertmark   # 3 fails: the mark does nothing
-//   node dev/verify_chatworkspace.mjs --break notegrants  # 4 fails: Note becomes a grant
-//   node dev/verify_chatworkspace.mjs --break costclears  # 5 fails: the two marks are one
-//   node dev/verify_chatworkspace.mjs --break bothgroups  # 6 fails: a folder is drawn twice
-//   node dev/verify_chatworkspace.mjs --break filemark    # 7 fails: a file offers the mark
-//   node dev/verify_chatworkspace.mjs --break nohydrate   # 8 fails: the mark dies on reload
-//   node dev/verify_chatworkspace.mjs --break nostamp     # 8 fails: the mark never reaches disk
-//   node dev/verify_chatworkspace.mjs --break wscapless   # 9 fails: the box eats the composer
-//   node dev/verify_chatworkspace.mjs --break readfetch   # 10 fails: Read only asks
-//   node dev/verify_chatworkspace.mjs --break wsrestamp   # 11 fails: a read normalises the field
-//   node dev/verify_chatworkspace.mjs --break rendertouch # 12 fails: a redraw restamps the parcel
-//   node dev/verify_chatworkspace.mjs --break pickernomark # 13 fails: the group's + only attaches
-//   node dev/verify_chatworkspace.mjs                     # and then, clean
+//   node dev/verify_chatworkspace.mjs --break hideatzero   # 1 fails: the empty group hides
+//   node dev/verify_chatworkspace.mjs --break emptysilent  # 1 fails: the band says nothing
+//   node dev/verify_chatworkspace.mjs --break headingback  # 1 fails: a heading restates the rows
+//   node dev/verify_chatworkspace.mjs --break bothgroups   # 2 fails: a holding is drawn twice
+//   node dev/verify_chatworkspace.mjs --break wspill       # 2 fails: a row claims reach again
+//   node dev/verify_chatworkspace.mjs --break pickernoadd  # 3 fails: the group's + adds nothing
+//   node dev/verify_chatworkspace.mjs --break costinert    # 4 fails: Note/Read does nothing
+//   node dev/verify_chatworkspace.mjs --break readfetch    # 5 fails: Read only names the file
+//   node dev/verify_chatworkspace.mjs --break nohydrate    # 6 fails: the holdings die on reload
+//   node dev/verify_chatworkspace.mjs --break nostamp      # 6 fails: the holdings never reach disk
+//   node dev/verify_chatworkspace.mjs --break staterestamp # 7 fails: a draw normalises the record
+//   node dev/verify_chatworkspace.mjs --break rendertouch  # 7 fails: a redraw restamps the parcel
+//   node dev/verify_chatworkspace.mjs --break wscapless    # 8 fails: the box eats the composer
+//   node dev/verify_chatworkspace.mjs                      # and then, clean
 //
 //   bash dev/world.sh 5 --up
 //   eval "$(bash dev/world.sh 5 --env)"
 //   node dev/verify_chatworkspace.mjs
-import { readPage } from './pagesrc.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, shot, newChat, errors } from './harness.mjs';
+import { open, shot, newChat, errors, chat, mockLog, clearMockLog } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -66,73 +62,63 @@ const BREAKS = {
 	// crystal footer did until 4216383, and it takes the `+` down with it. The
 	// state that most needs saying becomes the one state nothing is said in.
 	hideatzero: {
-		file: 'js/daimond.js',
-		find: `		var held = chatAttachList(f.id);`,
-		with: `		var held = chatAttachList(f.id);
-		if (!held.length) { box.innerHTML = ''; box.style.display = 'none'; return; }`,
+		file: 'js/page/marks.js',
+		find: `	var held = chatAttachList(f.id);`,
+		with: `	var held = chatAttachList(f.id);
+	if (!held.length) { box.innerHTML = ''; box.style.display = 'none'; return; }`,
 	},
-	// Attaching a folder marks it into the workspace by itself. Plausible -- it is
-	// what the old code effectively did, since the fence was built from the whole
-	// attachment list -- and it carries the old meaning through under a new name.
-	attachmarks: {
-		file: 'js/daimond.js',
-		find: `		list[list.length - 1].ws = false;`,
-		with: `		list[list.length - 1].ws = !!dir;`,
+	// The group is drawn and the band says nothing: the empty state is on screen
+	// and silent, so nothing tells the reader the chat holds nothing.
+	emptysilent: {
+		file: 'js/page/marks.js',
+		find: `held.length ? tn('dws.count', held.length) : t('dws.none_yet')`,
+		with: `held.length ? tn('dws.count', held.length) : ''`,
 	},
-	// The control is drawn, is pressable, and does nothing. Two of lane 4's four
-	// defects on 2026-08-12 were exactly this, and no check on internal state can
-	// see it: this one goes through a real click.
-	inertmark: {
-		file: 'js/daimond.js',
-		find: `					on:      function () { chatAttachSetWorkspace(f.id, a.ref, !a.ws); },`,
-		with: `					on:      function () { /* the press does nothing */ },`,
-	},
-	// The fence is built from everything attached, so Note -- which costs a few
-	// tokens and is meant to grant nothing -- hands over read and write access to
-	// the path it names.
-	notegrants: {
-		file: 'js/daimond.js',
-		find: `			.filter(function (a) { return !!a.ws; })`,
-		with: `			.filter(function (a) { return true; })`,
-	},
-	// The two marks are one field after all: choosing the cost clears the
-	// permission. This is what a single three-valued state would do, and it is the
-	// design mistake the orthogonality exists to prevent.
-	costclears: {
-		file: 'js/daimond.js',
-		find: `		rec.state = state;
-		persistChats(); attachChanged();`,
-		with: `		rec.state = state; rec.ws = false;
-		persistChats(); attachChanged();`,
-	},
-	// The attachment group draws everything the chat holds rather than what is not
-	// already in the workspace, so a marked folder appears in both groups -- and
-	// the reader cannot tell whether that is one folder or two.
 	// The heading put back over the list. Nothing else changes and nothing breaks;
 	// what goes red is the one check that says the footer no longer restates in a
 	// heading what every row already says, which is the change the owner asked for.
 	headingback: {
-		file: 'js/daimond.js',
-		find: `			help:  t('attach.ws_help'),`,
-		with: `			title: workspaceTitle(),
-			help:  t('attach.ws_help'),`,
+		file: 'js/page/marks.js',
+		find: `		help:  t('attach.group_prompt'),`,
+		with: `		title: t('attach.group_prompt'),
+		help:  t('attach.group_prompt'),`,
 	},
-	// RE-AIMED 2026-08-24 with the group it damaged. It used to append the whole
-	// held list to the SECOND group, so a marked folder was drawn in both; there is
-	// one list now, so it appends the marked rows a second time. Same fault, same
-	// check red: a folder is drawn twice.
+	// The list draws the holdings twice. A holding is one decision, and a reader
+	// who sees it twice cannot tell whether that is one folder or two.
 	bothgroups: {
-		file: 'js/daimond.js',
-		find: `		var body = attachBody(marked.concat(noted).map(toTile),`,
-		with: `		var body = attachBody(marked.concat(noted).concat(marked).map(toTile),`,
+		file: 'js/page/marks.js',
+		find: `	var body = attachBody(held.map(toTile),`,
+		with: `	var body = attachBody(held.concat(held).map(toTile),`,
 	},
-	// A FILE is offered the workspace mark. The workspace is a union of folders; a
-	// fence around one file is a fence around its folder wearing a smaller name,
-	// and offering it invites a mark that means something else than it says.
-	filemark: {
-		file: 'js/daimond.js',
-		find: `				actions: a.dir ? [{`,
-		with: `				actions: true ? [{`,
+	// A row draws the retired `Workspace` pill again. Nothing behind it grants
+	// reach any more, so a pill on the row is a claim the app no longer makes.
+	wspill: {
+		file: 'js/page/marks.js',
+		find: `			actions: [],`,
+		with: `			actions: a.dir ? [{ cls: 'attach-ws', text: 'Workspace', pressed: false, on: function () {} }] : [],`,
+	},
+	// The `+` on the group's own band opens the picker, the user ticks a folder,
+	// presses Add -- and nothing is added. The dialog closing reads as "added".
+	pickernoadd: {
+		file: 'js/page/marks.js',
+		find: `		await Files.attachAdd(paths[i], picked[paths[i]].dir);`,
+		with: `		/* the ticked paths are dropped */`,
+	},
+	// Note/Read is drawn, is pressable, and does nothing. Two of lane 4's four
+	// defects on 2026-08-12 were exactly this, and no check on internal state can
+	// see it: the check goes through a real click.
+	costinert: {
+		file: 'js/page/marks.js',
+		find: `		rec.state = state;`,
+		with: `		/* the press does nothing */`,
+	},
+	// Read goes back to TELLING THE MODEL to open the file. Read grants no reach,
+	// so that is an instruction the app itself refuses -- the first Read a user
+	// presses produces a refusal the app caused.
+	readfetch: {
+		file: 'js/page/marks.js',
+		find: `	if (text && f.kind === 'chat') text += await attachReadBodies(list, f.id);`,
+		with: `	if (text && f.kind === 'chat') text += '';`,
 	},
 	// BOTH OF THESE WERE REAL, and both were found by the check they now break.
 	//
@@ -140,65 +126,47 @@ const BREAKS = {
 	// carried `holds`. It was written out faithfully and read back as nothing, and
 	// the first save after boot then wrote the empty list over the user's own.
 	nohydrate: {
-		file: 'js/daimond.js',
-		find: `			// workspace mark rides here, so it would have taken the fence with it.
-			holds: Array.isArray(c.holds) ? c.holds : [],`,
-		with: `			// the holdings are dropped on the way in`,
+		file: 'js/page/chatstore.js',
+		find: `		// workspace mark rides here, so it would have taken the fence with it.
+		holds: Array.isArray(c.holds) ? c.holds : [],`,
+		with: `		// the holdings are dropped on the way in`,
 	},
-	// `nostamp`: the store writes a record only when its stamp moves, and the stamp
-	// was `updatedAt : messages : session`. Attaching, flipping Note to Read and
-	// marking a folder in move none of those, so the put never happened -- while
-	// the in-memory mirror, which is what every reader reads, said it had.
+	// `nostamp`: the store writes a record only when its stamp moves. Attaching
+	// and flipping Note to Read move nothing else in the stamp, so without the
+	// holdings in it the put never happens -- while the in-memory mirror, which is
+	// what every reader reads, says it has.
 	nostamp: {
-		file: 'js/daimond.js',
-		find: `				+ ':' + JSON.stringify(c.holds || []);`,
-		with: `				;`,
+		file: 'js/page/chatstore.js',
+		find: `':' + JSON.stringify(c.holds || []) + ':m'`,
+		with: `':m'`,
 	},
-	// The workspace box has no cap, so it grows with every folder marked and
-	// pushes the composer down the screen -- the failure `--attach-cap` was
-	// measured to end, arriving again through the group beside it.
-	wscapless: {
-		file: 'css/app.css',
-		find: `	max-height: calc(var(--ws-cap) * var(--attach-row-h) + var(--attach-peek));
-	overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: thin; }`,
-		with: `	overflow-y: auto; }`,
-	},
-	// Read goes back to TELLING THE MODEL to open the file. Now that a chat is
-	// fenced to its workspace, that is an instruction the app itself refuses
-	// unless the path is also marked in -- so the first Read a user presses
-	// produces a refusal the app caused.
-	readfetch: {
-		file: 'js/daimond.js',
-		find: `		if (text && f.kind === 'chat') text += await attachReadBodies(list);`,
-		with: `		if (text && f.kind === 'chat') text += '';`,
-	},
-	// The `+` in the workspace group's own header attaches the folder and does not
-	// mark it in -- so the sentence beside it, which says to mark a folder in with
-	// that control, is half true and the fence does not move.
-	pickernomark: {
-		file: 'js/daimond.js',
-		find: `			if (mark && picked[paths[i]].dir) {`,
-		with: `			if (false && picked[paths[i]].dir) {`,
-	},
-	// The render hangs a stamp on every holding it draws -- "when this was last
-	// shown", say. Plausible bookkeeping, and it is the exact shape of the bug
-	// that put a paired iPhone into an endless sync loop: two collects with a
-	// redraw between them no longer agree, so the device always has something to
-	// send and the far end always has something to send back.
-	rendertouch: {
-		file: 'js/daimond.js',
-		find: `		held.forEach(function (a) { (a.ws ? marked : noted).push(a); });`,
-		with: `		held.forEach(function (a) { a.seen = Date.now(); (a.ws ? marked : noted).push(a); });`,
-	},
-	// The render normalises `ws` back onto the record it just read. Harmless
+	// The draw normalises `state` back onto the record it just read. Harmless
 	// looking, and it is how the sync parcel stops being a fixed point: a record
 	// that arrives from another device without the field gains one here, so the
 	// next collect differs from what was applied and the two devices push at each
 	// other for ever.
-	wsrestamp: {
-		file: 'js/daimond.js',
-		find: `		held.forEach(function (a) { (a.ws ? marked : noted).push(a); });`,
-		with: `		held.forEach(function (a) { a.ws = !!a.ws; (a.ws ? marked : noted).push(a); });`,
+	staterestamp: {
+		file: 'js/page/marks.js',
+		find: `			state:  a.state,`,
+		with: `			state:  (a.state = a.state || 'note'),`,
+	},
+	// The draw hangs a stamp on every holding -- "when this was last shown", say.
+	// Plausible bookkeeping, and the exact shape of the bug that put a paired
+	// iPhone into an endless sync loop: two collects with a redraw between them
+	// no longer agree.
+	rendertouch: {
+		file: 'js/page/marks.js',
+		find: `	var toTile = function (a) {`,
+		with: `	var toTile = function (a) {
+		a.seen = Date.now();`,
+	},
+	// The box has no cap, so it grows with every folder held and pushes the
+	// composer down the screen -- the failure `--attach-cap` was measured to end.
+	wscapless: {
+		file: 'css/app.css',
+		find: `.ws-body {
+	max-height: calc(var(--attach-cap) * var(--attach-row-h) + var(--attach-peek));`,
+		with: `.ws-body {`,
 	},
 };
 
@@ -230,7 +198,10 @@ const { page } = s;
 async function installBreak() {
 	if (!BREAK) return;
 	const spec = BREAKS[BREAK];
-	const src = readPage(path.join(WWW, spec.file), 'utf8');
+	// The file AS SERVED, read raw: the browser fetches each www/js/page/ module by
+	// itself, so `readPage` (which reads those as nothing, they being in the view)
+	// would find no anchor in them.
+	const src = fs.readFileSync(path.join(WWW, spec.file), 'utf8');
 	const n = src.split(spec.find).length - 1;
 	if (n !== 1) {
 		console.error(`break '${BREAK}': the anchor appears ${n} times in ${spec.file}, `
@@ -248,9 +219,10 @@ await signInAs(s, 'chatworkspace');
 await connectMock(s);
 await page.waitForTimeout(1500);
 
+
 const T = (k, v) => page.evaluate(([k, v]) => DaimondI18n.t(k, v || undefined), [k, v || null]);
 
-// The files and folders a person would have: two folders to mark, one file to
+// The files and folders a person would have: two folders to hold, one file to
 // quote. Written through the tool door, which is how a turn would have made them.
 const FILE_BODY = '# Spec\nthe sentence that proves the quote is the FILE\n';
 await page.evaluate(async (body) => {
@@ -266,75 +238,61 @@ const focus = await page.evaluate(() => window.DaimondAttach.focus());
 const chatId = focus && focus.id;
 check('a chat is in focus', !!chatId && focus.kind === 'chat', JSON.stringify(focus));
 
-/// What the footer is showing, split by WHAT EACH ROW CLAIMS.
-///
-/// RE-AIMED 2026-08-24, when the two groups became one list. This used to read
-/// `.ws-group .arte-row` and `.at-group .arte-row` and take the section a row sat
-/// in as the statement of what it had granted. The sections are gone -- the owner
-/// objected to being charged a split list for what every row already says -- so
-/// the question is now put to the ROW, through the one control that answers it:
-/// the `Workspace` pill and its `aria-pressed`.
-///
-/// The property is unchanged and every check below still means what it said: a
-/// row that has widened the fence is told apart, in ink, from one merely put in
-/// front of the model. Only the place the answer is read from has moved, from
-/// the furniture around the row to the row itself.
+/// What the footer is showing, row by row, with the controls each row carries.
 const footer = () => page.evaluate(() => {
 	const read = (r) => ({
+		kind:  (r.querySelector('.arte-kind') || {}).textContent || '',
 		path:  (r.querySelector('.arte-open') || {}).textContent || '',
 		state: (r.querySelector('.attach-state') || {}).textContent || '',
-		ws:    (r.querySelector('.attach-ws') || {}).getAttribute
-			? r.querySelector('.attach-ws').getAttribute('aria-pressed') : null,
+		read:  r.querySelector('.attach-state')
+			? r.querySelector('.attach-state').getAttribute('aria-pressed') : null,
 		hasWsBtn: !!r.querySelector('.attach-ws'),
 	});
-	const all = [...document.querySelectorAll('#chat-attachments .arte-row')].map(read);
 	const box = document.getElementById('chat-attachments');
+	const all = box ? [...box.querySelectorAll('.ws-group .arte-row')].map(read) : [];
+	const band = box && box.querySelector('.ws-group [data-act="foot-fold"]');
 	return {
-		shown:   !!box && box.style.display !== 'none',
-		// No heading is drawn any more, and its absence is asserted rather than
-		// assumed: a heading creeping back is the change this file would want to
-		// catch, because it is the thing he asked to be rid of.
-		heads:   [...(box || document).querySelectorAll('.attach-group-title')].length,
-		empty:   ((box || document).querySelector('.ws-empty') || {}).textContent || '',
-		add:     !!(box || document).querySelector('.ws-group [data-act="attach-add"]'),
+		shown: !!box && box.style.display !== 'none' && !!box.querySelector('.ws-group'),
+		// No heading is drawn, and its absence is asserted rather than assumed:
+		// a heading creeping back is the thing he asked to be rid of.
+		heads: box ? box.querySelectorAll('.attach-group-title').length : 0,
+		band:  band ? band.textContent.trim() : '',
+		add:   !!(box && box.querySelector('.ws-group [data-act="attach-add"]')),
+		pills: box ? box.querySelectorAll('.attach-ws').length : 0,
 		all,
-		ws:      all.filter(r => r.ws === 'true'),
-		at:      all.filter(r => r.ws !== 'true'),
 	};
 });
+const rowOf = (f, p) => f.all.find(r => r.path === p);
 
-const scopeOf = () => page.evaluate((id) => window.DaimondAttach.chatScope(id), chatId);
+/// Press the Note/Read control on the row for `p`, found by its path rather than
+/// by position: first-in-DOM would be whichever row happens to be drawn first.
+const pressCost = (p) => page.evaluate((p) => {
+	const row = [...document.querySelectorAll('#chat-attachments .arte-row')]
+		.find(r => (r.querySelector('.arte-open') || {}).textContent === p);
+	const btn = row && row.querySelector('.attach-state');
+	if (!btn) return 'no control';
+	btn.click();
+	return 'clicked';
+}, p);
 
 // ── 1. THE EMPTY STATE, which is the state that most needs saying ──────
 await section('the empty state', async () => {
 	const f = await footer();
-	check('WITH NOTHING MARKED, THE FOOTER IS ON SCREEN',
-		f.shown === true && f.add === true, JSON.stringify({ shown: f.shown, add: f.add }));
-	// RE-AIMED. This asked that the group be HEADED with `astat.workspace_browser`,
-	// and the heading is deliberately gone: it restated what each row says, which
-	// is what the owner objected to. What survives is the claim the heading was
-	// there to make -- that the footer says which workspace, in the app's own
-	// words -- and it is made by the empty sentence and by the tiles themselves.
-	// So this now asserts the absence, because a heading drifting back in is the
-	// regression a reader of this file would want caught.
+	check('WITH NOTHING HELD, THE GROUP IS ON SCREEN', f.shown === true, JSON.stringify({ shown: f.shown }));
 	check('and it carries no group heading, because every row says its own claim',
 		f.heads === 0, `${f.heads} heading(s) still drawn`);
-	const want = await T('attach.ws_empty');
-	check('and it says, in words, that the chat can reach nothing of the user’s',
-		f.empty === want && /reach nothing/.test(want), JSON.stringify(f.empty));
+	const want = await T('dws.none_yet');
+	check('and its band says, in words, that nothing is held',
+		!!want && f.band.indexOf(want) >= 0, JSON.stringify({ band: f.band, want }));
 	check('and the list itself is empty, because nothing is attached',
 		f.all.length === 0, JSON.stringify({ rows: f.all.length }));
 	// The lesson of 4216383: the control that ends this state must be reachable
 	// FROM this state.
-	check('and the control that marks the first folder is inside that group',
-		f.add === true, String(f.add));
-	const sc = await scopeOf();
-	check('and the fence is handed nothing at all', Array.isArray(sc) && sc.length === 0,
-		JSON.stringify(sc));
+	check('and the `+` that adds the first holding is on that band', f.add === true, String(f.add));
 });
 await shot(s, 'chatworkspace-1-empty');
 
-// ── 2. Attaching is not marking ────────────────────────────────────────
+// ── 2. Attaching: one row per holding, one control per row ─────────────
 await section('attaching', async () => {
 	await page.evaluate((id) => {
 		window.DaimondAttach.chatToggle(id, 'dir:[browser]papers', true, 'papers');
@@ -342,63 +300,28 @@ await section('attaching', async () => {
 	}, chatId);
 	await page.waitForTimeout(600);
 	const f = await footer();
-	check('ATTACHING A FOLDER PUTS IT IN FRONT OF THE MODEL, not in the workspace',
-		f.ws.length === 0 && f.at.some(r => r.path === 'papers'), JSON.stringify(f.at));
-	// RE-AIMED from the group's heading to the row's own control. The claim is the
-	// same one: a thing merely put in front of the model SAYS SO, and does not have
-	// to be told apart by which half of the footer it landed in.
-	check('and each says so on itself: an unmarked folder offers the pill, unpressed',
-		f.at.some(r => r.path === 'papers' && r.hasWsBtn && r.ws === 'false'),
-		JSON.stringify(f.at.find(r => r.path === 'papers')));
-	check('the folder’s tile carries BOTH controls: a cost, and the mark',
-		f.at.some(r => r.path === 'papers' && r.state === 'Note' && r.ws === 'false'),
-		JSON.stringify(f.at.find(r => r.path === 'papers')));
-	check('a FILE is offered no workspace mark, because a workspace is folders',
-		f.at.some(r => r.path === 'papers/spec.md' && !r.hasWsBtn),
-		JSON.stringify(f.at.find(r => r.path === 'papers/spec.md')));
-	const sc = await scopeOf();
-	check('AND NOTHING ATTACHED HAS WIDENED THE FENCE', sc.length === 0, JSON.stringify(sc));
+	const note = await T('attach.note');
+	check('ATTACHING PUTS EACH IN THE LIST, the folder as a folder',
+		!!rowOf(f, 'papers') && !!rowOf(f, 'papers/spec.md') && rowOf(f, 'papers').kind === 'dir',
+		JSON.stringify(f.all));
+	check('and each appears ONCE in the list, not twice',
+		f.all.filter(r => r.path === 'papers').length === 1
+			&& f.all.filter(r => r.path === 'papers/spec.md').length === 1, JSON.stringify(f.all));
+	check('each starts at Note, the cheaper cost, unpressed',
+		f.all.length > 0 && f.all.every(r => r.state === note && r.read === 'false'), JSON.stringify(f.all));
+	// The workspace mark is retired (D-20261031-11): neither cost grants anything,
+	// and no row may draw a control that says otherwise.
+	check('AND NO ROW OFFERS A WORKSPACE MARK, because attaching grants nothing',
+		f.pills === 0 && f.all.every(r => !r.hasWsBtn), `${f.pills} pill(s)`);
+	const band = f.band;
+	check('and the band counts what is held', /2/.test(band), JSON.stringify(band));
 });
+await shot(s, 'chatworkspace-2-attached');
 
-// ── 3. The mark, driven as a person drives it ──────────────────────────
-await section('the mark', async () => {
-	// A REAL CLICK on the pill of the row for `papers`. Found by its path, not by
-	// position: `.attach-ws` first-in-DOM would be whichever row happens to be
-	// drawn first.
-	const clicked = await page.evaluate(() => {
-		const row = [...document.querySelectorAll('#chat-attachments .arte-row')]
-			.find(r => (r.querySelector('.arte-open') || {}).textContent === 'papers');
-		const btn = row && row.querySelector('.attach-ws');
-		if (!btn) return 'no control';
-		btn.click();
-		return 'clicked';
-	});
-	check('the folder’s workspace control is there to press', clicked === 'clicked', clicked);
-	await page.waitForTimeout(700);
-	const f = await footer();
-	check('PRESSING IT MARKS THE FOLDER IN, and the row says so in ink',
-		f.ws.some(r => r.path === 'papers'), JSON.stringify({ ws: f.ws, at: f.at }));
-	// RE-AIMED. "Not in both groups" was a real property and there is only one
-	// list now, so it is counted rather than located: a folder drawn twice is
-	// still the fault, and `bothgroups` still reddens this.
-	check('and it appears ONCE in the list, not twice',
-		f.all.filter(r => r.path === 'papers').length === 1, JSON.stringify(f.all));
-	check('carrying both marks: the cost it had, and the mark it now has',
-		f.ws.some(r => r.path === 'papers' && r.state === 'Note' && r.ws === 'true'),
-		JSON.stringify(f.ws.find(r => r.path === 'papers')));
-	const sc = await scopeOf();
-	check('AND THE FENCE THE ENGINE IS HANDED IS NOW THAT FOLDER',
-		sc.length === 1 && sc[0] === 'papers', JSON.stringify(sc));
-});
-await shot(s, 'chatworkspace-2-marked');
-
-// ── 3b. The `+` in that group means what its position says ────────────
+// ── 3. The `+` on the group's band adds what is ticked ─────────────────
 await section('the group’s own +', async () => {
-	// The empty state tells the reader to mark a folder in "with the paperclip, or
-	// with + above". So the `+` that sits in the workspace group marks in what it
-	// adds -- driven here as a person drives it, through the dialog, because a
-	// control that opens and then quietly does something else is exactly what two
-	// of lane 4's defects were.
+	// Driven as a person drives it, through the dialog, because a control that
+	// opens and then quietly does nothing is what two of lane 4's defects were.
 	await page.click('#chat-attachments .ws-group [data-act="attach-add"]', { force: true });
 	await page.waitForSelector('.attach-pick-row', { timeout: 10000 });
 	const ticked = await page.evaluate(() => {
@@ -408,74 +331,70 @@ await section('the group’s own +', async () => {
 		row.querySelector('input').click();
 		return 'ticked';
 	});
-	check('the picker lists the folder to be marked in', ticked === 'ticked', ticked);
+	check('the picker lists the folder to be added', ticked === 'ticked', ticked);
 	await page.click('.dlg-ok', { force: true });
 	await page.waitForTimeout(1000);
 	const f = await footer();
-	check('THE GROUP’S OWN `+` MARKS THE FOLDER IN, as the sentence beside it says',
-		f.ws.some(r => r.path === 'books' && r.ws === 'true'), JSON.stringify(f.ws));
-	const sc = await scopeOf();
-	check('and the fence is both folders now', sc.indexOf('books') >= 0 && sc.indexOf('papers') >= 0,
-		JSON.stringify(sc));
+	check('THE GROUP’S OWN `+` ADDS THE TICKED FOLDER to the list',
+		!!rowOf(f, 'books') && rowOf(f, 'books').kind === 'dir', JSON.stringify(f.all));
+	const held = await page.evaluate((id) => (window.DaimondAttach.chatList(id) || []).map(a => a.path), chatId);
+	check('and the chat holds it', held.indexOf('books') >= 0, JSON.stringify(held));
 });
 
-// ── 4. The two marks are independent ───────────────────────────────────
-await section('independence', async () => {
-	// Read on the marked folder: the cost changes, the permission must not.
-	await page.evaluate(() => {
-		const row = [...document.querySelectorAll('#chat-attachments .arte-row')]
-			.find(r => (r.querySelector('.arte-open') || {}).textContent === 'papers');
-		row.querySelector('.attach-state').click();
-	});
+// ── 4. Note ⇄ Read, through a real click ───────────────────────────────
+await section('the cost', async () => {
+	const read = await T('attach.read'), note = await T('attach.note');
+	const c1 = await pressCost('papers');
+	check('the folder’s Note/Read control is there to press', c1 === 'clicked', c1);
 	await page.waitForTimeout(600);
 	let f = await footer();
-	check('CHANGING THE COST LEAVES THE PERMISSION WHERE IT WAS',
-		f.ws.some(r => r.path === 'papers' && r.state === 'Read' && r.ws === 'true'),
-		JSON.stringify(f.ws.find(r => r.path === 'papers')));
-	let sc = await scopeOf();
-	// The MARKED SET, unchanged by a cost decision. Asserted as membership rather
-	// than as a list of one: the `+` above marked a second folder in, and a check
-	// that counted would be measuring that instead of what it says it measures.
-	check('and the fence has not moved', sc.indexOf('papers') >= 0, JSON.stringify(sc));
+	check('PRESSING NOTE MAKES IT READ, and the row says so',
+		!!rowOf(f, 'papers') && rowOf(f, 'papers').state === read && rowOf(f, 'papers').read === 'true',
+		JSON.stringify(rowOf(f, 'papers')));
+	let held = await page.evaluate((id) => (window.DaimondAttach.chatList(id) || [])
+		.map(a => ({ path: a.path, state: a.state })), chatId);
+	check('and the chat’s own record says read',
+		held.some(a => a.path === 'papers' && a.state === 'read'), JSON.stringify(held));
 	// And back, so the rest of the run reads a Note folder.
-	await page.evaluate(() => {
-		const row = [...document.querySelectorAll('#chat-attachments .arte-row')]
-			.find(r => (r.querySelector('.arte-open') || {}).textContent === 'papers');
-		row.querySelector('.attach-state').click();
-	});
+	await pressCost('papers');
 	await page.waitForTimeout(600);
 	f = await footer();
-	check('and the cost goes back without disturbing it either',
-		f.ws.some(r => r.path === 'papers' && r.state === 'Note' && r.ws === 'true'),
-		JSON.stringify(f.ws.find(r => r.path === 'papers')));
+	check('and pressing it again puts it back to Note',
+		!!rowOf(f, 'papers') && rowOf(f, 'papers').state === note && rowOf(f, 'papers').read === 'false',
+		JSON.stringify(rowOf(f, 'papers')));
 });
 
 // ── 5. Read quotes the file rather than asking for it ──────────────────
 await section('read quotes', async () => {
-	// papers/spec.md is attached and NOT marked in, which is the case the fence
-	// makes interesting: the chat may quote it and may not open it.
-	await page.evaluate(() => {
-		const row = [...document.querySelectorAll('#chat-attachments .arte-row')]
-			.find(r => (r.querySelector('.arte-open') || {}).textContent === 'papers/spec.md');
-		row.querySelector('.attach-state').click();
-	});
+	await pressCost('papers/spec.md');
 	await page.waitForTimeout(900);
-	const val = await page.$eval('#chat-input', e => e.value);
-	check('READ PUTS THE FILE’S OWN WORDS IN THE COMPOSER',
-		val.indexOf('the sentence that proves the quote is the FILE') >= 0,
-		JSON.stringify(val.slice(0, 160)));
+	// What the MODEL is sent is the claim, so it is read off the wire: the chat's
+	// first message carries the holdings' note, and a Read quotes the file in it.
+	clearMockLog();
+	await chat(s, 'what does the spec say?');
+	const said = [];
+	const walk = (v) => {
+		if (typeof v === 'string') said.push(v);
+		else if (Array.isArray(v)) v.forEach(walk);
+		else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+	};
+	mockLog().forEach(walk);
+	const all = said.join('\n');
+	check('the turn reached the model', said.length > 0, `${said.length} string(s) logged`);
+	check('READ PUTS THE FILE’S OWN WORDS IN WHAT THE MODEL IS SENT',
+		all.indexOf('the sentence that proves the quote is the FILE') >= 0,
+		JSON.stringify(all.slice(0, 200)));
 	// The tool door numbers every line; the raw door does not. Quoting the tool's
 	// answer would put a gutter down the user's file, which this app has shipped
 	// twice before.
 	check('and quotes the file, not the tool’s numbered view of it',
-		!/^\s*1\t/m.test(val), JSON.stringify(val.slice(0, 160)));
-	const sc = await scopeOf();
-	check('while READ STILL GRANTS NOTHING: the file is not in the fence',
-		sc.indexOf('papers/spec.md') < 0, JSON.stringify(sc));
+		!/^\s*\d+\t# Spec/m.test(all), '');
+	check('and Note names the folder without quoting it',
+		/Note [^\n]*papers/.test(all), '');
 });
 await shot(s, 'chatworkspace-3-read-quoted');
 
-// ── 6. The mark is written down ────────────────────────────────────────
+// ── 6. The holdings are written down ───────────────────────────────────
 await section('persistence', async () => {
 	await page.reload({ waitUntil: 'domcontentloaded' });
 	// A reload always locks -- identity.js holds the wrapping key in memory and
@@ -483,50 +402,38 @@ await section('persistence', async () => {
 	await signInAs(s, 'chatworkspace');
 	await page.waitForTimeout(1800);
 	const held = await page.evaluate((id) => (window.DaimondAttach.chatList(id) || [])
-		.map(a => ({ path: a.path, ws: !!a.ws, state: a.state })), chatId);
-	check('THE MARK SURVIVES A RELOAD, because it lives on the chat’s own record',
-		held.some(a => a.path === 'papers' && a.ws === true), JSON.stringify(held));
-	check('and so does the cost beside it',
-		held.some(a => a.path === 'papers/spec.md' && a.state === 'read' && a.ws === false),
-		JSON.stringify(held));
+		.map(a => ({ path: a.path, state: a.state })), chatId);
+	check('THE HOLDINGS SURVIVE A RELOAD, because they live on the chat’s own record',
+		held.some(a => a.path === 'papers') && held.some(a => a.path === 'books'), JSON.stringify(held));
+	check('and so does the cost beside each',
+		held.some(a => a.path === 'papers/spec.md' && a.state === 'read')
+			&& held.some(a => a.path === 'papers' && a.state === 'note'), JSON.stringify(held));
 });
 
 // ── 7. The parcel is still a fixed point ───────────────────────────────
 await section('the parcel', async () => {
-	// A parcel from ANOTHER DEVICE, whose records predate the field: apply it,
-	// collect, and the bytes must come back. A render that normalised `ws` onto
-	// what it read would fail here and nowhere else -- and that is the shape of
-	// the bug that put a paired iPhone into an endless sync loop.
-	// AWAITED, all of them. `collectSync` is async, and a check that compared two
-	// unawaited promises compared `undefined` with `undefined` and passed while
-	// proving nothing -- which is how five verifiers went green for the wrong
-	// reason in one night here.
-	//
-	// A HOLDING WITHOUT THE FIELD is what makes this bite: a record written before
-	// `ws` existed, or one that arrived from a device that has not been updated.
-	// A render that normalised the field onto what it read would gain a byte
-	// between two collects, and two devices would then push at each other for ever.
+	// A parcel from ANOTHER DEVICE whose holding lacks a field the draw reads:
+	// collect, redraw, apply, and the bytes must come back. AWAITED, all of them:
+	// a check that compared two unawaited promises compared `undefined` with
+	// `undefined` and passed while proving nothing.
 	const same = await page.evaluate(async (id) => {
 		const one = window.DaimondAttach.chatList(id)[0];
-		delete one.ws;
+		delete one.state;
 		// STRINGIFIED THE MOMENT IT IS COLLECTED. A parcel carries the holdings BY
-		// REFERENCE, so two parcels held as objects and compared at the end are two
-		// views of one array: every later mutation appears in both, and the
-		// comparison can only ever say they are equal. Measured -- a break that
-		// stamped every holding on every redraw passed this check until the
-		// stringify moved here.
+		// REFERENCE, so two parcels held as objects are two views of one array and
+		// can only ever compare equal.
 		const j = (p) => JSON.stringify(p.chats || []);
 		const p1 = await DaimondCore.collectSync();
 		const mine = (p1.chats || []).find(c => c.id === id) || {};
-		const fieldless = (mine.holds || []).some(h => !('ws' in h));
+		const fieldless = (mine.holds || []).some(h => !('state' in h));
 		const holds = (p1.chats || []).reduce((n, c) => n + (c.holds || []).length, 0);
 		const s1 = j(p1);
 		// A redraw, which is the moment a normalising or stamping read would happen.
 		window.DaimondAttach.render();
 		await new Promise(r => setTimeout(r, 400));
 		const s2 = j(await DaimondCore.collectSync());
-		// And the fixed point itself: apply what this device would send, and it
-		// must still send exactly that.
+		// The fixed point itself: apply what this device would send, and it must
+		// still send exactly that.
 		await DaimondCore.applySync(JSON.parse(JSON.stringify(p1)));
 		await new Promise(r => setTimeout(r, 500));
 		const s3 = j(await DaimondCore.collectSync());
@@ -544,10 +451,8 @@ await section('the parcel', async () => {
 		same.fixed === true, same.fixed ? '' : `sent ${same.a}\n         got  ${same.c}`);
 });
 
-// ── 8. The composer stays put however much is marked ───────────────────
+// ── 8. The composer stays put however much is held ─────────────────────
 await section('the cap', async () => {
-	const chat2 = await page.evaluate(() => window.DaimondAttach.focus());
-	const id = (chat2 && chat2.id) || chatId;
 	const geom = () => page.evaluate(() => {
 		const b = document.querySelector('#chat-attachments .ws-body');
 		const bar = document.querySelector('.chat-input-bar');
@@ -558,55 +463,41 @@ await section('the cap', async () => {
 			bar: Math.round(r(bar).top),
 		};
 	});
-	// Marked, and UNREACHABLE -- a folder on a machine whose workspace is not the
-	// open one. Two things at once: it proves a mark that cannot be reached is
-	// still shown in the workspace group rather than silently dropped (§7), and it
-	// keeps the composer's own text out of the measurement. A reachable path is
-	// named in the generated prefix, the prefix is in the textarea, and the
-	// textarea grows -- so the composer would move for a reason that is the user's
-	// own text rather than the footer's doing.
-	const mark = async (from, to) => {
+	// UNREACHABLE folders -- on a machine whose workspace is not the open one.
+	// Two things at once: it proves a holding that cannot be reached is still
+	// shown rather than silently dropped (§7), and it keeps the composer's own
+	// text out of the measurement.
+	const hold = async (from, to) => {
 		for (let i = from; i < to; i++) {
-			await page.evaluate(([id, i]) => {
-				const ref = `dir:[machine:elsewhere]bulk-${i}`;
-				window.DaimondAttach.chatToggle(id, ref, true, `bulk-${i}`);
-				window.DaimondAttach.chatWs(id, ref, true);
-			}, [id, i]);
+			await page.evaluate(([id, i]) => window.DaimondAttach.chatToggle(
+				id, `dir:[machine:elsewhere]bulk-${i}`, true, `bulk-${i}`), [chatId, i]);
 		}
 		await page.waitForTimeout(500);
 		return geom();
 	};
 	// AT the cap and then well past it. Measuring from BELOW the cap would compare
-	// a box still growing with one that has stopped, and the difference would be
-	// the cap doing its job rather than the failure this is looking for.
-	const atTwo = await mark(0, 6);
-	const atMany = await mark(6, 15);
-	// MEASURED, not merely equal. Two absences are equal to each other, and a
-	// footer that was not drawn at all would otherwise pass both checks below
-	// with nothing on screen -- which is how a verifier passes for the wrong
-	// reason.
-	check('fifteen folders are marked into the workspace, in a box that is drawn',
-		atMany.rows >= 15 && atTwo.box > 0 && atTwo.bar > 0, JSON.stringify({ atTwo, atMany }));
+	// a box still growing with one that has stopped.
+	const atSix = await hold(0, 6);
+	const atMany = await hold(6, 15);
+	// MEASURED, not merely equal: two absences are equal to each other.
+	check('fifteen more folders are held, in a box that is drawn',
+		atMany.rows >= 15 && atSix.box > 0 && atSix.bar > 0, JSON.stringify({ atSix, atMany }));
 	check('and the box was already at its cap with six of them',
-		atTwo.inside > atTwo.box + 10, `${atTwo.inside}px of rows in a ${atTwo.box}px box`);
-	check('PAST THE CAP THE WORKSPACE BOX STOPS GROWING',
-		atMany.box > 0 && atMany.box === atTwo.box,
-		`${atTwo.box}px at 6 rows, ${atMany.box}px at 15`);
-	check('AND THE COMPOSER HAS NOT MOVED', atMany.bar > 0 && atMany.bar === atTwo.bar,
-		`${atTwo.bar} at 6 rows, ${atMany.bar} at 15`);
+		atSix.inside > atSix.box + 10, `${atSix.inside}px of rows in a ${atSix.box}px box`);
+	check('PAST THE CAP THE BOX STOPS GROWING',
+		atMany.box > 0 && atMany.box === atSix.box, `${atSix.box}px at 6, ${atMany.box}px at 15`);
+	check('AND THE COMPOSER HAS NOT MOVED', atMany.bar > 0 && atMany.bar === atSix.bar,
+		`${atSix.bar} at 6, ${atMany.bar} at 15`);
 	check('and the box scrolls, so the rows past the fold can still be reached',
 		atMany.inside > atMany.box + 10, `${atMany.inside}px of rows in a ${atMany.box}px box`);
-	// A mark made in another workspace is still a mark: it is shown, saying where
-	// it lives, rather than vanishing into an empty box the user cannot account for.
 	const strays = await page.evaluate(() => [...document.querySelectorAll(
 		'#chat-attachments .arte-row.shut .arte-why')].length);
-	check('and an unreachable mark is shown in the workspace, saying where it lives',
-		strays > 0, String(strays));
+	check('and an unreachable holding is shown, saying where it lives', strays > 0, String(strays));
 	await shot(s, 'chatworkspace-4-capped');
 	// Off again, so the shots below are of a footer a person would recognise.
 	for (let i = 0; i < 15; i++) {
 		await page.evaluate(([id, i]) => window.DaimondAttach.chatToggle(
-			id, `dir:[machine:elsewhere]bulk-${i}`, true, `bulk-${i}`), [id, i]);
+			id, `dir:[machine:elsewhere]bulk-${i}`, true, `bulk-${i}`), [chatId, i]);
 	}
 	await page.waitForTimeout(400);
 });
@@ -624,7 +515,7 @@ await section('the look', async () => {
 		return { bar: Math.round(b.top), h: Math.round(b.height), win: window.innerHeight,
 			footer: Math.round(box.getBoundingClientRect().height) };
 	});
-	check('ON A PHONE THE COMPOSER IS STILL ON SCREEN under the two groups',
+	check('ON A PHONE THE COMPOSER IS STILL ON SCREEN under the footer',
 		!!fits && fits.h > 0 && fits.footer > 0 && fits.bar + fits.h <= fits.win + 1,
 		JSON.stringify(fits));
 	await page.setViewportSize({ width: 1500, height: 950 });
@@ -632,20 +523,9 @@ await section('the look', async () => {
 });
 
 // 502s are the local gateway proxy (/api) not running in this world -- a world
-// is the browser tiers only, as dev/world.sh says in as many words.
-//
-// 401 IS NOT EXCLUDED, AND WAS. On 2026-08-24 this check went red four runs out
-// of six on an unchanged tree, naming a session the page had never had: every
-// world's `/api` was proxied to a fixed :9002, so whether the answer was 502 or
-// 401 depended on which OTHER lane had a gateway up at that moment. The 401 went
-// into the filter, which fixed the symptom in this file and in three others, and
-// left two files without it -- a per-file remedy for a fault in `dev/world.sh`.
-//
-// The gateway is a world's own now (9700 + N) and no other world's is reachable
-// from here, so a 401 on this page can only be a gateway THIS world started. That
-// is the app being refused by something it asked, which is exactly what "nothing
-// threw along the way" is for. Excluding it would now be a lie about what a 401
-// means.
+// is the browser tiers only, as dev/world.sh says in as many words. A 401 is NOT
+// excluded: a world's gateway is its own (9700 + N), so a 401 here can only be a
+// gateway THIS world started refusing the app, which is what this check is for.
 const GATEWAY_NOISE = /502 \(Bad Gateway\)/;
 const errs = errors(s).filter(e => !GATEWAY_NOISE.test(e));
 check('nothing threw along the way', errs.length === 0, errs.slice(0, 3).join(' | '));

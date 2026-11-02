@@ -60,27 +60,27 @@
 	<p>保存領域が埋まってくると、いちばん長く使われていないファイルからひとりでにクラウドへ戻ります。空けることは削除ではありません。ファイルは一覧に残り、求められれば戻ってくるからです。</p>
 	<p>daimon は、欲しいファイルがクラウドにあるとき、はっきりそれを告げられ、自分で取ってくる操作をしなければなりません。自分の判断で降ろせる量には上限があります。</p>
 
-	<h2 id="s4">フォルダーを渡す</h2>
-	<p>Every row in the tree has a <span class="ui">◈</span> and a <span class="ui">⋯</span>. The ◈ adds the file or folder to what is in focus, or takes it out, and the ⋯ says the same in words: <span class="ui">Add to</span> the diamond by name, or <span class="ui">Add to this chat</span>, and <span class="ui">Remove from</span> once it is in. On a computer both appear when the pointer is over the row; on a phone the ◈ is always drawn and a long press opens the ⋯. A new diamond starts with nothing added, and its <span class="ui">Can change</span> list says where to add from.</p>
+	<h2 id="s4">ファイルやフォルダーを添付する</h2>
+	<p>ツリーの各行には <span class="ui">◈</span> と <span class="ui">⋯</span>があります。◈ はそのファイルやフォルダーをフォーカス中のものに添付し、また外します。⋯ は同じことを言葉で示します: <span class="ui">追加先</span> (diamond の名前)、または <span class="ui">このチャットに追加</span>、そして <span class="ui">外す</span> (添付済みのとき)。コンピューターでは行にポインターを乗せると両方が現れます。スマートフォンでは ◈ が常に表示され、長押しで ⋯ が開きます。新しい diamond は何も添付されていない状態で始まります。</p>
 	<ul>
-		<li><strong>焦点にあるのが diamond のとき。</strong> そのファイルやフォルダーは、その diamond の作業領域に加わり、あなたが外すまで残ります。</li>
+		<li><strong>焦点にあるのが diamond のとき。</strong> ファイルやフォルダーは、外すまでその diamond に添付されたままです。</li>
 		<li><strong>焦点にあるのがチャットのとき。</strong> その添付は、次のやり取りだけのものです。</li>
 	</ul>
 	<p>添付は何もコピーしません。ファイルはそのままの場所にあり、diamond はそれを指し示すだけです。ですから一つのフォルダーを二つの diamond に添付しても、フォルダーは一つのままです。</p>
 	<p>それぞれの添付は、 <span class="ui">メモ</span>——パスを知っておく値打ちがあり、数トークンで済みます——か、 <span class="ui">読み込み</span>——中身をいま求めていることを意味します——のどちらかです。ずっと安いメモから始めてください。どちらでも、生成される文章はあなたが打つものの前にメッセージ欄に入り、そこで編集したり消したりできます。</p>
-	<p>作業領域のグループで <em>フォルダー</em> にチェックを入れることが許可になり、このチャットや diamond はその中身を読んだり変えたりできるようになります。ファイルにチェックを入れても、それはモデルの前に置かれるだけです。diamond の <span class="ui">到達範囲</span> の行が、書き込める可能性のあるフォルダーをすべて名指しし、両方のツリーでそれを示します。</p>
+	<p>添付は「ここを見て」と伝えるだけです。daimon がもともと届かないものを与えることはなく、添付を外しても何も取り上げません。daimon が何に届くかは、次の節のとおり、そのターンがどこで動くかで決まります。</p>
 
 	<h3 id="s5">daimon が開けるもの</h3>
-	<p>daimon が開けるのは、自分の diamond の作業領域にあるものだけです。それ以外は、daimon にも、送り出したどのヘルパーにも、ファイルツールを通じて読み書きできません。検査は、すべてのファイルツールが通る唯一の扉のところにあるコンパイル済みのコードにあり、そのコードは公開されたソースから再現可能に組み立てられるバンドルの中にあります。ですからこれは、プロンプトの中の指示ではありません。</p>
+	<p>Kimberlite では、daimon はあなたのホームフォルダーに届きます。それでも Daimond は、鍵やパスワードのように秘密として名指しされたファイルと、Daimond 自身と Kimberlite の記録は外しておきます。ブラウザーでは、daimon が変更できるのはその diamond 自身のファイルだけで、チャットはそれ自身のフォルダーだけです。それ以外は、daimon にも、daimon が送り出すどのヘルパーにも、ファイルツールで書き込めません。この検査は、すべてのファイルツールが通る唯一の扉にあるコンパイル済みコードの中にあり、そのコードは公開ソースから再現可能にビルドされるバンドルに入っています。つまりプロンプト内の指示ではありません。</p>
 	<p>この規則が定めるのは daimon が届く範囲であって、読んだものの行き先については何も語りません。開いたものは、やり取りの残りと一緒にあなたのモデルプロバイダーへ行くからです。</p>
-	<p>Deleting or wiping counts the same way. Past a limit you set under <span class="ui">Settings</span> — eight in a turn by default — the turn stops there and asks before it goes on. Wiping a file means writing over it so that less than half of it is left. Daimond keeps a copy of anything deleted or wiped for at least seven days.</p>
+	<p>削除や消去も同じように数えます。次で設定する上限 <span class="ui">設定</span> (既定では1ターンに8件)を超えると、ターンはそこで止まり、続ける前に尋ねます。ファイルの消去とは、半分未満しか残らないよう上書きすることです。Daimond は削除・消去されたものの写しを少なくとも7日間保管します。</p>
 
 	<h3 id="s6">添付の一覧</h3>
 	<p>行には経過時間があり、 <span class="ui">{when} に追加</span>。もう存在しないパスは <span class="ui">見つかりません</span> として描かれ、開く操作はありません。ですから死んだ行が生きているふりをすることはありません。</p>
 	<p>daimon が自分のために添付したもの——たたみ込みの実りや、エージェントが残したファイルなど——は、折りたたまれた一つの見出しの下にまとまります。 <span class="ui">daimon が追加したもの</span>。件数と <span class="ui">すべて外す</span>があります。あなた自身の添付は、そのままの場所にあります。</p>
 
-	<h3 id="s7">追加したフォルダーとほかの端末</h3>
-	<p>diamond にフォルダーやファイルを追加したり、チャットのワークスペースにフォルダーを追加したりすると、ほかの端末にも同期されますが、その端末でもう一度押すまでそこでは効きません。同じ diamond を別の端末で開くと、ほかで追加したフォルダーは「ここではまだ使われていません」と表示され、 <span class="ui">ここで使う</span> でそこでも使い始めるか、 <span class="ui">すべてここで使う</span> でまだ使われていないものをまとめて使えます。フォルダーを外すとすべての端末に自動で届きますが、使い始めることは届かないため、追加したフォルダーは、追加した端末かもう一度押した端末でのみ使われます。</p>
+	<h3 id="s7">添付とほかの端末</h3>
+	<p>diamond に添付したものはほかの端末に同期され、そこでも同じファイルを指します。もう一度押す必要はありません。別のマシンにある添付はその場所を示し、この端末の daimon はここからは開けません。</p>
 
 	<h3 id="s8">フォルダーをほかの端末と共有する</h3>
 	<p>ブラウザー自身のストレージにあるフォルダーは自動でほかの端末に届くので、手で共有するものはありません。コンピューターのディスク上のフォルダーは Kimberlite が扱い、そのコンピューターに残ります。</p>
@@ -88,13 +88,13 @@
 	<h2 id="s9">文書と書籍</h2>
 	<p> <code>.typ</code> ファイルを開くと、文書パネルに二つのボタンが増えます。 <span class="ui">コンパイル</span> は、文書をページに組み、ソースの横にプレビューの PDF を書き出します。そのページが開いているあいだは、保存するたびに作り直されます。ある章で押すと、その章を含む文書をコンパイルし、その章のページへ連れて行きます。</p>
 	<p>この循環が働くには、両方のパネルが画面に出ている必要があります。ウィンドウが狭すぎるときは、文書パネルがそう伝え、戻ってきたときに一回分の作り直しで追いつきます。</p>
-	<p>エディタは Daimond のものである必要はありません。許可されたフォルダーに書き込むエディタなら、どれで保存しても、およそ一秒以内に拾われます。</p>
+	<p>エディターは Daimond のものでなくてかまいません。同じフォルダーに書き込むどのエディターからの保存も、約1秒以内に拾われます。</p>
 	<p>スマートフォンは書籍のファイルを持てず、組版にかかるメモリも足りないので、コンパイルは、それができるペアのコンピュータに渡します。やり取りと同じようにあなたのアカウントに封じられ、組まれたページが返ってきます。</p>
 
 	<h2 id="s10">どんな種類のファイルでも</h2>
 	<p>どんなファイルも保存され、運ばれます。一つにつき一ギガバイトまでです。文書や表計算は、 <strong>閲覧ビュー</strong>として開きます。示すのは書かれている内容で、印刷したときの見た目ではありません。値は保存されたとおりで、数式は再計算されず、マクロは実行も読み込みもされません。 <span class="ui">写しを保存</span> が、あなた自身の端末へ書き出し、ここのファイルはそのままにします。</p>
 	<p>何もそのファイルを認識しないときは、バイトがそのまま示され、パネルがそう伝えます。</p>
-	<p>A scan or picture saved as BMP, TIFF, HEIC or ICO is turned into a PNG or JPEG as it is opened, so a daimon can look at it, read the text in it, or place it in a document, with nothing to convert first. The text is read from every page of a TIFF that has several; looking at one shows its first page.</p>
+	<p>BMP、TIFF、HEIC、ICO で保存されたスキャンや画像は、開くときに PNG か JPEG に変換されるので、daimon は先に何も変換せずに、それを見たり、中の文字を読んだり、文書に配置したりできます。複数ページの TIFF は全ページから文字を読み、見るときは最初のページを表示します。</p>
 
 	<h2 id="s11">メール</h2>
 	<p>ブラウザだけではメールの接続を開けないので、Daimond はゲートウェイを通してつなぎます。ゲートウェイは生のメッセージを返し、あなたの資格情報は忘れます。メールは作業領域に普通のファイルとして書かれます。</p>

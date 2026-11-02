@@ -81,7 +81,7 @@ function toolsApp(disk, { seen = {}, cloud = {}, fail = [] } = {}) {
 /// One pull's file merge. `disk` what this device holds (the census is all of it, inline);
 /// `base` the fork point by content; `remote` the parcel's files; `appear` a file that lands on
 /// the disk between the merge's census and its write (another app, or the person).
-async function merge({ disk: d0 = {}, base = {}, remote, folder = false, seen, cloud, fail, appear, store }) {
+async function merge({ disk: d0 = {}, base = {}, remote, seen, cloud, fail, appear, store }) {
 	const w = makeWindow({});
 	// `store` is cloud.js `fileStore`'s word: `{ now, asked }`, the state as last seen and what asking says.
 	const joined = [];
@@ -89,7 +89,7 @@ async function merge({ disk: d0 = {}, base = {}, remote, folder = false, seen, c
 		storeWord: async () => store.asked };
 	const disk = new Map(Object.entries(d0));
 	const app = toolsApp(disk, { seen, cloud, fail });
-	const plan = { folder, roots: [''], flagged: [''], app, loc: folder ? 'folder:f:' : 'browser' };
+	const plan = { roots: [''], app, loc: 'browser' };
 	const committed = [];
 	const asked = {};
 	const stub = {
@@ -104,7 +104,6 @@ async function merge({ disk: d0 = {}, base = {}, remote, folder = false, seen, c
 		withoutAppState:   (m) => m,
 		syncAppState:      () => false,
 		ownHere:           () => false,
-		withinShare:       () => true,
 		deleteSyncFile:    async () => true,
 		conflictName:      (p) => p + '.conflict',
 		placeHeldCopy:     async () => 'theirs',
@@ -152,13 +151,10 @@ for (const st of [{ now: 'none', asked: 'none' }, { now: 'refused', asked: 'refu
 		J({ calls: r.calls, committed: r.committed }));
 	check(tag + ': the deletion records still relay', r.joined.length === 1, J(r.joined));
 }
-// Controls: a store that is held keeps CRF's rule (a refused create holds the version back), and a
-// folder's files are on the disk, so it merges whatever the browser's store says.
+// Control: a store that is held keeps CRF's rule (a refused create holds the version back).
 {
 	const r = await merge({ remote: { 'n.md': 'new there\n' }, fail: ['n.md'], store: { now: 'held', asked: 'held' } });
 	check('[ctl] a store that is held: a refused create still fails the section (CRF stands)', /could not write 1 file/.test(r.threw || ''), J(r.threw));
-	const f = await merge({ remote: { 'n.md': 'new there\n' }, folder: true, store: { now: 'none', asked: 'none' } });
-	check('[ctl] a folder with no browser store still merges', f.threw === null && f.disk['n.md'] === 'new there\n', J(f));
 }
 // ── A create the storage refuses: never passed over ──
 {
@@ -182,13 +178,6 @@ for (const st of [{ now: 'none', asked: 'none' }, { now: 'refused', asked: 'refu
 	check('both moved: theirs is kept beside ours, whatever the guard remembers of the `.synced` slot',
 		r.disk['x.md'] === 'mine\n' && r.disk['x.md.synced'] === 'theirs\n', J(r.disk));
 	check('and nothing fails', r.threw === null, r.threw);
-}
-// ── A folder's conflict copy that does not land ──
-{
-	const r = await merge({ folder: true, disk: { 'x.md': 'mine\n' }, base: { 'x.md': H('before both\n') },
-		remote: { 'x.md': 'theirs\n' }, fail: ['x.md.conflict'] });
-	check('a copy of theirs that could not be kept beside ours holds the version back',
-		!!r.threw && /x\.md/.test(r.threw) && r.disk['x.md'] === 'mine\n', J(r));
 }
 // ── Controls ──
 {

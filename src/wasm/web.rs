@@ -448,15 +448,6 @@ pub async fn egress_allowed_net(turn: &str, cmd: &str, cwd: &str) -> Option<Verd
         crate::tools::RUN_NET_ALLOW_WORD).await
 }
 
-/// Ask whether this Diamond may use a toolchain it has not been granted, before a command that
-/// needs it runs.  A yes comes back only as [`crate::tools::KIT_ALLOW_WORD`].
-///
-/// # Arguments
-/// * `cmd` - The command line, shown to the user.
-/// * `detail` - `{"id":"<diamond>","kits":["rust",...]}`, which the page draws and records from.
-pub async fn egress_allowed_kit(turn: &str, cmd: &str, detail: &str) -> Option<Permit> {
-    egress_permit_js(turn, crate::tools::KIT_TOOL, cmd, detail, crate::tools::KIT_ALLOW_WORD).await
-}
 
 /// Ask whether a command may run in the ask-every-time mode.  A yes is
 /// [`crate::tools::EGRESS_ALLOW_WORD`]; a no says why (see [`crate::tools::Permit`]).
@@ -467,17 +458,6 @@ pub async fn egress_allowed_kit(turn: &str, cmd: &str, detail: &str) -> Option<P
 /// * `cwd` - The folder it would run in.
 pub async fn egress_allowed_run(turn: &str, tool: &str, cmd: &str, cwd: &str) -> Option<Permit> {
     egress_permit_js(turn, tool, cmd, cwd, crate::tools::EGRESS_ALLOW_WORD).await
-}
-
-/// Ask whether this Diamond may change a place it was not given, after a write there was
-/// refused.  A yes comes back only as [`crate::tools::PLACE_ALLOW_WORD`].
-///
-/// # Arguments
-/// * `path` - The path the write was refused at, shown to the user.
-/// * `detail` - `{"id":"<diamond>","place":"<folder>","waiting":false}` (see
-///   [`crate::tools::PlaceAsk::detail`]).
-pub async fn egress_allowed_place(turn: &str, path: &str, detail: &str) -> Option<Permit> {
-    egress_permit_js(turn, crate::tools::PLACE_TOOL, path, detail, crate::tools::PLACE_ALLOW_WORD).await
 }
 
 /// Ask whether one publication on the Social panel may go out.

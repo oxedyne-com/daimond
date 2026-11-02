@@ -1073,7 +1073,7 @@ async function main() {
 	// ── KT-4 (binding 15): the conversation travels ──
 	// The seed carries the page's engine session; one that would not fit the door is dropped
 	// first, whole, and the errand is then exactly today's sessionless one (hand back on the
-	// runner, never a truncated tail); the errand carries the page's reach and today line.
+	// runner, never a truncated tail); the errand carries the page's focus and today line.
 	// Red before KT-4: buildDispatch and makeErrand drop all three.
 	// ERRAND-REF: the phone tab carries the real chunks.js over an in-memory `/api/chunk`, so the
 	// reference also carries the session itself, sealed in chunks (errandref_contract.md).
@@ -1121,7 +1121,7 @@ async function main() {
 		return { session: b.session, size: body.length, body: b };
 	}
 	const refHead = (r) => r ? JSON.stringify({ chat: r.chat, sig: r.sig, upto: r.upto }) : '';
-	console.log('\nKT-4 — the seed carries the session; reach and today ride the errand');
+	console.log('\nKT-4 — the seed carries the session; focus and today ride the errand');
 	{
 		const P = phone.DaimondPeer;
 		const small = { id: 'chat-k4', provider: 'openrouter', model: 'test/m', holds: [], messages: [
@@ -1171,21 +1171,21 @@ async function main() {
 			JSON.stringify({ o: [over.seedClipped, over.seedDropped], b: [base.seedClipped, base.seedDropped] }));
 		check('K4-2: and it fits the relay', phone.DaimondPost.fitsRelay(over.body.envelope.length, cap) === true);
 
-		const reach = { attached: ['code'], read_only: ['docs'], unconfirmed: [], nested: [] };
+		const focus = ['/home/u/code', '/home/u/docs/a.md'];
 		const today = 'Today is Saturday 24 October 2026 (Australia/Sydney, UTC+11:00).';
 		const lim = { window: 1048576, foldAt: 0.8 };
 		// The limits as KT-2's `limitsOf` writes them (every field, in the runner's order).
-		const ek = P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p', limits: lim, reach: reach, today: today });
-		check('K4-3: makeErrand writes reach and today after limits, closing the errand',
-			JSON.stringify(ek).endsWith(',"limits":' + JSON.stringify(ek.limits) + ',"reach":' + JSON.stringify(reach)
+		const ek = P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p', limits: lim, focus: focus, today: today });
+		check('K4-3: makeErrand writes focus and today after limits, closing the errand',
+			JSON.stringify(ek).endsWith(',"limits":' + JSON.stringify(ek.limits) + ',"focus":' + JSON.stringify(focus)
 				+ ',"today":' + JSON.stringify(today) + '}'), JSON.stringify(ek).slice(-200));
-		const bare = P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p', reach: null, today: '' });
-		check('K4-3: and neither key when not given', !('reach' in bare) && !('today' in bare)
-			&& !('reach' in P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p' })));
-		check('K4-3: buildDispatch passes reach and today to the errand',
-			JSON.stringify(P.buildDispatch(small, Object.assign({}, kOpts, { reach: reach, today: today })).errand(0).reach)
-				=== JSON.stringify(reach)
-			&& P.buildDispatch(small, Object.assign({}, kOpts, { reach: reach, today: today })).errand(0).today === today);
+		const bare = P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p', focus: null, today: '' });
+		check('K4-3: and neither key when not given', !('focus' in bare) && !('today' in bare)
+			&& !('focus' in P.makeErrand({ turnId: 't', chatId: 'c', prompt: 'p' })));
+		check('K4-3: buildDispatch passes focus and today to the errand',
+			JSON.stringify(P.buildDispatch(small, Object.assign({}, kOpts, { focus: focus, today: today })).errand(0).focus)
+				=== JSON.stringify(focus)
+			&& P.buildDispatch(small, Object.assign({}, kOpts, { focus: focus, today: today })).errand(0).today === today);
 	}
 
 	// ── KT-4b: an over-door session travels as a reference ──

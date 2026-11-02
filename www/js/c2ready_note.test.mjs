@@ -26,7 +26,7 @@ async function run(landBeforeTurn) {
 	if (declLine('runnerTurnOpts') > 0) names.push('runnerTurnOpts');
 	const R = loadPage({ window: win, want: names, stub: {
 		diag() {}, chats, loadChatMessages: async () => {}, onChatsChangedElsewhere: async () => {}, persistChats() {}, touchChat() {},
-		honourGone() {}, DaimondMarksHere: { chatSettle() {} }, ensureApp: () => ({}), scopeChatTo: async () => {}, diamonds: [], loadDiamonds: async () => {} } });
+		honourGone() {}, ensureApp: () => ({}), scopeChatTo: async () => {}, diamonds: [], loadDiamonds: async () => {} } });
 	await R.peerReady(errand, [], 200);
 	const ctx = await R.peerReconstruct(errand, []);
 	// The note as reconstruct read it, before any pull lands.

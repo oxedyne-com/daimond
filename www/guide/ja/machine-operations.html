@@ -44,7 +44,7 @@
 	<div class="note stop"><strong>snap や flatpak のブラウザにはこれができず、できるようにもできません。</strong> インストーラーはそれを検出すると、書き込む代わりに拒みます。ですからこれが最初に出会うことになるもので、Ubuntu の既定の Chromium は snap です。 <a href="#s2">なぜか、そして代わりに何を入れるべきか</a>.</div>
 
 	<h2 id="s1">それが与えてくれるもの</h2>
-	<p>hand をインストールすれば、daimon は、あなたが付与したフォルダーに対してビルド、テストスイート、リンター、スクリプトを実行し、結果を読めます。その機器のほかのものには届きません。</p>
+	<p>ハンドを入れると、daimon は選んだフォルダーに対してビルド、テストスイート、リンター、スクリプトを実行し、結果を読めます。マシン上のそれ以外のものには届きません。</p>
 	<p>それが使うツールは、 <span class="ui">ツール</span> パネルに名前が挙がっており、そのうち四つは名前を知っておく価値があります。</p>
 	<ul>
 		<li><strong>run</strong> は、引数の一覧として与えられた一つのコマンドを実行し、終了コード、出力の末尾、かかった時間で答えます。</li>
@@ -86,9 +86,9 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 			<p>使うのは <code translate="no">--manifest-path</code> であって <code translate="no">-p</code>ではありません。hand はそれ自身の cargo ワークスペースだからです。ですから <code translate="no">-p</code> は、そんなパッケージはないと報告し、何もビルドしません。</p>
 		</li>
 		<li>
-			<h3 id="s8">フォルダーを付与し、hand を登録する</h3>
+			<h3 id="s8">フォルダーを選び、ハンドを登録する</h3>
 			<pre><code translate="no">hand/install/install.sh --workspace ~/work</code></pre>
-			<p>自分のフォルダーを、 <code translate="no">~/work</code>の場所に置いてください。そのフォルダーが、どのコマンドでも読み書きできるものすべての境界になります。仕事用に一つ選んでください。スクリプトは、あなたのホームディレクトリと <code>/</code> を、はなから拒みます。どちらを付与しても、すべてを付与することになるからです。フォルダーはあらかじめ存在していなければなりません。</p>
+			<p>自分のフォルダーを、 <code translate="no">~/work</code>の場所に置いてください。そのフォルダーが、どのコマンドでも読み書きできるものすべての境界になります。仕事用に一つ選んでください。スクリプトは、あなたのホームディレクトリと <code>/</code> をきっぱり拒みます。どちらもすべてを開いてしまうからです。フォルダーはあらかじめ存在している必要があります。</p>
 			<p>その一回の実行は三つのことを行い、それぞれ、やらなければあとで出会うはずの失敗を防ぎます。</p>
 			<ul>
 				<li><strong>あなたのフォルダーを <code translate="no">root.txt</code></strong>に書き込みます。場所は <code translate="no">~/.local/share/daimond/hand/journal/root.txt</code>です。hand は、そのフォルダーを教えられるまでページを提供しません。決して推測しません。推測したフォルダーは、コマンドが何に触れてよいかについての推測になるからです。あとで変えるには、別のフォルダーで同じコマンドを実行してください。</li>
@@ -139,7 +139,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<h3 id="s16">拡張機能に尋ねる</h3>
 	<p>ブラウザで、Daimond のタブを開き、デベロッパーコンソールを開いて、次を実行してください。</p>
 	<pre><code translate="no">await DaimondHand.status()</code></pre>
-	<p>拡張機能は、hand がペアリングされているか、どのフォルダーを付与されたと言っているか、何を強制できるか、そして答えがノーの場合には <code translate="no">reason</code> を、まるごとの一文として書いた JSON で答えます。Daimond はモデルにもその同じ一文を見せるので、この JSON は daimon が何を伝えられたかを説明しています。</p>
+	<p>拡張機能は JSON で答えます。ハンドがペアリング済みか、どのフォルダーで動くと言っているか、何を強制できるか、そして答えが「いいえ」の場合は <code translate="no">reason</code> を、まるごとの一文として書いた JSON で答えます。Daimond はモデルにもその同じ一文を見せるので、この JSON は daimon が何を伝えられたかを説明しています。</p>
 
 	<h2 id="s17">実際のところ何なのか</h2>
 	<p>コマンドとは、あなたが所有する、あなた自身のカーネルで、あなた自身のファイルに対して走る、ふつうのプロセスです。ただしケーパビリティは先に取り除かれています。仮想マシンも、コンテナも、エミュレーションもありません。ですから何もシミュレートされず、何もコピーして持ち込まれません。四つの部分が、それぞれ一つの仕事をします。</p>
@@ -155,9 +155,9 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<h3 id="s18">Daimond はツールを実装していません</h3>
 	<p>組み込みの <code translate="no">ls</code>はなく、組み込みの <code translate="no">grep</code>もありません。同梱のツール箱もシェルもありません。 <code translate="no">ls</code> こそが <code translate="no">/usr/bin/ls</code>は、あなたの機器にすでにある、インストールしたバージョンのそれです。</p>
 
-	<p>システムディレクトリの下にあるプログラムはすべて届きます。隔離領域が、それらを付与に加えるからです—— <strong>読み取り専用</strong>: <code translate="no">/usr</code>, <code translate="no">/bin</code>, <code translate="no">/sbin</code>, <code translate="no">/lib</code>, <code translate="no">/lib32</code>, <code translate="no">/lib64</code>, <code translate="no">/libx32</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code>で。そして無害なデバイス <code translate="no">/dev/null</code>, <code translate="no">/dev/zero</code>, <code translate="no">/dev/full</code>, <code translate="no">/dev/random</code> と <code translate="no">/dev/urandom</code>。これらがなければ何も起動しません。 <code translate="no">cat</code>さえも。ローダーは共有オブジェクトを読まなければならず、プロセスは標準ストリームのために何かを開かなければならないからです。</p>
+	<p>システムディレクトリー以下のプログラムはすべて届きます。コンパートメントがそれらを次の形で加えるからです: <strong>読み取り専用</strong>: <code translate="no">/usr</code>, <code translate="no">/bin</code>, <code translate="no">/sbin</code>, <code translate="no">/lib</code>, <code translate="no">/lib32</code>, <code translate="no">/lib64</code>, <code translate="no">/libx32</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code>で。そして無害なデバイス <code translate="no">/dev/null</code>, <code translate="no">/dev/zero</code>, <code translate="no">/dev/full</code>, <code translate="no">/dev/random</code> と <code translate="no">/dev/urandom</code>。これらがなければ何も起動しません。 <code translate="no">cat</code>さえも。ローダーは共有オブジェクトを読まなければならず、プロセスは標準ストリームのために何かを開かなければならないからです。</p>
 
-	<p>そのままの名前は、 <code translate="no">PATH</code>で探されます。それは <code translate="no">/usr/local/bin:/usr/bin:/bin</code> です。付与されたツールチェーンがそこに何かを加えていないかぎりは。そこで見つかったものは絶対パスに解決され、ほかの何とも同じように隔離領域と照合されます。見つかることは、許可されることではありません。 <code translate="no">PATH</code> が外を指していれば、コマンドが実行してはいけないプログラムが見つかり、拒否がそれを名指しします。</p>
+	<p>そのままの名前は、 <code translate="no">PATH</code>で探されます。それは <code translate="no">/usr/local/bin:/usr/bin:/bin</code>です。見つかったものは絶対パスに解決され、ほかと同じくコンパートメントと照合されるので、見つかることは許可ではありません。 <code translate="no">PATH</code> が外を指していれば、コマンドが実行してはいけないプログラムが見つかり、拒否がそれを名指しします。</p>
 
 	<div class="note"><strong>シェルがないので、シェルの構文もありません。</strong> コマンドは一つのリストです（<code translate="no">["cargo", "test", "--lib"]</code>）。セミコロン、パイプ、リダイレクト、バッククォート、 <code>$(…)</code> または <code translate="no">&amp;&amp;</code> は、プログラムにそのままの引数として届きます。二つのコマンドをつなげるには、daimon がそのツールを二回実行します。そのほうがどのみち良いのです。最初の結果を読んでから二つ目を選べるからです。</div>
 
@@ -165,30 +165,23 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 
 	<h3 id="s20">ファイル</h3>
 	<ul>
-		<li><strong>付与されたフォルダーの中を読み書きする。</strong> そのフォルダーから、Daimond 自身の <code translate="no">.daimond</code> ディレクトリを除いたものが、書き込める世界です。</li>
+		<li><strong>自分のフォルダーの中を読み書きする。</strong> そのフォルダーから、Daimond 自身の <code translate="no">.daimond</code> ディレクトリを除いたものが、書き込める世界です。</li>
 		<li><strong>専用の一時ディレクトリ。</strong> 書き込み可能で、 <code translate="no">TMPDIR</code> がそこを指します。実行が終われば削除され、ほかのどの実行からも届かず、あなたのフォルダーの外でコマンドが書き込める唯一の場所です。 <code translate="no">/tmp</code> は隔離領域の外にあります。一時ファイルを書けないビルドは、誰にも読めない理由で途中で失敗します。</li>
 		<li><strong>システム、読み取り専用。</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code> そして上の一覧の残りです。</li>
-		<li><strong>それ以外はすべて、カーネルに拒まれます</strong>。誰かが書いた検査によってではありません。付与から一つ外のフォルダーにあるファイルは、 <code>Permission denied</code>が返り、daimon にはファイルの代わりにその拒否が見せられます。</li>
+		<li><strong>それ以外はすべて、カーネルに拒まれます</strong>。誰かが書いた検査によってではありません。そのフォルダーの一つ外にあるファイルは次を返します: <code>Permission denied</code>が返り、daimon にはファイルの代わりにその拒否が見せられます。</li>
 	</ul>
-	<p>壊れた道具に見える前に、知っておく価値のある帰結が一つあります。付与されたフォルダー全体が書き込み可能であっても、そのフォルダー <em>自体</em> は一覧にできず、その中に直接ファイルを作ることもできません。Landlock はディレクトリを付与しつつその一部を留保することができないので、子は一つずつ付与されるからです。一段下のものはすべて、ふつうに働きます。</p>
+	<p>壊れた道具に見える前に知っておく価値のある結果が一つあります。フォルダー全体が書き込み可能なとき、そのフォルダー <em>自体</em> は一覧にできず、その中に直接ファイルを作ることもできません。Landlock はディレクトリを付与しつつその一部を留保することができないので、子は一つずつ付与されるからです。一段下のものはすべて、ふつうに働きます。</p>
 
 	<h3 id="s21">名前付きのローカルソケットは、常に拒まれる</h3>
 	<p>コマンドは、ほかに何が許されていようと、unix ソケットを作れません。それが犠牲にするのは、ソケットファイル越しのローカルデータベース、 <code translate="no">docker</code>、X11 を望むもの、そして <code translate="no">ssh-agent</code>. <code translate="no">socketpair</code>は、ビルドが自分の子プロセスと話すのに使うペアのソケットで、手を付けられません。ですから <code translate="no">cargo build</code> は影響を受けません。</p>
 	<p>Landlock ABI 9（Linux 7.1）より前では、隔離領域はソケットファイルへの接続をまったく統制しません。実際に測定しました。柵が効いていてネットワークが拒まれている状態でも、デスクトップのセッションバスへの一通のメッセージが、一度も柵に囲まれたことのないプロセスを起動し、柵が拒むファイルを読みます。これは隔離領域からの抜け道であり、その縁のわずかな漏れではないので、無条件で閉じられています。</p>
 
 	<h3 id="s22"><code translate="no">ssh</code> は動きません</h3>
-	<p>二つの独立した理由がそれを止めていて、どちらか一方を閉じるだけでは足りません。 <code translate="no">~/.ssh</code> は隔離領域の中にありません。どのパスも、あなたが付与したフォルダーから組み立てられるからです。そしてエージェントのソケットは unix ソケットで、上で拒まれています。 <code translate="no">git push</code> は SSH越しに、両方の理由で同時に失敗します。ホームディレクトリを付与すれば、最初の理由も、隔離領域の意味の大半も失われます。だからこそインストーラーはそれを拒みます。</p>
-	<p>リポジトリだけに触れる操作はうまくいきます。 <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> 、そしてローカルの <code translate="no">commit</code> は、あなたが付与したフォルダーの中の、ふつうのファイル操作です。</p>
+	<p>二つの独立した理由がそれを止めていて、どちらか一方を閉じるだけでは足りません。 <code translate="no">~/.ssh</code> はコンパートメントに入っていません。すべてのパスが選んだフォルダーから組み立てられるからです。そしてエージェントのソケットは unix ソケットで、上で述べたとおり拒否されます。 <code translate="no">git push</code> を SSH で行うと、両方の理由で同時に失敗します。ホームディレクトリーを選べば一つ目の理由はなくなりますが、コンパートメントの意味もほとんどなくなるため、インストーラーはそれを拒みます。</p>
+	<p>リポジトリだけに触れる操作はうまくいきます。 <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> 、そしてローカルの <code translate="no">commit</code> は、選んだフォルダーの中での普通のファイル操作です。</p>
 
-	<h3 id="s23">ツールチェーンには付与が要る</h3>
-	<p>diamond を開くと、作業領域パネルに <strong>ツールチェーン</strong> の行が現れ、五つのボタンがあります。 <span class="ui" translate="no">Rust</span>, <span class="ui" translate="no">Node</span>, <span class="ui" translate="no">Python</span>, <span class="ui" translate="no">Go</span>, <span class="ui" translate="no">Git</span>。五つとも既定でオフになっているので、 <code translate="no">cargo</code> は Rust をオンにするまで拒まれます。 <code translate="no">~/.cargo</code> と <code translate="no">~/.rustup</code> は、あなたのホームディレクトリの下にあり、ホームディレクトリは隔離領域の中にないからです。</p>
-	<p><span class="ui" translate="no">Git</span> は例外です。 <code translate="no">git</code> はすでに読み取り専用の基盤の中にあり、だからこそ <code translate="no">git status</code> と、ローカルのコミットが、付与なしで動きます。ボタンが加えるのは、あなた自身の設定——名前、メール、そして <code translate="no">core.hooksPath</code> が名指しするフック——を、読み取り専用で加えます。保存されたパスワードと <code translate="no">~/.ssh</code> は、名前で拒まれます。</p>
-	<p>それについて、三つのことは意図的です。</p>
-	<ul>
-		<li><strong>実行を頼まれたものから推測されることは、決してありません。</strong> 要求されたバイナリに合わせて自分を広げる隔離領域は、モデルが選ぶ隔離領域になってしまいます。この仕組み全体は、隔離領域がモデルの選べないものであることに懸かっています。 <code translate="no">cargo</code> が届くのは、あなたが Rust のツールチェーンを付与したからで、ほかの理由はありません。</li>
-		<li><strong>diamond ごとです。</strong> 付与は一つの diamond に属し、その diamond が持つフォルダーと並びます。取り消し方も同じです。</li>
-		<li><strong>名指しされたディレクトリの短い一覧であって、ホームディレクトリでは決してありません。</strong> Rust が付与するのは、 <code translate="no">~/.cargo/bin</code> と <code translate="no">~/.rustup</code> を読み取り専用でです。レジストリとキャッシュを書き込み可能にするのは、cargo がそれらに書き込まずにビルドできないからです。そして <em>拒むのが</em> <code translate="no">~/.cargo/credentials.toml</code>です。あなたの crates.io のトークンが書かれている場所です。ほかの四つも同じように引かれていて、それぞれ秘密を持つファイルを外しています。</li>
-	</ul>
+	<h3 id="s23">ホームディレクトリー以下のプログラム</h3>
+	<p><code translate="no">~/.cargo</code>, <code translate="no">~/.rustup</code> などはホームディレクトリーの下にあり、ホームはコンパートメントに入っていないため、 <code translate="no">cargo</code> はここでは拒否されます。 <code translate="no">git</code> は読み取り専用の基盤に入っているので、 <code translate="no">git status</code> やローカルのコミットは動きます。ホーム以下のツールチェーンが要るビルドは Kimberlite で動きます。Kimberlite はホームフォルダーに届きますが、秘密を持つファイルは外しておきます。たとえば <code translate="no">~/.cargo/credentials.toml</code>.</p>
 
 	<h3 id="s24">ネットワーク</h3>
 	<p>コマンドがネットワークに届けるかどうかは、権限のモードと、そのやり取りがすでに何を読んだかによります。 <strong>毎回尋ねる</strong> と <strong>見張り付き</strong>の下では、やり取りがいったん外からの内容——読んだり取得したりしたウェブページ、メール、前のコマンドの出力——を取り込むと、そのやり取りの中のすべてのコマンドは TCP を拒まれた状態で走り、daimon はその理由を伝えられるので、壊れたプロジェクトの代わりに原因を報告します。 <strong>素通り</strong> の下では、そのやり取りが何を読んでいようと、ネットワークは保たれます。</p>
@@ -216,7 +209,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 		</div>
 	</div>
 
-	<p><strong>段が、可能なことを変えることはありません。</strong> コマンドが走る隔離領域、その下のシステムコールのフィルター、diamond が限られるフォルダー、付与されたツールチェーン、外からの内容への印付け、そしてジャーナルは、三つの段のどれでも同じです。段が変えるのは、あなたに尋ねられることだけです。</p>
+	<p><strong>段が、可能なことを変えることはありません。</strong> コマンドが動くコンパートメント、その下のシステムコールフィルター、作業するフォルダー、外部からの内容に付く印、そしてジャーナルは、三つとも同じです。段が変えるのは、何を尋ねられるかだけです。</p>
 	<p>段は、モデルの横にあるチャットのヘッダーの中の一語です。覚えておかなければならないモードは、間違えるモードだからです。クリックすれば変えられますし、あるいは <kbd>Ctrl</kbd> <kbd>K</kbd> (<kbd>Cmd</kbd> <kbd>K</kbd> （Mac の場合）を押して、段の名前を入力します。</p>
 
 	<h2 id="s30">型破りなシステム</h2>
@@ -224,7 +217,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 
 	<h3 id="s31">動かないもの</h3>
 	<ul>
-		<li><strong>NixOS と Guix。</strong> プログラムがあるのは <code translate="no">/nix/store</code> または <code translate="no">/gnu/store</code>で、どちらも付与されていません。そして <code translate="no">/usr/bin</code> にはほとんど何もありません。そのままの名前は <code translate="no">PATH</code> を通じて、隔離領域の外にあるストアのパスへ解決され、コマンドは名前で拒まれます。このアプリは、今日のところそれを広げられません。</li>
+		<li><strong>NixOS と Guix。</strong> プログラムがあるのは <code translate="no">/nix/store</code> または <code translate="no">/gnu/store</code>にあり、どちらもコンパートメントに入っていません。そして <code translate="no">/usr/bin</code> にはほとんど何もありません。そのままの名前は <code translate="no">PATH</code> を通じて、隔離領域の外にあるストアのパスへ解決され、コマンドは名前で拒まれます。このアプリは、今日のところそれを広げられません。</li>
 		<li><strong>Landlock のないカーネル。</strong> それは、Linux 5.13 より前であるか、コンパイルから外されているか、有効な LSM の一覧にないか、あるいは堅牢化パッチで取り除かれている、という意味です。hand は <code translate="no">fence:none</code> と報告し、Daimond は柵のないコマンドを実行する代わりに、すべてのコマンドを拒みます。確認すべきは、 <code translate="no">landlock</code> が含まれているかどうか、その場所は <code translate="no">/sys/kernel/security/lsm</code>.</li>
 		<li><strong>x86-64 でも aarch64 でもないアーキテクチャ。</strong> フィルターのシステムコール番号はアーキテクチャごとに書き出されていて、三つ目の表はありません。hand はそれを推測しないので、フィルターは存在せず、フィルターがなければコマンドは一つも走りません。</li>
 	</ul>
@@ -232,8 +225,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<h3 id="s32">部分的に</h3>
 	<ul>
 		<li><strong>Linux 5.13 から 6.6。</strong> ファイルは柵で囲まれますが、Landlock は Linux 6.7 より前にはネットワークの規則を持たないので、ネットワークを取り上げられて走るはずだったコマンドは、失うはずだったネットワークを持ったまま走る代わりに、そう伝える一文とともにはなから拒まれます。素通りは働き、見張り付きはやり取りが何かを読むまで働きます。</li>
-		<li><strong>Linux 上の Homebrew、Flatpak、Snap。</strong> どれも <code translate="no">/home/linuxbrew/.linuxbrew</code>、Flatpak のツリー、あるいは <code translate="no">/snap</code> も付与されていません。ですからそうした方法でインストールされたプログラムは拒まれますが、あなたのディストリビューションが <code translate="no">/usr</code> の下に置いたものは、同じセッションの中で届きます。これは、コマンドが実行するプログラムについての話です。そうした形で梱包されたブラウザは別の問題で、しかも致命的な問題であり、 <a href="#s2">始める前に</a>.</li>
-		<li><strong>知られている二つ以外のバージョンマネージャー。</strong> ツールチェーンのパスは固定された一覧で、 <code translate="no">~/.nvm</code> と <code translate="no">~/.pyenv</code> が、そこにある唯一のバージョンマネージャーです。 <code translate="no">asdf</code>, <code translate="no">mise</code>, <code translate="no">volta</code>, <code translate="no">rbenv</code> と <code translate="no">sdkman</code> がインストールされる先は <code translate="no">~/.asdf</code>, <code translate="no">~/.local/share</code>, <code translate="no">~/.volta</code>, <code translate="no">~/.rbenv</code> と <code translate="no">~/.sdkman</code>。それらのどれにも付与はありません。Python の付与が対象にするのは <code translate="no">~/.local/bin</code> と <code translate="no">~/.local/lib</code> であり、意図的に <code translate="no">~/.local/share</code>.</li>
+		<li><strong>Linux 上の Homebrew、Flatpak、Snap。</strong> どれも <code translate="no">/home/linuxbrew/.linuxbrew</code>、Flatpak のツリー、あるいは <code translate="no">/snap</code> もコンパートメントに入っていないので、そうして入れたプログラムは拒否されます。一方、ディストリビューションが次の下に置いたものは <code translate="no">/usr</code> の下に置いたものは、同じセッションの中で届きます。これは、コマンドが実行するプログラムについての話です。そうした形で梱包されたブラウザは別の問題で、しかも致命的な問題であり、 <a href="#s2">始める前に</a>.</li>
 	</ul>
 
 	<h3 id="s33">問題なし</h3>
@@ -253,7 +245,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<p><code translate="no">--report</code> は二つの一覧を表示し、二つ目こそがそれを実行する理由です。そこにあるどの項目も、動いているカーネルで実測されたもので、推測ではありません。あなたのカーネルによって変わるので、自分のものを読んでください。項目はいくつかの群に分かれます。</p>
 	<ul>
 		<li><strong>ファイルについて尋ねることは、それを開くことではありません。</strong> <code translate="no">stat</code> は隔離領域の外でも答え続けます。ですから大きさ、タイムスタンプ、所有者、そしてファイルの有無は読めます。隔離領域が統制するのは、開くことです。</li>
-		<li><strong>システムへの付与は広いものです。</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code> と <code translate="no">/opt</code> を読み取り専用にすることが、そもそもコマンドを走らせられる理由です。それはまた、 <code translate="no">/etc</code> の下にある、誰でも読めるファイルはすべて読め、機器のどのツールも実行できる、という意味でもあります。 <code translate="no">/etc</code> は特に、機器を特定する詳細を大量に持っています。</li>
+		<li><strong>システムへのアクセスは広い。</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code> と <code translate="no">/opt</code> を読み取り専用にすることが、そもそもコマンドを走らせられる理由です。それはまた、 <code translate="no">/etc</code> の下にある、誰でも読めるファイルはすべて読め、機器のどのツールも実行できる、という意味でもあります。 <code translate="no">/etc</code> は特に、機器を特定する詳細を大量に持っています。</li>
 		<li><strong>フィルターは拒否リストです。</strong> 名指しされたケーパビリティをコマンドから取り除くものであって、システムコールのサンドボックスではありません。名指ししなかったものはすべて許可されます。将来のカーネルが加える呼び出しも含めてです。</li>
 		<li><strong>フィルターはポインターをたどれません。</strong> 見えるのはシステムコール番号と六つのレジスタだけで、それらが指す先は決して見えません。ですからパスも、アドレスも、ファイル名も見えません。拒まれた <code translate="no">chmod</code> は、だからこそどこでも拒まれ、許されたものはどこでも許されます。 <code translate="no">chmod 777</code> は拒まれ、 <code translate="no">chmod 644</code> を秘密鍵に対して行うのは拒まれません。644 は書き込みを加えず、cargo が展開するすべてのものに設定するモードだからです。</li>
 		<li><strong>タイムスタンプは、どこでも守られていません。</strong> コマンドは、機器のどの部分にあるファイルの時刻でも書き換えられます。cargo が、そうしなければレジストリから crate を展開できないからです。それは、ビルドを動かし続けることが守りを犠牲にした、いちばんはっきりした場所です。</li>

@@ -23,11 +23,6 @@
 //! applied; [`read_entries`] is the single place the inverse is.  Nothing else may spell a name
 //! for the browser.
 //!
-//! Because both ends go through that one pair, a file copied from the folder to the sandbox keeps
-//! its WORKSPACE name across the crossing — decoded out of the folder's listing, encoded again for
-//! whichever root it is written to — and so cannot arrive under a second spelling of itself.
-//! Migrating `mail/` (see [`crate::wasm::diamond::adopt_from_folder`]) rests on exactly that.
-//!
 //! ## One root (the browser opens no folder)
 //!
 //! Every operation resolves against the OPFS root from `navigator.storage.getDirectory()`, the
@@ -86,14 +81,6 @@ thread_local! {
     /// always did, so nothing has to move when accounts are introduced.
     static ACCOUNT_NS: RefCell<String> = const { RefCell::new(String::new()) };
 
-    /// The NAME of the exception the last failing call at this edge caught, empty when nothing
-    /// threw.
-    ///
-    /// A withdrawn folder grant is a `DOMException` whose `name` says so, and the name is the
-    /// only evidence about the grant that a tool result cannot forge.  Read and cleared by
-    /// [`take_thrown`]; cleared before each tool call by [`arm_folder_watch`], so the
-    /// alarm can only ever be about the call that has just failed.
-    static THROWN: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 /// Point every OPFS operation at the given account's subdirectory (empty for the primary account,
@@ -112,56 +99,12 @@ pub fn storage_of(root: FileRoot, path: &str) -> Storage {
     crate::tools::storage_for(root, path, None, &ns)
 }
 
-/// The name of the exception the edge caught since the watch was armed, and clear it.
-///
-/// TAKEN rather than read, so one withdrawal is judged once and a later call cannot inherit an
-/// earlier call's evidence.  [`arm_folder_watch`] clears it before each tool call, which is the
-/// other half of that.
-///
-/// **The NAME the browser threw, never the text a tool returned.**  The rule used to be a
-/// containment test for the name over every tool result, success or failure, and on 2026-09-13 a
-/// `file_search` whose hits included this file's own doc comment was read as a revoked grant: the
-/// page dropped to the sandbox and every later `code/` read was refused against a grant the
-/// browser had never touched.  A result's words are the workspace's words; only an exception is
-/// evidence about the grant.  [`crate::tools::folder_loss_reported`] holds the rule that reads it.
-pub fn take_thrown() -> String {
-    THROWN.with(|c| {
-        let name = c.borrow().clone();
-        c.borrow_mut().clear();
-        name
-    })
-}
-
-/// The same, left where it is, for a caller that must not spend the evidence.
-///
-/// A tool that catches its own failure and composes a better sentence needs to know what it
-/// caught, and the alarm at the dispatch door still has to be able to read it afterwards.
-pub fn thrown() -> String {
-    THROWN.with(|c| c.borrow().clone())
-}
-
-/// Forget what an earlier call threw, so the next one is judged on its own failure.
-pub fn arm_folder_watch() {
-    THROWN.with(|c| c.borrow_mut().clear());
-}
-
-/// A JS failure as a sentence, recording the exception's NAME on the way past.
+/// A JS failure as a sentence, its exception's NAME and message read as fields.
 ///
 /// `js_str` alone loses the name: a `DOMException` is not a JS string, so it renders through
-/// `Debug` and arrives as prose that the alarm would have to guess at.  The name is a
-/// machine-readable field and is read as one.
+/// `Debug` and arrives as prose.
 fn js_err(e: &JsValue) -> String {
     if let Some(name) = crate::wasm::js_prop(e, "name") {
-        THROWN.with(|c| {
-            let mut cur = c.borrow_mut();
-            // THE FIRST WITHDRAWAL WINS. A tool that catches a failure and probes around to
-            // compose a better sentence -- `wrong_root_note` asks whether each ancestor exists --
-            // throws `NotFoundError` on the way, and the withdrawal must not be displaced by the
-            // recovery it caused.
-            if !crate::tools::is_withdrawn_grant(&cur) {
-                *cur = name.clone();
-            }
-        });
         // `NotAllowedError: The request is not allowed` rather than the `Debug` rendering of an
         // object, which is what the user and the model both had to read before.
         if let Some(msg) = crate::wasm::js_prop(e, "message") {
@@ -170,7 +113,7 @@ fn js_err(e: &JsValue) -> String {
         return name;
     }
     // A rejection that is only a string -- `to_js_err`'s shape, and what a patched glue throws in
-    // the verifiers -- carries no name, so nothing is recorded and nothing is claimed.
+    // the verifiers -- carries no name.
     js_str(e)
 }
 
@@ -459,10 +402,10 @@ async fn resolve_base(root: FileRoot, path: &str) -> Outcome<Base<FileSystemDire
             let ns = ACCOUNT_NS.with(|c| c.borrow().clone());
             Ok(Base { dir, scope: fmt!("s{}", ns), held })
         },
-        // The browser opens no real folder (R1): a folder or machine address reaches nothing.
+        // Never filed here: the browser opens no real folder (R1), so `storage_of` answers only
+        // the sandbox.  Kimberlite's folder and the hand's machine are native's alone.
         Storage::Folder(_)
-        | Storage::Machine(_)
-        | Storage::Nowhere              => Err(err!(
+        | Storage::Machine(_)           => Err(err!(
             "OPFS: '{}' was addressed on a machine folder, and the browser opens none.", path;
             IO, File, Missing)),
     }
@@ -632,7 +575,7 @@ async fn committed_js(file: &FileSystemFileHandle) -> Result<Vec<u8>, JsValue> {
 /// passed, 194-200 races of 200, and a sync, upload or Doc Save write closing between this re-check
 /// and this close was overwritten and kept in no version row.  Every writer in the origin -- this
 /// one, [`write_file`] through it, and every page writer through `www/js/filelock.js` -- now holds
-/// `daimond-file:<root>:<path>` ([`crate::fsname::file_lock_name`]) across its open-to-close, so
+/// `daimond-file:sandbox:<path>` ([`crate::fsname::file_lock_name`]) across its open-to-close, so
 /// the check and the commit are one step against all of them.  The lock is a leaf: a restore holds
 /// its version lock first and this one inside it, and nothing holding this one asks for another.
 ///
@@ -660,19 +603,13 @@ where
     P: FnOnce() -> F,
     F: std::future::Future<Output = Outcome<()>>,
 {
-    let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, path), path).await);
+    let held = res!(crate::wasm::store_opfs::hold_file(path).await);
     let landed = res!(write_file_then_held(root, path, content, expect, pre).await);
     drop(held);
     if landed.is_none() {
         announce_change(path);
     }
     Ok(landed)
-}
-
-/// Whether `path`, spelled against `root`, is stored in the opened folder rather than this
-/// account's browser storage: the root half of its write lock's name.
-fn in_folder(root: FileRoot, path: &str) -> bool {
-    matches!(storage_of(root, path), Storage::Folder(_))
 }
 
 /// How many times a conditional write asks again for an exclusive writable the browser refused
@@ -991,7 +928,7 @@ pub(in crate::wasm) async fn move_entry(root: FileRoot, from: &str, to: &str) ->
     let src = res!(dir_live(root, from).await);
     res!(create_dir(root, to).await);
     let dst = res!(dir_live(root, to).await);
-    let copied = res!(copy_tree(root, &src, &dst, to).await);
+    let copied = res!(copy_tree(&src, &dst, to).await);
     // THE SOURCE GOES ONLY AS FAR AS THE COPY CAME.  This ended in one recursive `removeEntry`,
     // which removes whatever is under `from` -- including anything the listing did not show and
     // so the copy never took.  Each copied file is removed by its stored name, then each folder
@@ -999,7 +936,7 @@ pub(in crate::wasm) async fn move_entry(root: FileRoot, from: &str, to: &str) ->
     // go and the move fails with the source intact rather than succeeding with a loss.
     for c in copied.iter() {
         if let Some(stamp) = c.stamp {
-            res!(remove_copied(root, from, c, stamp).await);
+            res!(remove_copied(from, c, stamp).await);
         }
     }
     for c in copied.iter().rev() {
@@ -1043,9 +980,9 @@ const COMPARE_BYTES_MAX: f64 = 1024.0 * 1024.0;
 /// destination, not with the `File` the copy read: that snapshot is checked by the same size and
 /// time, so on such a disk it would read the rewrite too.  Any failure to read either counts as a
 /// change, and the source stays.
-async fn remove_copied(root: FileRoot, from: &str, c: &Copied, stamp: (f64, f64)) -> Outcome<()> {
+async fn remove_copied(from: &str, c: &Copied, stamp: (f64, f64)) -> Outcome<()> {
     let path = fmt!("{}/{}", from.trim_end_matches('/'), c.rel);
-    let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, &path), &path).await);
+    let held = res!(crate::wasm::store_opfs::hold_file(&path).await);
     let now: Option<File> = match crate::wasm::settle_js(c.dir.get_file_handle(&c.name)).await {
         Ok(v)  => match v.dyn_into::<FileSystemFileHandle>() {
             Ok(fh) => match crate::wasm::settle_js(fh.get_file()).await {
@@ -1094,7 +1031,7 @@ async fn same_bytes(c: &Copied) -> bool {
 /// A file's bytes go across as the browser's own `File`, never through wasm memory, so a large
 /// file costs no copy here.  Recursion is spelled out with an explicit stack: an `async fn` cannot
 /// recurse without boxing its future.
-async fn copy_tree(root: FileRoot, src: &FileSystemDirectoryHandle,
+async fn copy_tree(src: &FileSystemDirectoryHandle,
     dst: &FileSystemDirectoryHandle, to: &str)
     -> Outcome<Vec<Copied>>
 {
@@ -1136,7 +1073,7 @@ async fn copy_tree(root: FileRoot, src: &FileSystemDirectoryHandle,
                 let file: File = res!(file_val.dyn_into()
                     .map_err(|_| err!("OPFS: '{}' did not read as a file.", name; IO, File, Read)));
                 let at = fmt!("{}/{}", to.trim_end_matches('/'), below);
-                let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, &at), &at).await);
+                let held = res!(crate::wasm::store_opfs::hold_file(&at).await);
                 let put = copy_file_held(&into, &name, &file, &at).await;
                 drop(held);
                 res!(put);
@@ -1551,7 +1488,7 @@ pub async fn list_dir_names(root: FileRoot, path: &str) -> Outcome<Vec<(String, 
 /// and there is no option to make it otherwise.  `Tool::FileDelete` refuses a folder in words
 /// before it gets this far; this is the floor under that sentence.
 pub(in crate::wasm) async fn delete_file(root: FileRoot, path: &str) -> Outcome<()> {
-    let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, path), path).await);
+    let held = res!(crate::wasm::store_opfs::hold_file(path).await);
     let gone = delete_file_held(root, path).await;
     drop(held);
     gone
@@ -1584,7 +1521,7 @@ async fn delete_file_held(root: FileRoot, path: &str) -> Outcome<()> {
 /// deletion the user confirmed in the Files panel; a model's `file_delete` goes through
 /// [`delete_file`], which cannot remove a folder.
 pub(in crate::wasm) async fn delete_entry(root: FileRoot, path: &str, recursive: bool) -> Outcome<()> {
-    let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, path), path).await);
+    let held = res!(crate::wasm::store_opfs::hold_file(path).await);
     let gone = delete_entry_held(root, path, recursive).await;
     drop(held);
     gone
@@ -1625,7 +1562,7 @@ pub(in crate::wasm) async fn delete_file_if(root: FileRoot, path: &str,
     expect: &crate::diamond_versions::Seen)
     -> Outcome<Option<crate::diamond_versions::Seen>>
 {
-    let held = res!(crate::wasm::store_opfs::hold_file(in_folder(root, path), path).await);
+    let held = res!(crate::wasm::store_opfs::hold_file(path).await);
     let gone = delete_file_if_held(root, path, expect).await;
     drop(held);
     gone

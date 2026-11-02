@@ -336,12 +336,16 @@ struct ChosenEffort {
     effort: ReasoningEffort,
 }
 
+/// OpenRouter's `provider.data_collection` on every request sent to it: only hosts that do not
+/// store or train on what they are sent (https://openrouter.ai/docs/features/provider-routing).
+pub const DATA_COLLECTION: &str = "deny"; // fixed: his ruling D-20261031-02, REQ-D-044
+
 /// Which upstream providers OpenRouter should try for this model, and in what order.
 ///
 /// Sent as the request body's `provider` object, OpenRouter's own field -- never a client
 /// this app talks to directly, so no provider name is ever hard-coded here: every string in
 /// `order` and `ignore` is whatever the user typed on the model's own row.  Empty (the
-/// default) sends no `provider` object at all, which is OpenRouter's own free choice.
+/// default) adds nothing beside [`DATA_COLLECTION`], which is OpenRouter's own free choice.
 #[derive(Clone, Debug, Default)]
 struct ProviderRouting {
     /// Providers to try first, in this order.  OpenRouter's `provider.order`.
@@ -3132,32 +3136,28 @@ impl LlmClient {
                     && !p.host.is_empty() && !ignore.iter().any(|i| **i == p.host) => Some(&p.host),
                 _ => None,
             };
-            if !routing.order.is_empty() || pinned.is_some() || !ignore.is_empty() {
-                out.push_str("\"provider\":{");
-                let mut wrote = false;
+            // EVERY OpenRouter request names its data policy (REQ-D-044, his pick D-20261031-02
+            // "Deny collection only"), so the object is always sent and the routing joins it.
+            {
+                out.push_str(&fmt!("\"provider\":{{\"data_collection\":\"{}\"", DATA_COLLECTION));
                 if !routing.order.is_empty() {
-                    out.push_str("\"order\":[");
+                    out.push_str(",\"order\":[");
                     out.push_str(&routing.order.iter()
                         .map(|p| fmt!("\"{}\"", json_escape(p)))
                         .collect::<Vec<String>>().join(","));
                     out.push(']');
-                    wrote = true;
                 } else if let Some(host) = pinned {
-                    out.push_str(&fmt!("\"order\":[\"{}\"]", json_escape(host)));
-                    wrote = true;
+                    out.push_str(&fmt!(",\"order\":[\"{}\"]", json_escape(host)));
                 }
                 if !ignore.is_empty() {
-                    if wrote { out.push(','); }
-                    out.push_str("\"ignore\":[");
+                    out.push_str(",\"ignore\":[");
                     out.push_str(&ignore.iter()
                         .map(|p| fmt!("\"{}\"", json_escape(p)))
                         .collect::<Vec<String>>().join(","));
                     out.push(']');
-                    wrote = true;
                 }
                 if routing.only {
-                    if wrote { out.push(','); }
-                    out.push_str("\"allow_fallbacks\":false");
+                    out.push_str(",\"allow_fallbacks\":false");
                 } else if pinned.is_some() {
                     out.push_str(",\"allow_fallbacks\":true");
                 }

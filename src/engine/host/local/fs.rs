@@ -79,11 +79,7 @@ impl HostFs for LocalFs {
     async fn move_licensed(&self, _root: FileRoot, _from: &Licence, _to: &Licence) -> Outcome<()> {
         unavailable("fs", "move_licensed")
     }
-    fn storage_of(&self, _root: FileRoot, _path: &str) -> Storage { Storage::Nowhere }
-    fn thrown(&self) -> String { String::new() }
-    fn take_thrown(&self) -> String { String::new() }
-    fn arm_folder_watch(&self) {}
-    fn notify_folder_lost(&self) {}
+    fn storage_of(&self, root: FileRoot, path: &str) -> Storage { crate::tools::storage_for(root, path, None, "") }
     fn children_of(&self, _dir: &str) -> Vec<(String, bool, u64)> { Vec::new() }
     async fn cloud_fetch(&self, _path: &str) -> Outcome<String> {
         unavailable("fs", "cloud_fetch")

@@ -678,7 +678,6 @@
 :root[data-skin="daylight"] .attach-head.attach-fold { padding-left: 0; }
 :root[data-skin="daylight"] .arte-list,
 :root[data-skin="daylight"] .arte-row { border-color: transparent; }
-:root[data-skin="daylight"] .mark-notice { border-color: transparent; }
 
 /* ── The Workspace, in the dock ────────────────────────────── */
 /* One text button (D-20260929-03 §4, r526 residual: 25px raised to 27px to

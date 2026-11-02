@@ -4393,19 +4393,6 @@ async function runSteerHeld(f, presetArg, depthArg, detached, how, held, models)
 	// On another pair than the last turn ran on, the history says so before the request (U2c).
 	try { await noteModelInForce(diamondId, dsPair, fa); }
 	catch (e) { diag('model change', 'turn-start note: ' + ((e && e.message) || e)); }
-	// The toolchains the user ticked on this Diamond, read fresh for THIS turn. The
-	// marks themselves are the engine's to read at the turn (HIST-SAFE U2), from the
-	// same `marks::reach` that `Files.bounds` answers with, so the daimon and the
-	// workers it commands are held to the same reach. A record the engine cannot read
-	// refuses the turn there, plainly; here a failure only costs the toolchains, and
-	// that is said out loud rather than discovered as a refusal.
-	var marks = { toolkits: [] };
-	try { marks = await Files.bounds(diamondId); }
-	catch (e) {
-		marks = { toolkits: [] };
-		crystalSay(tOr('crystal.kits_unread',
-			'The toolchains granted to this diamond could not be read, so this turn runs without them.'), true);
-	}
 	// THE TURN IS HELD BEFORE IT GOES OUT, so a `spawn_agent` call inside it can be
 	// attributed to this Diamond. A fresh tag per turn: `rec.id` is the daimon chat's own
 	// id and is the same for every turn it ever runs, so it cannot say which one is live.
@@ -4451,16 +4438,9 @@ async function runSteerHeld(f, presetArg, depthArg, detached, how, held, models)
 		// persistent, which is the whole of notes2's "the daimon is meant to be
 		// persistant": it used to build a fresh session per instruction, so it could
 		// not be asked a follow-up question.
-		// The marks, this device's record of them and what waits for a press are the
-		// engine's to read at the turn (HIST-SAFE U2); only the toolkits travel.
 		// The list the turn starts from, kept: the fold record names the turns it held (C2-FOLD).
 		var prior = daimonPrior(rec, dumid);
 		var after = await turnKill(fa.steer_crystal(diamondId, sent,
-			// The toolchains the user ticked on this Diamond. Handed over here because
-			// `compose_daimon` is where a daimon's own bounds are built, and it is not the
-			// place a worker's are: ticking Git granted it to this daimon's workers and not
-			// to the daimon, which is the surface the user granted it on.
-			JSON.stringify(marks.toolkits  || []),
 			// The conversation the turn starts from is the converged transcript's
 			// (`daimonPrior`), the stored session only where it agrees (UNBLOCK-11 F1). The
 			// prompt's mid and this device's id go with it, for the engine's activity record.

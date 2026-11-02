@@ -24,7 +24,6 @@ function check(name, cond, detail) {
 }
 
 let PEER = source('peer.js');
-const MARKS = source('markshere.js');
 const STAMP = source('stamp.js');
 
 // ── One simulated tab ──
@@ -51,7 +50,7 @@ function makeTab() {
 	};
 	function CustomEventShim(t, o) { this.type = t; this.detail = o && o.detail; }
 	const quiet = { debug: () => {}, log: () => {}, warn: () => {}, error: console.error };
-	for (const body of [STAMP, PEER, MARKS]) {
+	for (const body of [STAMP, PEER]) {
 		const fn = new Function(
 			'window', 'document', 'crypto', 'localStorage',
 			'TextEncoder', 'TextDecoder', 'CustomEvent', 'Blob',
@@ -72,13 +71,11 @@ const SELF = 's0000000000000000000000000000000';
 const RUN  = 'a0000000000000000000000000000000';		// the nominated runner (argonaut)
 const GIL  = 'g0000000000000000000000000000000';		// a desktop no tab has stated for (gilgamesh)
 const PHN  = 'p0000000000000000000000000000000';		// the phone the person is at
-const FID  = '0123456789abcdef0123456789abcdef';		// the asker's folder id
 const DIA  = '18f0a0b0c0d0e0f';						// the chat's Diamond
 const CHAT = { id: 'c1', diamondId: DIA, messages: [] };
 
 const tab = makeTab();
 const P = tab.DaimondPeer;
-const M = tab.DaimondMarksHere;
 const W = P.DISPATCH_FRESH_MS;
 
 // A row from a deriving gateway: the posture stated 5 min ago, the doors held now.

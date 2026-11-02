@@ -47,7 +47,6 @@ use crate::tools::{
     normalise,
     refusal_line,
     Bound,
-    Kit,
     Machine,
     Surface,
     terminal_bounds,
@@ -308,11 +307,10 @@ fn inside(path: &str, roots: &[String]) -> bool {
 /// reaches the reader wrapped in an fe2o3 chain around the one sentence that
 /// matters.
 ///
-/// Three things are settled and none of them is a caller's to change.  A
-/// toolkit is never inferred from what was asked to run -- it is granted by the
-/// user, arrives as a name, and resolves through [`Kit::resolve`] exactly as it
-/// does for a command.  The fence is never widened by anything a model says:
-/// `argv` reaches neither the compartment nor the environment.  And `TERM` is
+/// Three things are settled and none of them is a caller's to change.  No
+/// toolchain is a grant (R2): the terminal lends only the ssh the computer is
+/// set up for, and never from what was asked to run.  The fence is never
+/// widened by anything a model says: `argv` reaches neither the compartment nor the environment.  And `TERM` is
 /// not sent, because the hand sets it and refuses a caller who names it -- a
 /// page that could name it could promise a program capabilities nothing on the
 /// other end can draw.
@@ -321,8 +319,7 @@ fn inside(path: &str, roots: &[String]) -> bool {
 /// * `ask_json` - What the page knows, as JSON:
 ///   `{diamond, cwd, cols, rows}` (`diamond` the Diamond's id, or absent for the user's own
 ///   terminal), plus the optional
-///   `argv` (defaulting to [`SHELL`]), `toolkits` (the names the user granted
-///   this Diamond) and `tainted` (a session belonging to a turn that has read a
+///   `argv` (defaulting to [`SHELL`]) and `tainted` (a session belonging to a turn that has read a
 ///   stranger's words, which loses the network).
 ///
 /// # Returns
@@ -375,46 +372,33 @@ pub async fn pty_request(ask_json: String) -> String {
             pseudo-terminal -- does not exist. Commands can still be run.");
     }
 
-    // THE DIAMOND'S MARKS ARE THE ENGINE'S TO READ (HIST-SAFE U2, 2026-10-12), here as at every
-    // other door: the page named its own directory and what it had attached until then, so a page
-    // script could open a terminal over a folder nobody marked.  An ask still carrying them is
-    // refused; one naming no Diamond is the user's own terminal at the granted root.
+    // THE PAGE NAMES THE DIAMOND AND NOTHING IT REACHES (HIST-SAFE U2, 2026-10-12;
+    // D-20261031-11): an ask still carrying a directory or lists is refused; one naming no Diamond
+    // is the user's own terminal at the granted root.
     if extract_json_string(ask, "own_dir").is_some()
         || extract_json_string_array(ask, "attached").is_some()
         || extract_json_string_array(ask, "read_only").is_some()
     {
         return refused(
-            "This build no longer takes own_dir, attached or read_only from the page: the engine \
-            reads the Diamond's marks itself. Send the Diamond's id as `diamond`. Nothing was done.");
+            "This build no longer takes own_dir, attached or read_only from the page. Send the \
+            Diamond's id as `diamond`. Nothing was done.");
     }
     let diamond = extract_json_string(ask, "diamond").unwrap_or_default();
-    let (own_dir, attached, read_only) = if diamond.is_empty() {
-        (String::new(), Vec::new(), Vec::new())
+    let own_dir = if diamond.is_empty() {
+        String::new()
     } else {
-        let id = match crate::marks::DiamondId::parse(&diamond) {
-            Ok(d)  => d,
+        match crate::diamond_meta::DiamondId::parse(&diamond) {
+            Ok(d)  => d.dir(),
             Err(_) => return refused(&fmt!("'{}' is not a Diamond's id, so there is no terminal \
                 to open for it. Nothing was done.", diamond)),
-        };
-        // FAIL CLOSED: a record that cannot be read opens no terminal over anything.
-        match crate::wasm::marks::diamond_reach(&id).await {
-            Ok(r)  => (id.dir(), r.attached, r.read_only),
-            Err(_) => return refused(crate::wasm::marks::UNREAD),
         }
     };
     // A TERMINAL IS THE USER AT A KEYBOARD, NOT A DAIMON, so its fence is the machine grant
     // and not this Diamond's attachments (owner, 2026-08-26). The composition, and why each part
     // of it is safe, is `tools::terminal_bounds`; a daimon's `run` never reaches it.
-    //
-    // The toolchains the user granted this Diamond, and nothing else: the names come from what
-    // they decided, never from `argv`. The second argument is the MACHINE's answer --
-    // `install.sh --remote`, reported in `hello` as `remote:ready` -- and not this Diamond's.
-    let bounds: Vec<Bound> = terminal_bounds(
-        &own_dir,
-        &attached,
-        &read_only,
-        &extract_json_string_array(ask, "toolkits").unwrap_or_default(),
-        machine.remote);
+    // No toolchain is a Diamond's grant (R2 GOES, D-20261031-11); the ssh lend is the MACHINE's
+    // posture (`remote:ready`), read off `machine` below.
+    let bounds: Vec<Bound> = terminal_bounds(&own_dir);
 
     // A tainted session loses the network, the same rule `egress_check` applies
     // to a URL -- and now the same rule the user's PERMISSION MODE governs. The
@@ -518,23 +502,16 @@ pub async fn pty_request(ask_json: String) -> String {
     };
     let argv_json: Vec<String> = argv.iter().map(|a| fmt!("\"{}\"", json_escape(a))).collect();
 
-    // The environment is not a caller's to set, exactly as it is not for a
-    // command: what goes here is the granted toolkit's own two or three names,
-    // from the table in `src/tools.rs`, or nothing at all. `TERM` is pointedly
-    // absent -- the hand sets it and REFUSES a session that names it.
-    let env_json = match Kit::resolve(&bounds, &machine) {
-        Some(kit) => kit.env_json(),
-        None      => fmt!("[]"),
-    };
+    // The environment is not a caller's to set, exactly as it is not for a command: the
+    // terminal's ssh wrapper on PATH where the machine is set up for it, or nothing at all.
+    // `TERM` is pointedly absent -- the hand sets it and REFUSES a session that names it.
+    let env_json = crate::tools::terminal_env_json(&machine);
 
     // No `id`: the relay mints one, because it is the end that knows which
     // sessions this page already has open and an id has to be unique among
     // those. Everything else is composed here, once.
-    // The granted toolkit names travel with the fence, as they do for a command: the hand clamps
-    // an arriving fence against the toolchains it was told were granted, and a toolchain folder is
-    // not under the granted root, so it cannot check the one without the other. Read back out of
-    // the bounds rather than echoed from the ask, so an unknown name is dropped here and never
-    // reaches the wire.
+    // The lends travel with the fence: the executor clamps an arriving fence against them, and
+    // the ssh folder is not under the granted root, so it cannot check the one without the other.
     fmt!(
         r#"{{"t":"open","argv":[{}],"cwd":"{}","env":{},"size":{{"cols":{},"rows":{}}},"fence":{},"toolkits":{}}}"#,
         argv_json.join(","),
@@ -543,6 +520,6 @@ pub async fn pty_request(ask_json: String) -> String {
         cells(ask, "cols", COLS_DEFAULT),
         cells(ask, "rows", ROWS_DEFAULT),
         fence.to_json(),
-        crate::tools::toolkit_names_json(&bounds),
+        crate::tools::terminal_lends_json(&machine),
     )
 }

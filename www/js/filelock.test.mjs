@@ -89,16 +89,15 @@ function fakeWritable(rec, failClose) {
 {
 	const L = load(fakeLocks());
 	const table = [
-		['sandbox', 'notes/a.txt',           'daimond-file:sandbox:notes/a.txt'],
-		['folder',  'notes/a.txt',           'daimond-file:folder:notes/a.txt'],
-		['sandbox', '/notes//./A.TXT',       'daimond-file:sandbox:notes/a.txt'],
-		['sandbox', 'x/../notes/a.txt',      'daimond-file:sandbox:notes/a.txt'],
-		['sandbox', '../../a.txt',           'daimond-file:sandbox:a.txt'],
-		['sandbox', 'm/70074.3.daimond:2,S', 'daimond-file:sandbox:m/70074.3.daimond:2,s'],
+		['notes/a.txt', 'daimond-file:sandbox:notes/a.txt'],
+		['/notes//./A.TXT', 'daimond-file:sandbox:notes/a.txt'],
+		['x/../notes/a.txt', 'daimond-file:sandbox:notes/a.txt'],
+		['../../a.txt', 'daimond-file:sandbox:a.txt'],
+		['m/70074.3.daimond:2,S', 'daimond-file:sandbox:m/70074.3.daimond:2,s'],
 	];
-	for (const [root, path, want] of table) {
-		const got = L.name(root, path);
-		check('name ' + root + ' ' + path, got === want, got);
+	for (const [path, want] of table) {
+		const got = L.name(path);
+		check('name ' + path, got === want, got);
 	}
 }
 
@@ -107,13 +106,13 @@ function fakeWritable(rec, failClose) {
 	const locks = fakeLocks();
 	const L = load(locks);
 	const rec = [];
-	const w1 = await L.writable('sandbox', 'a.txt', async () => fakeWritable(rec));
+	const w1 = await L.writable('a.txt', async () => fakeWritable(rec));
 	check('held while open', locks.holding('daimond-file:sandbox:a.txt'));
 	let second = null;
-	const p2 = L.writable('sandbox', 'A.txt', async () => { rec.push('open2'); return fakeWritable(rec); })
+	const p2 = L.writable('A.txt', async () => { rec.push('open2'); return fakeWritable(rec); })
 		.then((w) => { second = w; });
 	let other = null;
-	const p3 = L.writable('sandbox', 'b.txt', async () => fakeWritable([]))
+	const p3 = L.writable('b.txt', async () => fakeWritable([]))
 		.then((w) => { other = w; });
 	await tick(); await tick();
 	check('a second writer of the file waits', second === null && !rec.includes('open2'));
@@ -134,26 +133,26 @@ function fakeWritable(rec, failClose) {
 {
 	const locks = fakeLocks();
 	const L = load(locks);
-	const n = 'daimond-file:folder:f.txt';
+	const n = 'daimond-file:sandbox:f.txt';
 	let threw = false;
-	try { await L.writable('folder', 'f.txt', async () => { throw new Error('NoModificationAllowedError'); }); }
+	try { await L.writable('f.txt', async () => { throw new Error('NoModificationAllowedError'); }); }
 	catch (e) { threw = true; }
 	await tick();
 	check('a failed open throws and gives the lock back', threw && !locks.holding(n));
 
 	const rec = [];
-	const w = await L.writable('folder', 'f.txt', async () => fakeWritable(rec));
+	const w = await L.writable('f.txt', async () => fakeWritable(rec));
 	await w.abort();
 	await tick();
 	check('an abort aborts and gives the lock back', rec.includes('abort') && !locks.holding(n));
 
-	const w2 = await L.writable('folder', 'f.txt', async () => fakeWritable([], true));
+	const w2 = await L.writable('f.txt', async () => fakeWritable([], true));
 	let closeThrew = false;
 	try { await w2.close(); } catch (e) { closeThrew = true; }
 	await tick();
 	check('a failed close throws and gives the lock back', closeThrew && !locks.holding(n));
 
-	const v = await L.hold('folder', 'f.txt', async () => { await tick(); return locks.holding(n) ? 7 : 0; });
+	const v = await L.hold('f.txt', async () => { await tick(); return locks.holding(n) ? 7 : 0; });
 	await tick();
 	check('hold runs under the lock and answers', v === 7 && !locks.holding(n));
 }
@@ -162,10 +161,10 @@ function fakeWritable(rec, failClose) {
 {
 	const L = load(null);
 	const rec = [];
-	const w = await L.writable('sandbox', 'a.txt', async () => fakeWritable(rec));
+	const w = await L.writable('a.txt', async () => fakeWritable(rec));
 	await w.close();
 	check('no lock manager: the raw writable, written', rec.includes('close'));
-	check('no lock manager: hold runs', (await L.hold('sandbox', 'a.txt', async () => 3)) === 3);
+	check('no lock manager: hold runs', (await L.hold('a.txt', async () => 3)) === 3);
 }
 
 // 5. A bounded wait: 60 s, then refused in the wasm's words (D2).
@@ -175,10 +174,10 @@ function fakeWritable(rec, failClose) {
 	const FakeSignal = { timeout(ms) { asked.push(ms); const c = new AbortController(); fires.push(() => c.abort(Object.assign(new Error('timed out'), { name: 'TimeoutError' }))); return c.signal; } };
 	const locks = fakeLocks();
 	const L = load(locks, FakeSignal);
-	const w1 = await L.writable('sandbox', 'slow.txt', async () => fakeWritable([]));
+	const w1 = await L.writable('slow.txt', async () => fakeWritable([]));
 	let got = null;
-	const p2 = L.writable('sandbox', 'slow.txt', async () => fakeWritable([])).then(() => 'opened', (e) => e.message);
-	const p3 = L.hold('sandbox', 'slow.txt', async () => 'ran').then((v) => v, (e) => e.message);
+	const p2 = L.writable('slow.txt', async () => fakeWritable([])).then(() => 'opened', (e) => e.message);
+	const p3 = L.hold('slow.txt', async () => 'ran').then((v) => v, (e) => e.message);
 	await tick();
 	check('every wait asks for a 60 s signal', asked.length === 3 && asked.every((ms) => ms === 60000), asked.join(','));
 	fires[1](); fires[2]();
@@ -195,10 +194,10 @@ function fakeWritable(rec, failClose) {
 {
 	const L = load(fakeLocks());
 	let opened = false;
-	const r = await L.writable('sandbox', 'x/../a.txt', async () => { opened = true; return fakeWritable([]); })
+	const r = await L.writable('x/../a.txt', async () => { opened = true; return fakeWritable([]); })
 		.then(() => 'opened', (e) => e.message);
 	check('a writable of x/../a.txt is refused unopened', !opened && /has a '\.\.' in it/.test(r), r);
-	const h = await L.hold('folder', '../a.txt', async () => 'ran').then((v) => v, (e) => e.message);
+	const h = await L.hold('../a.txt', async () => 'ran').then((v) => v, (e) => e.message);
 	check('a hold of ../a.txt is refused', /has a '\.\.' in it/.test(h), h);
 }
 
@@ -206,9 +205,9 @@ function fakeWritable(rec, failClose) {
 {
 	const locks = fakeLocks();
 	const L = load(locks);
-	const n = 'daimond-file:folder:new.txt';
+	const n = 'daimond-file:sandbox:new.txt';
 	const rec = [];
-	const w = await L.writable('folder', 'new.txt', async () => fakeWritable(rec));
+	const w = await L.writable('new.txt', async () => fakeWritable(rec));
 	await w.write('x');
 	let heldAtRemove = null;
 	await w.discard(async () => { heldAtRemove = locks.holding(n); rec.push('remove'); });
@@ -217,41 +216,22 @@ function fakeWritable(rec, failClose) {
 	check('discard removes while the lock is held', heldAtRemove === true);
 	check('and gives the lock back', !locks.holding(n));
 	const rec2 = [];
-	const w2 = await L.writable('folder', 'new.txt', async () => fakeWritable(rec2, true));
+	const w2 = await L.writable('new.txt', async () => fakeWritable(rec2, true));
 	try { await w2.close(); } catch (e) { /* the failure discard follows */ }
 	let held2 = null;
 	await w2.discard(async () => { held2 = locks.holding(n); });
 	await tick();
 	check('a discard after a failed close removes under a fresh hold', held2 === true && !locks.holding(n));
-	const w3 = await L.writable('folder', 'new.txt', async () => fakeWritable([]));
+	const w3 = await L.writable('new.txt', async () => fakeWritable([]));
 	await w3.discard();
 	await tick();
 	check('a discard with nothing to remove only aborts', !locks.holding(n));
 	const L0 = load(null);
 	const rec4 = [];
-	const w4 = await L0.writable('sandbox', 'a.txt', async () => fakeWritable(rec4));
+	const w4 = await L0.writable('a.txt', async () => fakeWritable(rec4));
 	let ran4 = false;
 	await w4.discard(async () => { ran4 = true; });
 	check('no lock manager: discard aborts and removes', rec4.includes('abort') && ran4);
-}
-
-// 8. "Save a copy" may not target the open folder or anything inside it (D4).
-{
-	const L = load(fakeLocks());
-	// A stand-in handle tree: `path` is where it stands on the disk.
-	const h = (path) => ({
-		path,
-		async isSameEntry(o) { return o.path === path; },
-		async resolve(o) { return o.path.startsWith(path + '/') ? o.path.slice(path.length + 1).split('/') : null; },
-	});
-	const open = h('/home/me/p');
-	const inside = L && typeof L.inside === 'function' ? L.inside : async () => false;
-	check('the open folder itself is refused', await inside(open, h('/home/me/p')));
-	check('a folder inside it is refused', await inside(open, h('/home/me/p/sub/deeper')));
-	check('a folder beside it is allowed', !(await inside(open, h('/home/me/q'))));
-	check('its parent is allowed', !(await inside(open, h('/home/me'))));
-	check('no open folder: anything is allowed', !(await inside(null, h('/home/me/p'))));
-	check('a handle that cannot answer is refused', await inside({ async isSameEntry() { throw new Error('gone'); } }, h('/x')));
 }
 
 if (failures) { console.log(failures + ' FAILED'); process.exit(1); }

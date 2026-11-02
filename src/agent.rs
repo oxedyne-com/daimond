@@ -277,6 +277,8 @@ pub struct Agent {
     diamond:             Rc<RefCell<String>>,
     words_home:          Rc<RefCell<WordsHome>>,         // where a fold puts his words
     pending_only:        Cell<bool>,                     // reports on Pending, see `set_pending_only`
+    turn_n_next:         Cell<u32>,                      // the next turn's number, see `set_turn_n`
+    turn_ns:             RefCell<Vec<(String, u32)>>,    // rows' (mid, n) since the fold, see `set_turn_numbers`
     /// The turn's last-progress clock (U3a LV1, UNBLOCK-16): beaten by every line the model
     /// stream hears, through the same clock handed to `llm`, and nothing else.  Its limit is
     /// [`compact::LIVENESS_MS`] until [`Agent::set_liveness_ms`] says otherwise.  Shared on clone,
@@ -709,6 +711,8 @@ impl Agent {
             words_unfiled:   Cell::new(false),
             orphaned:        Cell::new(false),
             pending_only:    Cell::new(false),
+            turn_n_next:     Cell::new(0),
+            turn_ns:         RefCell::new(Vec::new()),
             ending:          Rc::new(RefCell::new(None)),
             diamond:         Rc::new(RefCell::new(String::new())),
             words_home:      Rc::new(RefCell::new(WordsHome::None)),
@@ -1225,6 +1229,12 @@ impl Agent {
         self.limits.borrow_mut().fold_model = model.to_string();
     }
 
+    /// Read PDFs and pictures on `conf`'s engines and figures (P2.5d): the gateway's, as the
+    /// page or the errand carries them.  Handed to the tools at the start of every turn.
+    pub fn set_ocr(&self, conf: &crate::tools::OcrConf) {
+        self.limits.borrow_mut().ocr = conf.clone();
+    }
+
     /// What bounds this agent's turns right now.
     pub fn limits(&self) -> Limits {
         self.limits.borrow().clone()
@@ -1377,6 +1387,21 @@ impl Agent {
     /// `ReasonedOnly`, and the arrival stays owed.
     pub fn set_pending_only(&self, on: bool) {
         self.pending_only.set(on);
+    }
+
+    /// The number the next turn's record carries (TURN-NUM), fixed by the page when it made the
+    /// record; written once into that turn's note ([`crate::turn_num::noted`]).  Taken by the
+    /// turn, so a turn nobody numbered after it carries none.
+    pub fn set_turn_n(&self, n: u32) {
+        self.turn_n_next.set(n);
+    }
+
+    /// The rows' own numbers since the chat's last fold, `(mid, n)` in transcript order, as the
+    /// page (or Kimberlite's errand) holds them now: what `turn_get` resolves a number through,
+    /// never the `[#n]` labels in the history, which a renumbered turn leaves stale.  Replaces
+    /// the last set; the turn in flight is added to it when it starts.
+    pub fn set_turn_numbers(&self, nums: Vec<(String, u32)>) {
+        *self.turn_ns.borrow_mut() = nums;
     }
 
     /// May this turn end on an empty reply without a word?
@@ -1563,17 +1588,27 @@ impl Agent {
             // replaces a habit -- reading one file per round -- rather than adding a capability.
             // It goes here rather than in `DEFAULT_DAIMON`, which the user may rewrite: a
             // briefing line about a tool is a fact about the belt and not a preference.
-            let several = match names.iter().any(|n| n == "compound") {
-                true  => " For several reads that go together -- list a folder, then read what \
-                          you found in it -- use compound and get them all in one call.",
-                false => "",
-            };
+            //
+            // IN CLAUDE CODE'S SHAPE (P2.5c): a headed section, one rule per bullet, so each
+            // conditional rule below is a line of its own and the heading tells a model trained
+            // on that harness what kind of text it is reading.
             let mut t = fmt!(
-                "You have exactly these tools, all scoped to the user's \
+                "# Using your tools\n\
+                 - You have exactly these tools, all scoped to the user's \
                  workspace: {}. Use them to inspect and change the workspace \
                  when completing a task. You have no other tools; never claim \
-                 to have performed an action you had no tool to perform.{}",
-                names.join(", "), several);
+                 to have performed an action you had no tool to perform.",
+                names.join(", "));
+            if names.iter().any(|n| n == "compound") {
+                t.push_str("\n- For several reads that go together -- list a folder, then read \
+                    what you found in it -- use compound and get them all in one call.");
+            }
+            // THE DEFERRED INDEX (P2.5c): named above, schemas held behind `tool_search`.
+            if names.iter().any(|n| n == crate::tools::TOOL_SEARCH) {
+                t.push_str("\n- Some tools are listed in tool_search's description rather than \
+                    sent in full. Before the first call to one, call tool_search with its name \
+                    and read the schema it answers; call it once per tool, not every round.");
+            }
             // TWO SENTENCES, on by default, and both true of what `batch::batches` actually does
             // -- see the note there. The old one sentence ("Independent calls go in ONE reply;
             // they run together") was not: everything in a reply runs in the model's OWN order,
@@ -1582,7 +1617,7 @@ impl Agent {
             // wording that an edit and the read or test that checks it belong in that same
             // reply -- the sentence that would have told it so was the one place this was hidden.
             if self.limits.borrow().batch_line {
-                t.push_str(" Calls in one reply run in the order you give them; only reads run \
+                t.push_str("\n- Calls in one reply run in the order you give them; only reads run \
                     side by side within that order. So an edit and the read or test that checks \
                     it can go in the same reply -- the edit still finishes first.");
             }
@@ -1590,10 +1625,24 @@ impl Agent {
             // The rounds census habit this replaces is a page-at-a-time read of one import after
             // another once a task has named where the work is; `file_read`'s own description
             // says the same thing for a reader who has not seen this sentence.
+            // THE TURN NUMBERS, only where `turn_get` is there, same rule as `compound`.
+            if names.iter().any(|n| n == "turn_get") {
+                t.push_str(crate::turn_num::TURN_NUM_LINE);
+            }
             if names.iter().any(|n| n == "file_read") {
-                t.push_str(" When a task names a file or folder, read it whole in one file_read \
+                t.push_str("\n- When a task names a file or folder, read it whole in one file_read \
                     -- \"path\":\"src/*.js\" or \"paths\":[..] -- before following its imports \
                     one at a time.");
+            }
+            // THE AGENT-USE RULES, where `spawn_agent` is in hand and the turn is not a worker's
+            // (a worker holds it only because its array is its parent's, r578c, and is refused it
+            // at the call).  Claude Code's own rules for its Agent tool, in Daimond's words; the
+            // role prompt's longer passage is the user's to rewrite, and these are facts about
+            // the belt.
+            if names.iter().any(|n| n == crate::tools::Tool::SpawnAgent.name())
+                && !registry.ctx.is_unsupervised()
+            {
+                t.push_str(&fmt!("\n\n{}", AGENT_USE_RULES));
             }
             t
         };
@@ -1661,6 +1710,9 @@ impl Agent {
         // `Limits`. Written every turn rather than once, so an arm that changes it between two
         // turns of one conversation is obeyed by the second of them.
         registry.ctx.set_compound(self.limits.borrow().compound);
+        // AND THE OCR ENGINES AND FIGURES (P2.5d), at the same seam: `file_read` and `ocr` are
+        // tools and cannot see `Limits`.
+        registry.ctx.set_ocr(&self.limits.borrow().ocr);
         // AND WHETHER THIS TURN REPORTS ON PENDING ALONE, which lets `pending_none` run and leads
         // its message with the note that names its three endings (MAIL-FIX2 item 2).
         let pending_only = self.pending_only.get();
@@ -1686,6 +1738,17 @@ impl Agent {
         // byte-identical from turn to turn and the provider's cache holds across them.  Stored
         // with the message, so a reload sends the same bytes.  See `prompts::turn_note`.
         let blocks = crate::prompts::turn_note(&self.blocks.borrow(), &session.messages);
+        // AND THE TURN'S NUMBER, ONCE, at the note's foot beside the words (TURN-NUM): stored with
+        // the message, so the history only grows and the cached prefix stays the same bytes.  Part
+        // of the caller's note, so a fold's restatement of the blocks keeps it.
+        let n = self.turn_n_next.replace(0);
+        // The turn in flight is in the rows' map by its own number, set or not by the page.
+        if n > 0 && !mid.is_empty() {
+            let mut ns = self.turn_ns.borrow_mut();
+            ns.retain(|(m, _)| m != &mid);
+            ns.push((mid.clone(), n));
+        }
+        let pre = crate::turn_num::noted(&pre, n);
         *self.turn_pre.borrow_mut() = pre.clone();
         let pre = crate::prompts::join_note(&blocks, &pre);
         // Append the user message to the persisted history.
@@ -2093,6 +2156,18 @@ impl Agent {
                 away.map(|a| fmt!(" {}", a)).unwrap_or_default()),
         };
         MessageContent::text(fmt!("{}{}", head, result.as_text()))
+    }
+
+    /// `turn_get`'s answer, read from the conversation this turn holds
+    /// ([`crate::turn_num::turn_said`]); any other call's `result` unchanged.
+    fn with_turn(&self, session: &Session, tc: &crate::protocol::ToolCall, result: MessageContent)
+        -> MessageContent
+    {
+        if tc.name != crate::tools::Tool::TurnGet.name() {
+            return result;
+        }
+        let n = crate::tools::turn_get_n(&tc.arguments);
+        MessageContent::text(crate::turn_num::turn_said(&session.messages, &self.turn_ns.borrow(), n))
     }
 
     /// The event that tells the page a call has started.
@@ -3077,7 +3152,7 @@ impl Agent {
                     .zip(wanting.iter())
                     .map(|((tc, p), w)| if *p { None } else if *w {
                         Some((wanting_said(&tc.name, alone),
-                            wanting_told(&tc.name, &registry.ctx.unconfirmed,
+                            no_hand_told(&tc.name,
                                 &crate::tools::device_label())))
                     } else {
                         setbacks.held(&tc.name, &tc.arguments)
@@ -3087,8 +3162,15 @@ impl Agent {
                 // A READ PAST 2K QUIET ROUNDS IS NOT SENT (UNBLOCK-27 R4).  Answered as a refusal
                 // that says to deliver; nothing that writes, builds, runs or dispatches is ever
                 // held here, so the act that delivers always goes through.
-                let closed: Vec<bool> = group.iter().map(|tc| state.refuses(&tc.name)).collect();
-                let shut = state.refusal();
+                //
+                // NOR, ON ANY ASK, A CALL THAT HAS ANSWERED THE SAME WAY K TIMES (P2.5c): the loop
+                // rule is per call, so it binds a question or a research turn without closing
+                // its reading, and its refusal names the round the answer was first given.
+                let shuts: Vec<Option<String>> = group.iter()
+                    .map(|tc| state.looped(&tc.name, &tc.arguments)
+                        .or_else(|| state.refuses(&tc.name).then(|| state.refusal())))
+                    .collect();
+                let closed: Vec<bool> = shuts.iter().map(|s| s.is_some()).collect();
                 let truncated = resp.truncated;
                 let halt = self.llm.halt();
                 let work = async { if group.len() == 1 {
@@ -3097,7 +3179,7 @@ impl Agent {
                         vec![Ok(MessageContent::text(String::new()))]
                     } else if let Some((said, _)) = &held[0] {
                         vec![Ok(MessageContent::text(crate::tools::refusal_line(said)))]
-                    } else if closed[0] {
+                    } else if let Some(shut) = &shuts[0] {
                         vec![Ok(MessageContent::text(shut.clone()))]
                     } else {
                         vec![self.one_call(registry, &group[0], truncated, on_event).await]
@@ -3105,15 +3187,14 @@ impl Agent {
                 } else {
                     sinks = group.iter().map(|_| Vec::new()).collect();
                     let futs: Vec<_> = group.iter().zip(sinks.iter_mut()).zip(held.iter())
-                        .zip(pre.iter()).zip(closed.iter())
+                        .zip(pre.iter()).zip(shuts.iter())
                         .map(|((((tc, sink), h), p), c)| {
-                            let shut = &shut;
                             async move {
                                 if *p {
                                     Ok(MessageContent::text(String::new()))
                                 } else if let Some((said, _)) = h {
                                     Ok(MessageContent::text(crate::tools::refusal_line(said)))
-                                } else if *c {
+                                } else if let Some(shut) = c {
                                     Ok(MessageContent::text(shut.clone()))
                                 } else {
                                     self.call_buffered(registry, tc, truncated, sink).await
@@ -3227,22 +3308,37 @@ impl Agent {
                     // announce, the claims, the event and the stored reply are all built from
                     // this one value, so the pairing flow is untouched.
                     let result = self.with_folds(registry.ctx.host(), session, tc, result).await;
+                    // `turn_get` IS ANSWERED HERE WHOLE, for the reason recall's fold half is: the
+                    // turns it reads live in the session, which no tool is handed (TURN-NUM).
+                    let result = self.with_turn(session, tc, result);
                     let outcome = crate::tools::call_outcome(&result.as_text());
-                    // INTO THE TURN'S STATE, and a read that returns what the same call returned
-                    // before says so (R3).  Prefixed rather than replacing the result: the
-                    // earlier copy may since have been retired or folded away.
-                    let seen = match crate::turn_state::Class::of(&tc.name) {
-                        crate::turn_state::Class::Read => Some(crate::turn_state::result_hash(&result)),
-                        _                              => None,
-                    };
+                    // INTO THE TURN'S STATE, and a call that returns what the same call returned
+                    // before says so (R3; every class since P2.5c, which the loop rule counts).
+                    // Prefixed rather than replacing the result: the earlier copy may since have
+                    // been retired or folded away.
+                    let seen = Some(crate::turn_state::result_hash(&result));
                     let claimed = crate::tools::Tool::from_name(&tc.name)
                         .map(|t| t.path_claims(&tc.arguments, registry.ctx.daimon().as_deref()))
                         .unwrap_or_default();
-                    let result = match state.record(&tc.name, &tc.arguments, outcome, &claimed,
+                    let result = match state.record(&tc.name, &tc.arguments, &tc.id, outcome, &claimed,
                         seen, rounds)
                     {
-                        Some(r) => headed(result, &fmt!("Unchanged since round {}: the same call \
-                            returned exactly this then.", r)),
+                        Some(r) => {
+                            // A REPEAT POINTS AT ITS WHOLE COPY (P2.5c): where the reply that holds
+                            // this result in full is still sent whole, the new reply is only the
+                            // head saying so, a small message appended and nothing already sent
+                            // rewritten, so the cached prefix holds.  Otherwise it goes whole and
+                            // becomes the copy the next repeat points at.
+                            let held = state.whole(&tc.name, &tc.arguments).map(str::to_string);
+                            match repeat_short(&working, held.as_deref(), &result, r) {
+                                Some(short) => short,
+                                None        => {
+                                    state.rehold(&tc.name, &tc.arguments, &tc.id);
+                                    headed(result, &fmt!("Unchanged since round {}: the same call \
+                                        returned exactly this then.", r))
+                                },
+                            }
+                        },
                         None    => result,
                     };
                     // Mutable because the setbacks below may add a line to it; see `Setbacks`.
@@ -5127,6 +5223,31 @@ fn look_auto_head(outcome: crate::tools::CallOutcome) -> String {
 	}
 }
 
+/// The short reply to a repeated call, where the reply `whole` names still holds its result in
+/// full in `working`: the head and a pointer to that copy, in place of the result.  `None` where
+/// the repeat must go whole -- that copy has been retired or folded away, or the result carries a
+/// picture, which a pointer cannot stand in for.
+fn repeat_short(working: &[ChatMessage], whole: Option<&str>, result: &MessageContent, round: usize)
+	-> Option<MessageContent>
+{
+	let id = match whole {
+		Some(id)	=> id,
+		None		=> return None,
+	};
+	if result.images().next().is_some() {
+		return None;
+	}
+	let held = working.iter().any(|m| matches!(m,
+		ChatMessage::Tool { tool_call_id, retired: crate::protocol::Retired::No, .. }
+			if tool_call_id == id));
+	match held {
+		true	=> Some(MessageContent::text(fmt!("Unchanged since round {}: the same call \
+			returned exactly this then, and it is above, whole, in the reply to call {}.",
+			round, id))),
+		false	=> None,
+	}
+}
+
 /// A tool result with `head` put before it, pictures and all.
 fn headed(c: MessageContent, head: &str) -> MessageContent {
 	match c {
@@ -5183,21 +5304,11 @@ fn wanting_said(name: &str, alone: bool) -> String {
 /// read on the device it was sent from, where "this one" is the wrong machine (F4b).
 ///
 /// # Arguments
-/// * `waiting` - The folders added on another device and not yet confirmed on the runner, from
-///   [`crate::tools::ToolContext::unconfirmed`]; where there are none, what is missing is the
-///   machine hand itself.
 /// * `runner` - The name of the device the turn ran on; see [`crate::tools::device_label`].
-fn wanting_told(name: &str, waiting: &[String], runner: &str) -> String {
-	match waiting.first() {
-		Some(f)	=> fmt!("This needs a command run on {} ({}), and `{}` was added on another \
-			device and is not yet confirmed on {}, so nothing can run in it there. Will you \
-			confirm it on {}, with one press on the notice above the message box there, and \
-			then ask me again?", runner, name, f, runner, runner),
-		None	=> fmt!("This needs a command run on {} ({}), and no folder there is open to \
-			commands: Daimond's machine hand is not running on {}, or no folder is granted to \
-			it. Will you start the hand there and grant the folder, and then ask me again?",
-			runner, name, runner),
-	}
+fn no_hand_told(name: &str, runner: &str) -> String {
+	fmt!("This needs a command run on {} ({}), and nothing on {} runs commands for this turn: \
+		Daimond's machine hand is not running there. Will you start the hand there, and then ask \
+		me again?", runner, name, runner)
 }
 
 /// The arguments of the Decision the app offers when a turn is blocked.
@@ -5389,6 +5500,19 @@ pub fn build_tls_client_config() -> Outcome<Arc<ClientConfig>> {
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Tests                                                          │
 // └───────────────────────────────────────────────────────────────┘
+
+/// The agent-use section of the tools part; see [`Agent::system_parts`].
+const AGENT_USE_RULES: &str = "# Using agents\n\
+    - Dispatch a worker with spawn_agent for a self-contained part of the work, or for a search \
+    across many files whose conclusion is all you need. For a file or name you can already point \
+    to, use file_read or file_search yourself: it is quicker than a worker.\n\
+    - Independent parts go to several workers in ONE reply, so they run in parallel.\n\
+    - Give each worker the whole task: what to do, where, what done looks like and what to \
+    report. It cannot ask you anything.\n\
+    - While workers run, do your own part rather than theirs; call gather when you need what \
+    they found.\n\
+    - A worker's report reaches you and not the user. Check it against the task before you rely \
+    on it, and tell the user what matters in your own answer.";
 
 /// The system prompt with its tools sentence `was` replaced by `now`.
 ///

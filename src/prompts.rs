@@ -17,7 +17,7 @@
 //!
 //! One thing here is not a prompt at all: [`machine_note`] is a few lines of fact about the
 //! computer a command would run on -- the operating system, the folders the fence grants this turn,
-//! whether the network is still available to it, and any toolchain the user granted. It is composed
+//! and whether the network is still available to it. It is composed
 //! only when a hand is attached, because a daimon that learns where it is by being refused spends
 //! turns finding out what the page already knew.
 //!
@@ -34,12 +34,9 @@ use crate::tools::{
 	deletes_metered,
 	fence_enforced,
 	Bound,
-	Kit,
 	Machine,
 	Mode,
 	NetStep,
-	Toolkit,
-	toolkits,
 };
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -1158,8 +1155,7 @@ pub fn worker_handoff(role: &str, task: &str) -> String {
 // ── What machine this is ─────────────────────────────────────────────────────
 //
 // A daimon asked to run `cargo test` used to learn where it was by being refused: no word about the
-// operating system, none about the fence, none about a toolchain the user had granted it, and none
-// about a tainted turn having lost the network. Every one of those is a turn spent finding out
+// operating system, none about the fence, and none about a tainted turn having lost the network. Every one of those is a turn spent finding out
 // something the page already knew, and it reads to the user as the app being broken.
 //
 // So it is said once, at the top, and it is said in facts. The rules below are what keep it from
@@ -1193,7 +1189,7 @@ pub fn worker_handoff(role: &str, task: &str) -> String {
 ///
 /// # Arguments
 /// * `m` - The machine the hand described.
-/// * `bounds` - The turn's bounds, which decide the fence and carry any granted toolkit.
+/// * `bounds` - The turn's bounds, which decide the fence.
 /// * `step` - What this turn's next command does about the network, as [`crate::tools::net_step`]
 ///   decides it and `Tool::run` acts on it.
 /// * `mode` - Which permission rung the user is in, which decides whether a command is put to the
@@ -1289,6 +1285,15 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 	if !fence.ro.is_empty() {
 		s.push_str(&fmt!("\nRead only: {}", fence.ro.join(", ")));
 	}
+	// THE TOOLCHAINS IN THE HOME (UNBLOCK-82): no Diamond grants them since toolkits went, so a
+	// daimon told only "Read only: /home/u" would not know `cargo` or an fnm `node` is meant for
+	// it, and asks.  Said only where the fence covers the home, and with no path in it, so the
+	// line is the same on every turn and the cached prefix with it.
+	if let Some(home) = m.home.as_deref().map(str::trim).filter(|h| !h.is_empty()) {
+		if fence.rw.iter().chain(fence.ro.iter()).any(|g| covers(g, home)) {
+			s.push_str(TOOLCHAIN_NOTE);
+		}
+	}
 	// WHY IT IS ALL READ-ONLY, where it is. A daimon handed only "Read only" for the folder it was
 	// asked to build in reads the task as impossible and says so in words the user cannot act on;
 	// the cause is a hand they have not updated yet, which is a sentence they can.
@@ -1322,77 +1327,6 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 			.collect();
 		s.push_str(&fmt!("\nDenied to every tool and command, never read or written: {}",
 			told.join("; ")));
-	}
-	match Kit::resolve(bounds, m) {
-		Some(kit) => {
-			for k in &kit.kits {
-				match k {
-					// Git is the one toolkit whose binary was never the problem: `git` is in
-					// `/usr/bin`, which the hand's own read-only base already carries, so `status`,
-					// `diff` and `commit` all work with no grant at all. What the grant adds is the
-					// CONFIGURATION -- the user's name, their email, and `core.hooksPath` -- so
-					// telling a daimon to name the binary in full would be advice about a problem
-					// this toolkit does not have, and would leave the one thing that did change
-					// unsaid.
-					Toolkit::Git => s.push_str(&fmt!(
-						"\n{} toolkit: git was always on PATH; what this adds is the user's own \
-						configuration, so a commit carries their name and runs their hooks. \
-						Commit once, when the verifier is green -- not once per fix -- and amend \
-						that commit at most once rather than stacking amends on top of it.",
-						k.label())),
-					// Nothing went on `PATH`, because nvm's node sits at a path carrying a version
-					// this page cannot know. Saying so is what stops a daimon concluding the grant
-					// did not work when a bare `node` is not found.
-					_ if k.bins().is_empty() => s.push_str(&fmt!(
-						"\n{} toolkit: {}, under the folders above -- name the binary in full.",
-						k.label(), k.tools())),
-					_ => s.push_str(&fmt!("\n{} toolkit: {} are on PATH.", k.label(), k.tools())),
-				}
-			}
-		},
-		None => {
-			// Granted and unresolvable is worth its tokens: the user chose this, the daimon will
-			// try it, and "the hand did not say where home is" is a sentence they can act on.
-			let granted = toolkits(bounds);
-			if granted.is_empty() {
-				// NONE GRANTED IS ALSO WORTH SAYING, and this sentence was missing.  Asked to run
-				// the test suite with no Rust toolkit, a daimon searched, found no `cargo`, and
-				// reported to the user that THE RUST TOOLCHAIN IS NOT INSTALLED ON THIS MACHINE.
-				// It was installed; the daimon simply could not reach it.  Every clause of that
-				// answer was true about its own fence and false about the computer, and the user
-				// was told to go and install something they already had.
-				//
-				// It is the same false generalisation `file_show` exists to repair -- reasoning
-				// from what is reachable to what EXISTS -- and the branch below already applies
-				// the cure one step later, saying so when a granted toolkit put nothing on PATH
-				// "to stop a daimon concluding the grant did not work".  Nobody had applied it to
-				// the case of no grant at all, which is the commonest state there is.
-				//
-				// So: name the base, say what is missing, and say WHOSE decision it is.  The last
-				// clause is the load-bearing one -- it turns a dead end into a sentence the user
-				// can act on.
-				//
-				// With a home, the line below says how the grant is made, so this one is shorter.
-				if m.home.is_some() {
-					s.push_str(
-						"\nNo toolchain is granted to this Diamond yet. A command reaches only \
-						/usr/local/bin, /usr/bin and /bin; a toolchain under the user's home is not \
-						missing from the computer, it is a grant the user makes.");
-				} else {
-					s.push_str(
-						"\nNo toolchain is granted to this Diamond. A command reaches only \
-						/usr/local/bin, /usr/bin and /bin, so anything installed under the user's own \
-						home -- cargo and rustc, nvm's node, pip's tools, go -- is not on PATH and \
-						not readable, however certainly it is installed. Do not report a missing \
-						toolchain as absent from the computer: it is a grant the user makes in this \
-						Diamond's settings, and asking for it is the way forward.");
-				}
-			}
-			for k in granted {
-				s.push_str(&fmt!("\n{} toolkit: granted, but this hand did not say where the \
-					home directory is, so it is not in the fence.", k.label()));
-			}
-		},
 	}
 	// What a push can and cannot do, from the credential the user set. Empty where they set none,
 	// so a turn that could not push anyway pays nothing for the sentence -- and where one IS set,
@@ -1569,12 +1503,8 @@ pub async fn machine_briefing<H: Host>(ctx: &crate::tools::ToolContext<H>) -> (S
 	if note.is_empty() { (NO_MACHINE_NOTE.to_string(), false) } else { (note, true) }
 }
 
-/// The machine briefing a turn is given: [`machine_note`] for its bounds, and the toolkits still
-/// to be asked for where this turn can put that question.
-///
-/// Only a Diamond's own, supervised turn can ([`ToolContext::can_ask_kits`]); a chat or a lone
-/// worker is told what [`machine_note`] says and nothing more, because a promise of a question
-/// nobody will be shown is a promise the next command breaks.
+/// The machine briefing a turn is given: [`machine_note`] for its bounds, and where its paths
+/// start.
 pub fn turn_machine_note<H: Host>(
 	ctx:	&crate::tools::ToolContext<H>,
 	m:		&Machine,
@@ -1589,23 +1519,14 @@ pub fn turn_machine_note<H: Host>(
 	if !s.is_empty() && !base.is_empty() && !crate::tools::folder_root_off() {
 		s.push_str(&fmt!("\nYou start in ~/{}: relative paths are read from there; ~/ paths from the home.", base));
 	}
-	if !s.is_empty() && ctx.can_ask_kits(mode, m.home.is_some()) {
-		s.push_str(&kit_ask_note(&ctx.no_write));
+	// The root by its absolute name (UNBLOCK-58), so a path the model writes absolute is one
+	// under it, which the door reads as the place it names.
+	if !s.is_empty() {
+		if let Some(root) = ctx.workspace.machine_root() {
+			s.push_str(&fmt!("\nThe workspace root is {}: a path inside it may be written absolute.", root));
+		}
 	}
 	s
-}
-
-/// E1: the toolkits not yet granted, named as asked for when a command first needs one, so the
-/// daimon runs the command rather than sending the user to a panel.
-fn kit_ask_note(bounds: &[Bound]) -> String {
-	let have = toolkits(bounds);
-	let rest: Vec<Toolkit> = Toolkit::all().into_iter().filter(|k| !have.contains(k)).collect();
-	if rest.is_empty() {
-		return String::new();
-	}
-	fmt!("\n{}: asked on first use; run the command and the user is asked.{}",
-		crate::tools::kit_labels(&rest),
-		if rest.contains(&Toolkit::Git) { " Git: on commit, merge, rebase or tag." } else { "" })
 }
 
 // ┌───────────────────────────────────────────────────────────────────────────┐
@@ -1985,6 +1906,12 @@ pub const NO_MACHINE_NOTE: &str =
 	 verify and serve cannot work here. If the ask cannot be done without one, call run once with what you would run: \
 	 nothing runs, and the turn ends asking the user for what is missing. Otherwise use your file \
 	 tools, which work regardless.";
+
+/// The line a briefing carries where a command's fence covers the home (UNBLOCK-82): the
+/// toolchains installed there run with nothing granted.  No path, so it is byte-stable.
+pub const TOOLCHAIN_NOTE: &str =
+	"\nToolchains installed in the home -- cargo and rustup, node (nvm or fnm), python and pip, \
+	 go -- are reachable to every command: run them by name, with nothing to grant or ask.";
 
 /// The reducer's role: fold exactly one delta into the current crystal and emit the
 /// whole new crystal.  A fresh reducer holds no history, so it cannot itself rot.

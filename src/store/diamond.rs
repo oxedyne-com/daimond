@@ -682,7 +682,7 @@ async fn snapshot_versions(id: &str, ext: &str) -> Vec<u64> {
 /// The most a `meta.json` may be worth reading.
 ///
 /// It holds a name, a version, two stamps, at most eight tags of at most
-/// twenty-four characters, and a short list of toolkit names. A kilobyte is a
+/// twenty-four characters, and a built-in marker. A kilobyte is a
 /// generous one; sixty-four is beyond argument. Anything past this is damage.
 const META_MAX: u32 = 65_536;
 
@@ -878,7 +878,6 @@ async fn rebuild_meta(id: &str) -> Option<Meta> {
         updated:     at,
         touched:     at,
         tags:        Vec::new(),
-        kits:        Vec::new(),
         builtin:     String::new(),
         named:       false,
         no_progress: 0,
@@ -1169,8 +1168,6 @@ async fn create_fresh(name: &str, id: &str) -> Outcome<String> {
         updated: now,
         touched: now,
         tags:    Vec::new(),
-        // Off by default, which is the whole shape of a grant: nobody has said yes yet.
-        kits:    Vec::new(),
         // A person's Diamond until the page marks it a built-in (`mark_built_in`).
         builtin: String::new(),
         named:   false,
@@ -1265,28 +1262,6 @@ pub async fn mark_built_in(id: &str, fixed_id: &str) -> Outcome<()> {
 pub async fn set_tags(id: &str, tags: &[String]) -> Outcome<()> {
     let mut meta = res!(read_meta(id).await);
     meta.tags = normalise_tags(tags);
-    meta.bump_touched(now_ms() as u64);
-    res!(write_meta(id, &meta).await);
-    Ok(())
-}
-
-/// Set which toolchains this Diamond is granted, replacing whatever it held.
-///
-/// Stamped and normalised exactly as [`set_tags`] is, and for the same two reasons: filing a
-/// permission is not working on the Diamond, so the rail must not reorder; and the grant is content
-/// that has to reach the user's other devices, so `touched` moves.
-///
-/// The names are normalised here rather than taken on trust (see
-/// [`normalise_kits`](crate::diamond_meta::normalise_kits)) -- and unlike a tag, a name this build
-/// does not know is dropped, because what is stored here decides what a command may reach outside
-/// the workspace and a grant nobody can act on is not a grant.
-///
-/// # Arguments
-/// * `id` - The Diamond.
-/// * `kits` - The toolkit names the user granted, as `Toolkit::name` spells them.
-pub async fn set_toolkits(id: &str, kits: &[String]) -> Outcome<()> {
-    let mut meta = res!(read_meta(id).await);
-    meta.kits = crate::diamond_meta::normalise_kits(kits);
     meta.bump_touched(now_ms() as u64);
     res!(write_meta(id, &meta).await);
     Ok(())
@@ -1491,9 +1466,9 @@ pub async fn list() -> Outcome<String> {
     let items: Vec<String> = rows.iter().map(|(id, m)| {
         fmt!(
             "{{\"id\":\"{}\",\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\
-              \"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{},\"toolkits\":{}}}",
+              \"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{}}}",
             json_escape(id), json_escape(&m.name), m.version, m.updated,
-            m.touched, json_escape(&m.builtin), m.named, m.tags_json(), m.kits_json(),
+            m.touched, json_escape(&m.builtin), m.named, m.tags_json(),
         )
     }).collect();
     Ok(fmt!("[{}]", items.join(",")))
@@ -8566,7 +8541,6 @@ pub async fn remove_link(owner: &str, link_id: &str) -> Outcome<bool> {
         Some(t) => t,
         None    => return Ok(false),
     };
-    res!(own::forget_press(owner, link_id));
     res!(write_links_for(owner, &new).await);
     touch_after_link(owner).await;      // the sidecar changed; see [`add_link`]
     Ok(true)
@@ -8704,6 +8678,38 @@ pub async fn links_touching(node_ref: &str) -> Outcome<Vec<(String, Link)>> {
                 out.push((id.clone(), l.clone()));
             }
         }
+    }
+    Ok(out)
+}
+
+/// What the user attached to the Diamond `id`: the files and folders its own links name, outside
+/// its own directory, for its turn to look at first.  Focus, never reach (D-20261031-11): the
+/// turn's bounds do not read this list.
+pub async fn attached_focus(id: &str) -> Outcome<Vec<String>> {
+    let me = Node { kind: "diamond".to_string(), rest: id.to_string() };
+    let own = diamond_dir(id);
+    let links = res!(links_touching(&fmt!("diamond:{}", id)).await);
+    let mut out: Vec<String> = Vec::new();
+    // A built-in Diamond's own sight first: part of its definition, never a link.
+    if let Some(p) = crate::diamond_meta::built_in_consults(id) {
+        out.push(p.to_string());
+    }
+    for (_owner, l) in links {
+        if l.by != "user" {
+            continue;
+        }
+        let other = match l.other(&me) {
+            Some(n) => n,
+            None    => continue,
+        };
+        if other.kind != "file" && other.kind != "dir" {
+            continue;
+        }
+        let p = crate::tools::normalise(&other.rest);
+        if p.is_empty() || p == own || p.starts_with(&fmt!("{}/", own)) || out.contains(&p) {
+            continue;
+        }
+        out.push(p);
     }
     Ok(out)
 }
@@ -9981,18 +9987,13 @@ pub async fn import_template_pack(pack: Pack) -> Outcome<String> {
 
     // AND THE METADATA IS PUT RIGHT, whichever way it arrived.
     //
-    // The grants are the reason. `kits` decides what a COMMAND may touch outside the workspace, and
-    // a template is opened by somebody who has never met the person who made it: a grant that
-    // travelled would be a permission nobody on this device gave. A toolkit is off by default and
-    // it stays off, so what the template wanted is a question for whoever opens it, not a fact it
-    // brings with it. The tags go for a smaller reason -- they are the sender's filing, not the
-    // Diamond's shape -- and both stamps say now, because a copy that has just landed here was not
+    // The tags go -- they are the sender's filing, not the Diamond's shape -- and both stamps
+    // say now, because a copy that has just landed here was not
     // worked on last year.
     let mut meta = res!(read_meta(&new_id).await);
     let now = now_ms() as u64;
     meta.name    = name;
     meta.tags    = Vec::new();
-    meta.kits    = Vec::new();
     meta.updated = now;
     meta.touched = now;
     res!(write_meta(&new_id, &meta).await);
@@ -10007,465 +10008,6 @@ pub async fn import_template_pack(pack: Pack) -> Outcome<String> {
     }
 
     Ok(new_id)
-}
-
-
-// ┌───────────────────────────────────────────────────────────────┐
-// │ Bringing home what an earlier build left in a folder           │
-// └───────────────────────────────────────────────────────────────┘
-
-/// The most one adoption run copies out of the folder in total.
-///
-/// A ceiling exists because the folder is the user's own project and nothing says what an earlier
-/// build put under `diamonds/` there.  Copying is into OPFS, which the browser may evict wholesale
-/// when it fills, so an unbounded copy could cost the user their whole store to save a directory
-/// they can still see on disk.
-const ADOPT_TOTAL_MAX: u64 = 64 * 1024 * 1024;
-
-/// The largest single file one adoption run copies out of the folder.
-const ADOPT_FILE_MAX: u64 = 8 * 1024 * 1024;
-
-/// What is inserted before a clashing file's extension, so the folder's copy is kept beside the
-/// store's and still opens as the kind of file it is.
-const FROM_MACHINE: &str = ".from-machine";
-
-/// What became of one file the folder was holding.
-enum Took {
-    /// It was not in the store, and now it is.
-    Copied,
-    /// The store already had it, byte for byte, so nothing was written.
-    Same,
-    /// The store had it with DIFFERENT bytes.  The store's copy stands and the folder's was
-    /// written beside it, at the path carried here.
-    Kept(String),
-    /// Too large for the budget, and so left exactly where it is.
-    Skipped,
-}
-
-/// Where a clashing file's folder copy is written: `note.md` -> `note.from-machine.md`.
-///
-/// Before the extension rather than after it, so the kept copy still opens as markdown -- the user
-/// is being asked to compare two files, and one of them arriving as an unopenable
-/// `note.md.from-machine` would make that harder than it needs to be.
-fn beside_path(rel: &str) -> String {
-    let (dir, leaf) = match rel.rfind('/') {
-        Some(i) => (&rel[..i + 1], &rel[i + 1..]),
-        None    => ("", rel),
-    };
-    match leaf.rfind('.') {
-        // A leading dot is the whole name of a dotfile, not an extension.
-        Some(i) if i > 0 => fmt!("{}{}{}{}", dir, &leaf[..i], FROM_MACHINE, &leaf[i..]),
-        _                => fmt!("{}{}{}", dir, leaf, FROM_MACHINE),
-    }
-}
-
-/// Whether a directory under the folder's `diamonds/` is a Diamond at all.
-///
-/// Two ways to be one, and the second is what makes a Diamond the store has never seen adoptable:
-/// the store already holds it under that id, or the folder's copy carries the metadata that makes
-/// a Diamond a Diamond.  Anything else is a directory of the user's that happens to live under
-/// `diamonds/` -- notes, a build output, a folder they made -- and it is left alone.
-///
-/// The test is not "does it look like it might be one".  Materialising a shell of a Diamond out of
-/// a user's own directory would put a row on the rail that opens on a `NotFoundError`, which is
-/// the failure this whole change is trying to stop happening.
-///
-/// # Arguments
-/// * `id` - The directory name under `diamonds/` in the folder.
-async fn is_diamond(id: &str) -> Outcome<bool> {
-    if res!(own::exists(&diamond_dir(id)).await) {
-        return Ok(true);
-    }
-    own::user_exists(FileRoot::Machine, &meta_path(id)).await
-}
-
-/// Take one file out of the folder and into the store, and say what that came to.
-///
-/// The store always wins a clash, per file rather than per Diamond.  The folder's copy is never
-/// dropped and never deleted: it is written beside the store's under [`beside_path`] and named in
-/// the report, because the two differing copies are the user's to reconcile and we cannot know
-/// which they wanted.
-///
-/// Idempotent by comparison rather than by a flag.  A second run finds the store's copy identical
-/// (or the kept copy identical) and writes nothing, which is what lets adoption run on EVERY folder
-/// activation for ever -- there is no moment at which we could prove every folder has been seen, so
-/// there is no moment at which it would be safe to stop looking.
-///
-/// # Arguments
-/// * `rel` - The workspace-relative path, the same on both sides.
-/// * `size` - What the folder says the file weighs, so the budget is checked before it is read.
-/// * `used` - How much this run has copied so far, added to here.
-async fn take_file(rel: &str, size: u64, used: &mut u64) -> Outcome<Took> {
-    if size > ADOPT_FILE_MAX || *used + size > ADOPT_TOTAL_MAX {
-        return Ok(Took::Skipped);
-    }
-    let bytes = res!(own::user_read_file(FileRoot::Machine, rel).await);
-    if !res!(own::exists(rel).await) {
-        res!(own::write_file(rel, &bytes).await);
-        *used += size;
-        return Ok(Took::Copied);
-    }
-    let held = res!(own::read_file(rel).await);
-    if held == bytes {
-        return Ok(Took::Same);
-    }
-    // Kept on an earlier run: the copy beside it already holds exactly these bytes, so this run
-    // has nothing to add and must not make a second copy of the second copy.
-    let beside = beside_path(rel);
-    if res!(own::exists(&beside).await) {
-        let there = res!(own::read_file(&beside).await);
-        if there == bytes {
-            return Ok(Took::Same);
-        }
-    }
-    res!(own::write_file(&beside, &bytes).await);
-    *used += size;
-    Ok(Took::Kept(beside))
-}
-
-/// Every file the folder holds under `root`, workspace-relative, with the size the folder reports
-/// for it.  Sorted, so a run's order does not depend on how the browser iterates.
-///
-/// A directory the folder does not have holds nothing, which is the ordinary case and not a
-/// failure: most folders have neither a `diamonds/` nor a `mail/` in them.
-///
-/// Recursion is spelled out with an explicit stack, as [`export_diamond`] does and for the same
-/// reason: an `async fn` cannot recurse without boxing its future.
-///
-/// # Arguments
-/// * `root` - The workspace-relative directory to walk, on the machine folder.
-async fn folder_files(root: &str) -> Outcome<Vec<(String, u64)>> {
-    let mut out: Vec<(String, u64)> = Vec::new();
-    let mut todo: Vec<String> = vec![root.to_string()];
-    while let Some(dir) = todo.pop() {
-        let entries = match own::user_list_dir(FileRoot::Machine, &dir).await {
-            Ok(e)  => e,
-            Err(_) => continue,     // a directory that has gone holds nothing
-        };
-        for (name, is_dir, size) in entries {
-            let child = fmt!("{}/{}", dir, name);
-            if is_dir {
-                todo.push(child);
-            } else {
-                out.push((child, size));
-            }
-        }
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(out)
-}
-
-/// Bring one Diamond's files home.  True when anything was actually taken.
-///
-/// **The order is the correctness.**  The crystal is copied FIRST and `.daimond/meta.json` LAST,
-/// because [`list`] admits a Diamond on its metadata alone and [`read_crystal_data`] looks for the
-/// crystal where it should be.  Metadata written first, and a run interrupted between the two,
-/// leaves a Diamond that lists, opens, and throws -- visible and broken.  Metadata written last
-/// leaves a half-adopted Diamond *invisible*, and the next activation completes it.  Nothing is
-/// ever deleted from the folder, so an interruption costs nothing at all.
-///
-/// For the same reason the metadata is not written when the crystal is not in the store
-/// afterwards: a Diamond whose crystal was too large for the budget, or unreadable, stays out of
-/// the rail rather than joining it broken.
-///
-/// "The crystal" is either name.  A folder left by a build older than the conversion holds
-/// `crystal.md` and no `crystal.json`, and refusing to adopt it because the data file is absent
-/// would leave the user's Diamond in a directory nothing reads -- [`list`] converts it once it is
-/// home.
-///
-/// # Arguments
-/// * `id` - The Diamond.
-/// * `used` - The run's byte accumulator.
-/// * `kept` - Collects the paths where a clashing folder copy was kept.
-/// * `skipped` - Collects the paths this run did not take.
-async fn adopt_one(
-    id:      &str,
-    used:    &mut u64,
-    kept:    &mut Vec<String>,
-    skipped: &mut Vec<String>,
-)
-    -> Outcome<bool>
-{
-    let files   = res!(folder_files(&diamond_dir(id)).await);
-    let meta    = meta_path(id);
-    // Both live names and the one they replaced, in the order they matter: the memory, then the
-    // page, then whatever markdown a Diamond has not been converted from yet.
-    let crystals = [crystal_data_path(id), crystal_page_path(id), crystal_legacy_path(id)];
-    let mut ordered: Vec<(String, u64)> = Vec::new();
-    for c in crystals.iter() {
-        if let Some(f) = files.iter().find(|(p, _)| p == c) {
-            ordered.push(f.clone());
-        }
-    }
-    for f in &files {
-        if crystals.contains(&f.0) || f.0 == meta {
-            continue;
-        }
-        ordered.push(f.clone());
-    }
-    let mut took_any = false;
-    for (rel, size) in &ordered {
-        // One unreadable file must not lose the rest of the Diamond, nor the rest of the run.
-        match take_file(rel, *size, used).await {
-            Ok(Took::Copied)     => took_any = true,
-            Ok(Took::Kept(path)) => { kept.push(path); took_any = true; },
-            Ok(Took::Same)       => {},
-            Ok(Took::Skipped)    => skipped.push(rel.clone()),
-            Err(e) => {
-                console_log(&fmt!("'{}' could not be brought home from the folder: {}", rel, e));
-                skipped.push(rel.clone());
-            }
-        }
-    }
-    // Last, and only over a crystal that is there to be read -- in either of the two forms a
-    // Diamond's memory can arrive in.
-    if let Some((rel, size)) = files.iter().find(|(p, _)| *p == meta) {
-        let data   = res!(own::exists(&crystal_data_path(id)).await);
-        let legacy = res!(own::exists(&crystal_legacy_path(id)).await);
-        if !data && !legacy {
-            skipped.push(rel.clone());
-            return Ok(took_any);
-        }
-        match take_file(rel, *size, used).await {
-            Ok(Took::Copied)     => took_any = true,
-            Ok(Took::Kept(path)) => { kept.push(path); took_any = true; },
-            Ok(Took::Same)       => {},
-            Ok(Took::Skipped)    => skipped.push(rel.clone()),
-            Err(e) => {
-                console_log(&fmt!("'{}' could not be brought home from the folder: {}", rel, e));
-                skipped.push(rel.clone());
-            }
-        }
-    }
-    Ok(took_any)
-}
-
-/// What became of one mail file the folder was holding.
-enum Brought {
-    /// It was not in the store, and now it is.
-    Copied,
-    /// The store already has a file at that path, so nothing was read, written or compared.
-    Held,
-    /// Too large for what is left of the budget, and so left exactly where it is for a later run.
-    Skipped,
-}
-
-/// Take one mail file out of the folder and into the store.
-///
-/// **A CLASH IS NOT RECONCILED AND NOT COPIED BESIDE**, which is where this parts company with
-/// [`take_file`].  A Maildir name is derived from the message's UID and the mailbox generation
-/// (`maildirName` in `www/js/mail.js`), so a file already at that path IS that message: a second
-/// copy under `.from-machine` would show up as a duplicate message in the panel, hand the agent
-/// the same stranger's words twice, and ride in the sync parcel for ever.  A draft is the same
-/// argument the other way round -- the store's copy is the one the user has been editing, and the
-/// folder's is whatever an older build last wrote.
-///
-/// The store's presence is therefore checked FIRST, before the folder's bytes are read at all, so
-/// the second run over a mailbox of ten thousand messages costs ten thousand lookups and not one
-/// byte of transfer.
-///
-/// Bytes throughout, never text: a message with a JPEG attached is not a string, and a lossy
-/// decode on the way through would corrupt it silently.
-///
-/// # Arguments
-/// * `rel` - The workspace-relative path, the same on both sides.
-/// * `size` - What the folder says the file weighs, so the budget is checked before it is read.
-/// * `used` - How much this run has copied so far, added to here.
-async fn take_message(rel: &str, size: u64, used: &mut u64) -> Outcome<Brought> {
-    if size > ADOPT_FILE_MAX || *used + size > ADOPT_TOTAL_MAX {
-        return Ok(Brought::Skipped);
-    }
-    if res!(own::exists(rel).await) {
-        return Ok(Brought::Held);
-    }
-    let bytes = res!(own::user_read_file(FileRoot::Machine, rel).await);
-    res!(own::write_file(rel, &bytes).await);
-    *used += size;
-    Ok(Brought::Copied)
-}
-
-/// Bring home every message and draft an earlier build left in the open folder.
-///
-/// Until `mail/` became store state (see [`crate::tools::MAIL_ROOT`]) a mailbox followed the
-/// workspace root, so a sync made with a folder open wrote the messages into the user's project.
-/// This copies them into the store, where a mailbox belongs to the account rather than to whatever
-/// folder happened to be open.
-///
-/// **IT COPIES AND IT NEVER DELETES.**  A move would be tidier and it is not available here: a
-/// draft exists on no server and in no gateway, so an interruption or a mistake between the read
-/// and the delete would destroy the only copy of a message an agent prepared for its user to send.
-/// The worst this can leave behind is a second copy of a mailbox in a folder the user can see and
-/// remove themselves.
-///
-/// Three properties, each of which the shape above is what buys:
-///
-/// * **Idempotent.**  A second run finds every file already in the store and writes nothing.  It
-///   is not idempotent by a flag or a stamp -- there is no moment at which every folder could be
-///   proved to have been seen -- but by asking the store, per file, every time.
-/// * **It never clobbers.**  A path the store already holds is left alone on both sides.
-/// * **A partial run costs nothing.**  Nothing is deleted and no file depends on another, so an
-///   interruption leaves both trees readable and the next activation finishes the job -- including
-///   over the budget, which resets each run while the files already home are skipped for free.
-///
-/// Only the mailboxes are taken, never the whole directory, for the reason [`is_mailbox`] gives.
-///
-/// Returns how many files were copied, and the paths this run did not take.
-///
-/// # Arguments
-/// * `used` - The run's byte accumulator, shared with the Diamond adoption above so one activation
-///   has one budget.
-async fn bring_mail_home(used: &mut u64) -> Outcome<(usize, Vec<String>)> {
-    let mut copied = 0usize;
-    let mut left: Vec<String> = Vec::new();
-    // A folder with no `mail/` in it is the ordinary case, and it is not a failure.
-    let entries = match own::user_list_dir(FileRoot::Machine, crate::tools::MAIL_ROOT).await {
-        Ok(e)  => e,
-        Err(_) => return Ok((0, left)),
-    };
-    for (name, is_dir, _size) in entries {
-        if !is_dir || !res!(is_mailbox(&name).await) {
-            continue;
-        }
-        let files = res!(folder_files(&fmt!("{}/{}", crate::tools::MAIL_ROOT, name)).await);
-        for (rel, size) in &files {
-            // One unreadable message must not lose the rest of the mailbox, nor the rest of the
-            // run.
-            match take_message(rel, *size, used).await {
-                Ok(Brought::Copied)  => copied += 1,
-                Ok(Brought::Held)    => {},
-                Ok(Brought::Skipped) => left.push(rel.clone()),
-                Err(e) => {
-                    console_log(&fmt!(
-                        "'{}' could not be brought home from the folder: {}", rel, e));
-                    left.push(rel.clone());
-                }
-            }
-        }
-    }
-    Ok((copied, left))
-}
-
-/// Whether a directory under the folder's `mail/` is one of Daimond's mailboxes.
-///
-/// The mirror of [`is_diamond`], and it earns its place the same way: `mail/` is now one of
-/// Daimond's own roots, but a user may have had a directory of that name in their project for
-/// years -- an archive, a mail module, a year's correspondence -- and copying it wholesale into the
-/// browser's storage would be an app helping itself to somebody's files.
-///
-/// Two ways to be a mailbox, and neither guesses.  The store already holds one under that name, or
-/// the name carries an `@`: a mailbox directory is the account's ADDRESS with the characters a
-/// filesystem refuses replaced (`mailDir` in `www/js/mail.js`), and an address without an `@` is
-/// not an address.
-///
-/// # Arguments
-/// * `name` - The directory name under `mail/` in the folder.
-async fn is_mailbox(name: &str) -> Outcome<bool> {
-    let here = fmt!("{}/{}", crate::tools::MAIL_ROOT, name);
-    if res!(own::exists(&here).await) {
-        return Ok(true);
-    }
-    Ok(name.contains('@'))
-}
-
-/// Bring home every Diamond an earlier build left in the open folder, and report what was done.
-///
-/// A build before this one let Daimond's own store follow the workspace root, so a Diamond worked
-/// on with a folder open wrote `diamonds/<id>/...` into the user's project: outside the sync
-/// parcel, invisible to the panel the moment they switched back, and absent from a backup.  This
-/// copies those files into the store.
-///
-/// Three rules, and each is a thing that could be got dangerously wrong:
-///
-/// * **Nothing is ever deleted from the folder.**  Deleting from a user's own project to tidy up
-///   after our own bug is the more dangerous of the two mistakes available here, and leaving the
-///   copies also makes an interrupted run free to repeat.
-/// * **The store wins a clash, and the folder's copy is kept beside it** (see [`take_file`]).
-/// * **It runs on every activation, for ever**, boot reconnect included, because there is no
-///   moment at which every folder can be proved to have been seen.  So it is silent when it finds
-///   nothing: the caller shows the user nothing at all when `adopted` is empty.
-///
-/// **THE MAILBOX COMES HOME HERE TOO**, on the same trigger and by the same three rules (see
-/// [`bring_mail_home`]).  It is here rather than in [`list`], where the other migrations run,
-/// because this is the only place that is guaranteed a folder is open: everything under `mail/`
-/// has to be read through [`FileRoot::Machine`], which resolves to the folder or to nothing at
-/// all.  A user who has never opened one has no mail in a folder, and this returns before looking.
-///
-/// Returns `{"folder":bool,"adopted":[{"id","name","kept":[..]}],"left":[..],"skipped":[..],
-/// "mail":{"copied":n,"left":[..]}}`.  `folder` is false when none is open, which is not an error
-/// and must not be reported as one.  Mail is reported under its own key rather than folded into
-/// `skipped`, which drives a dialog about Diamonds.
-pub async fn adopt_from_folder() -> Outcome<String> {
-    if !own::folder_open() {
-        return Ok(fmt!(
-            "{{\"folder\":false,\"adopted\":[],\"left\":[],\"skipped\":[],\
-             \"mail\":{{\"copied\":0,\"left\":[]}}}}"));
-    }
-    let mut adopted: Vec<(String, String, Vec<String>)> = Vec::new();
-    let mut left:    Vec<String> = Vec::new();
-    let mut skipped: Vec<String> = Vec::new();
-    let mut used = 0u64;
-    // A folder with no `diamonds/` in it is the ordinary case, and it is not a failure -- and it
-    // says nothing about whether the folder is holding a mailbox, which is why this is an empty
-    // list to walk rather than an early return.
-    let entries = match own::user_list_dir(FileRoot::Machine, ROOT_DIR).await {
-        Ok(e)  => e,
-        Err(_) => Vec::new(),
-    };
-    for (name, is_dir, _size) in entries {
-        let here = fmt!("{}/{}", ROOT_DIR, name);
-        if !is_dir {
-            left.push(here);
-            continue;
-        }
-        match is_diamond(&name).await {
-            Ok(true)  => {},
-            Ok(false) => { left.push(here); continue; },
-            Err(e) => {
-                console_log(&fmt!("'{}' in the folder could not be examined: {}", here, e));
-                left.push(here);
-                continue;
-            }
-        }
-        let mut kept: Vec<String> = Vec::new();
-        let took = match adopt_one(&name, &mut used, &mut kept, &mut skipped).await {
-            Ok(t) => t,
-            Err(e) => {
-                console_log(&fmt!("Diamond '{}' could not be brought home: {}", name, e));
-                continue;
-            }
-        };
-        if !took {
-            continue;       // already home: say nothing, or every boot would announce itself
-        }
-        // The name the rail will show, read from the store now that the metadata is in it.
-        let label = read_meta(&name).await.map(|m| m.name).unwrap_or_else(|_| name.clone());
-        adopted.push((name, label, kept));
-    }
-    // The mailbox, on the remaining budget. A failure here is reported and does not fail the run:
-    // the Diamonds are already home by this point, and nothing has been deleted from the folder.
-    let (mail_copied, mail_left) = match bring_mail_home(&mut used).await {
-        Ok(v) => v,
-        Err(e) => {
-            console_log(&fmt!("The mailbox in the folder could not be brought home: {}", e));
-            (0usize, Vec::new())
-        }
-    };
-    let rows: Vec<String> = adopted.iter().map(|(id, name, kept)| {
-        let ks: Vec<String> = kept.iter().map(|k| fmt!("\"{}\"", json_escape(k))).collect();
-        fmt!(
-            "{{\"id\":\"{}\",\"name\":\"{}\",\"kept\":[{}]}}",
-            json_escape(id), json_escape(name), ks.join(","),
-        )
-    }).collect();
-    let quote = |v: &[String]| -> String {
-        let items: Vec<String> = v.iter().map(|s| fmt!("\"{}\"", json_escape(s))).collect();
-        items.join(",")
-    };
-    Ok(fmt!(
-        "{{\"folder\":true,\"adopted\":[{}],\"left\":[{}],\"skipped\":[{}],\
-         \"mail\":{{\"copied\":{},\"left\":[{}]}}}}",
-        rows.join(","), quote(&left), quote(&skipped), mail_copied, quote(&mail_left),
-    ))
 }
 
 // ── The load proof's marks (K1, K2, K3) ─────────────────────────────

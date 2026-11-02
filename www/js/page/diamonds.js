@@ -13,7 +13,7 @@ import { chatWorkerModel } from './steer.js';
 import { readOrigins } from './layout.js';
 import { errandModelOf, importModelCounts, ratingsDigest, storedEffort, storedPre, turnEffortOf,
 	turnModelOf } from './rating.js';
-import { chatNeedsFolder, chatSeatHere, maybeAutoDispatch, notRunCause, seatDrawnRunner } from './sourcemenu.js';
+import { chatSeatHere, maybeAutoDispatch, notRunCause, seatDrawnRunner } from './sourcemenu.js';
 import { diag, toast } from './passkey_phrase.js';
 import { askOpenIn, honoursModelSet, isNotRunRow, renderHistory } from './turns.js';
 import { autonomousPosture, noticeDialog } from './consent.js';
@@ -22,7 +22,6 @@ import { chatDisplayName, errandProdBase, noteAppProv, renderSessionList } from 
 import { Instructions, Notes, Pending, Prompts, SYSTEM_PROMPT, steerRaise } from './pending.js';
 import { builtInSlot, renderDiamondList, selectDiamond } from './agentspanel.js';
 import { crystalJson, doSteer, runSteer } from './crystal.js';
-import { rootHere } from './marks.js';
 import { applyCrystalCap, applyEffort, applyFoldSettings, applyLiveness, applyProviderRouting,
 	applyRoundLimit, applySight, foldModelFor, setFoldPick } from './settingsui.js';
 // page-split: end imports
@@ -68,25 +67,13 @@ export function folderInReach(path, presence) {
 	});
 }
 
-/// THE SCOPE A DISPATCHED TURN CARRIES (UNBLOCK-32 F2b): its holds, and, for a turn whose
-/// folder is rooted here in a machine folder, that folder's NAME (`usr`, never a path),
-/// as `{ root, holds }`, so the runner starts the turn in its own folder of that name and reads
-/// relative paths from it. The plain array otherwise, as before; readers take either
-/// (`DaimondPeer.scopeHolds`).
-///
-/// ONE PREDICATE with the switch (F2-FIX M1): the folder is sent exactly where
-/// `chatNeedsFolder` makes the turn need one, a plain chat whose workspace holding is opened
-/// in the folder as much as a Diamond's mark, so a runner seated for the folder starts in it.
-///
-/// A Diamond with its own folder (HATE-7) sends that absolute path instead, ahead of all.
+/// THE SCOPE A DISPATCHED TURN CARRIES: its holds, and for a Diamond with its own folder
+/// (HATE-7) that absolute path, as `{ root, holds }`, so the runner starts the turn there.
+/// The plain array otherwise; readers take either (`DaimondPeer.scopeHolds`).
 export function errandScope(chat, holds) {
 	try {
 		var own = (chat && chat.diamondId) ? diamondFolder(chat.diamondId) : '';
 		if (own) return { root: own, holds: holds };
-		if (chatNeedsFolder(chat)) {
-			var r = DaimondMarksHere._core.rootOf(rootHere());
-			if (r.kind === 'machine' && r.name) return { root: r.name, holds: holds };
-		}
 	} catch (e) {
 		diag('dispatch scope', 'chat=' + (chat && chat.id) + ' ' + String((e && e.message) || e));
 	}
@@ -194,10 +181,10 @@ export async function dispatchToPeer(chat, turnId, promptText, scopePaths, opts,
 		try { await loadChatMessages(chat); } catch (e) { /* refused below */ }
 	}
 	// THE CONVERSATION TRAVELS (KT-4, binding 15): the engine session this page would restore,
-	// its reach and its today line, taken once the chat is resident, so the runner's turn sends
+	// its focus and its today line, taken once the chat is resident, so the runner's turn sends
 	// the same history and the same blocks as this page's.
 	dispatchOpts.session = errandSession(chat, turnId);
-	dispatchOpts.reach   = await errandReach(dispatchOpts.diamondId);
+	dispatchOpts.focus   = await errandFocus(dispatchOpts.diamondId);
 	dispatchOpts.today   = errandToday();
 	dispatchOpts.words   = await errandWordsFor(chat, runTo);
 	dispatchOpts.prodBase = errandProdBase(chat, dispatchOpts.model);
@@ -1794,8 +1781,7 @@ export var Triggers = {
 // joined later was told its actions "ran here before" whenever the seed's hold on
 // a default's action had lost the merge -- which it may, a seed made before the
 // first pull being stamped below any press made elsewhere (FA, `seedEntry` in
-// pause.js) -- and the modal that told it took the person's next click (`verify_markshere_sync`,
-// P6). `DEFAULTS_KEY` is the mark of a boot that has finished reading the rail:
+// pause.js) -- and the modal that told it took the person's next click (P6). `DEFAULTS_KEY` is the mark of a boot that has finished reading the rail:
 // every device writes it on its first, after the walk that asks this -- with an
 // account or before one, since a browser that is paired later has booted too.
 var TRIG_HERE_NOTICE_KEY = 'daimond-trig-here-notice';
@@ -2180,9 +2166,8 @@ export var USAGE_DIR = 'system/usage';
 /// digest.md`. `system/` names none of `diamonds/`, `mail/` or `chats/`
 /// (`is_store_path`, `src/tools.rs`), so nothing on the Rust side pinned it
 /// to the sandbox the way a Diamond's own state is pinned; `Wasm.store_write`
-/// is that pin, applied here directly. `grantConsulted`'s seed now always
-/// names `dir:[browser]…`, which is in force only in the browser workspace
-/// (M4) -- the one place this write and that grant now agree.
+/// is that pin, applied here directly: the Optimiser reads it there, by the
+/// sight its definition gives it (`diamond_meta::BUILT_IN_CONSULTS`).
 export async function writeUsageDigest() {
 	if (!window.DaimondSignals) return;
 	await importModelCounts();
@@ -2278,25 +2263,6 @@ export async function writeGuideMirror() {
 	try { await Wasm.store_write(GUIDE_DIR + '/README.md', contents.join('\n')); }
 	catch (e) { return; }
 	try { if (build) localStorage.setItem(GUIDE_STAMP, build); } catch (e) {}
-}
-
-/// Grant a Diamond read-only sight of a folder, the way an attachment does.
-///
-/// `consulted` is the relation `attachmentsOf` reads as read-only, so this
-/// is the same grant a user makes by attaching a folder and marking it so --
-/// not a private back door with different rules.
-///
-/// ALWAYS `dir:[browser]…`, NEVER `rootedRef` (2026-09-25). `system/guide` and
-/// `system/usage` are written with `Wasm.store_write` now, always the app's
-/// own store, so the row that grants sight of them must always name the
-/// browser workspace too -- not whichever machine folder happened to be open
-/// when the account was seeded. `DaimondMarksHere.seeded` already narrows the
-/// grant to the browser root (M4); this is what makes the row itself agree.
-async function grantConsulted(diamondId, path) {
-	try {
-		await diamondApp().add_link(diamondId, 'diamond:' + diamondId,
-			'dir:[browser]' + path, 'consulted', '', 'user');
-	} catch (e) { /* the Diamond simply will not see it; nothing else breaks */ }
 }
 
 /// Offer the two default Diamonds, once per account.
@@ -2599,7 +2565,7 @@ export async function seedDefaultDiamonds() {
 		if (await diamondApp().legacy_diamond_root_waiting()) return;
 	} catch (e) { return; }     // an older wasm cannot answer; do not risk it
 	try { localStorage.setItem(DEFAULTS_KEY, '1'); } catch (e) { return; }
-	var grants = [];
+	var mirrors = [];
 	for (var i = 0; i < DEFAULT_DIAMONDS.length; i++) {
 		var d = DEFAULT_DIAMONDS[i];
 		// A built-in of this slot, by fixed id or marker, and never a Diamond of his that only
@@ -2649,8 +2615,8 @@ export async function seedDefaultDiamonds() {
 			_triggers[id] = rec;
 			try { await Triggers.save(id); } catch (e) { /* it holds in memory */ }
 		}
-		if (d.usage) grants.push({ id: id, dir: USAGE_DIR, write: writeUsageDigest });
-		if (d.guide) grants.push({ id: id, dir: GUIDE_DIR, write: writeGuideMirror });
+		if (d.usage) mirrors.push({ write: writeUsageDigest });
+		if (d.guide) mirrors.push({ write: writeGuideMirror });
 	}
 	await loadDiamonds();
 
@@ -2665,13 +2631,12 @@ export async function seedDefaultDiamonds() {
 	// tile. `verify_triggers` caught exactly that, intermittently: green run
 	// alone, red under the load of a full suite.
 	//
-	// The grants are what notes2 #51 asks for -- the Optimiser given sight of
-	// how the account is worked, Help given the guide it exists to explain --
-	// each read-only, by the same `consulted` relation any attached folder
-	// uses.
-	for (var g = 0; g < grants.length; g++) {
-		try { await grants[g].write(); } catch (e) { continue; }
-		await grantConsulted(grants[g].id, grants[g].dir);
+	// What notes2 #51 asks for -- the Optimiser given sight of how the account
+	// is worked, Help given the guide it exists to explain -- is the engine's,
+	// read-only from each Diamond's definition (`diamond_meta::BUILT_IN_CONSULTS`):
+	// the page only writes the folders.
+	for (var g = 0; g < mirrors.length; g++) {
+		try { await mirrors[g].write(); } catch (e) { continue; }
 	}
 }
 
@@ -3311,7 +3276,7 @@ export function errandLimits(chat) {
 		win = (window.DaimondPricing && DaimondPricing.contextWindow)
 			? (DaimondPricing.contextWindow(m.model || '', m.provider || '') || 0) : 0;
 	} catch (e) { win = 0; }
-	return {
+	var out = {
 		window:     win,
 		foldAt:     pg.cfg.foldAt || 0,
 		contextCap: pg.cfg.contextCap || 0,
@@ -3321,6 +3286,11 @@ export function errandLimits(chat) {
 		foldPrompt: (Prompts && Prompts.md && Prompts.md.compactor) || '',
 		tune:       pg.cfg.tune || '',
 	};
+	// And the gateway's OCR figures (P2.5d), where it served some, so the runner reads a PDF on
+	// the engines this tab would; none served carries none, and the runner keeps the engine's.
+	var ocr = (window.DaimondPolicy && DaimondPolicy.ocr) ? DaimondPolicy.ocr() : null;
+	if (ocr) out.ocr = ocr;
+	return out;
 }
 
 /// The engine session `seedEngine` would lay into a fresh engine for `chat`, less the turn
@@ -3355,15 +3325,17 @@ export function errandSession(chat, turnId) {
 	return { v: 1, msgs: [], upto: '', uptoTs: 0, marks: {}, tail: rows(c.messages || []) };
 }
 
-/// What the Diamond `did` reaches here, as the engine composes its `Attached` block from
-/// (`diamond_reach`), for an errand to carry (KT-4); `undefined` for an ordinary chat, whose turn
-/// composes none, and where the engine cannot say.
-async function errandReach(did) {
+/// What the user attached to the Diamond `did`, the list the engine composes its `Attached` block
+/// from (`diamond_focus`), for an errand to carry as `focus` (KT-4; focus, never reach,
+/// D-20261031-11); `undefined` for an ordinary chat, whose turn composes none, and where the
+/// engine cannot say.
+async function errandFocus(did) {
 	if (!did) return undefined;
 	try {
 		var eng = diamondApp(did);
-		if (!eng || typeof eng.diamond_reach !== 'function') return undefined;
-		return JSON.parse(await eng.diamond_reach(String(did)));
+		if (!eng || typeof eng.diamond_focus !== 'function') return undefined;
+		var f = JSON.parse(await eng.diamond_focus(String(did)));
+		return Array.isArray(f) ? f : undefined;
 	} catch (e) {
 		return undefined;
 	}
@@ -3705,16 +3677,6 @@ export function install() { // page-split: install
 	window.DaimondMailClaim = { id: mailClaimId, claim: claimMailArrival, settle: settleMailClaim };
 	// page-split: install 109
 
-	// THEIR SIGHT OF THEIR FOLDERS, AS BUILT-IN ENTRIES (R2). `grantConsulted` writes
-	// each grant once per account, and it reaches every other device by sync -- where
-	// no press was ever made, so a stored entry would leave Help and the Optimiser
-	// blind on every device but the first. These two are in force wherever their row
-	// is, under any root, and read-only and unshared whatever the row says, so a forged
-	// row on either can turn it into neither a write nor a share.
-	DaimondMarksHere.seeds([
-		{ owner: DEFAULT_IDS.Neil,      path: 'system/guide' },	// GUIDE_DIR
-		{ owner: DEFAULT_IDS.Lucy, path: 'system/usage' },	// USAGE_DIR
-	]);
 	// page-split: install 110
 	WITHHELD[DEFAULT_IDS.Lucy] = { workers: 0 };
 	// page-split: install 111

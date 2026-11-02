@@ -157,9 +157,6 @@ impl StoreEnv for OpfsBackend {
     fn console_warn(msg: &str) { web_sys::console::warn_1(&JsValue::from_str(msg)) }
     fn trail(what: &str, detail: &str) { crate::wasm::entry::trail(what, detail) }
     fn heap_mb() -> u32 { crate::wasm::entry::heap_mb() }
-    fn forget_press(owner: &str, id: &str) -> Outcome<()> {
-        crate::wasm::marks::forget_press(owner, id)
-    }
     /// By the origin's links mark, which every writer in it moves; a page with no local storage
     /// has none, and reads afresh.
     fn links_check() -> crate::store::LinksCheck {
@@ -247,8 +244,9 @@ pub const FILE_WAIT_MS: u64 = 60_000;
 /// writes DECISIONS.md after the target's lock is given back) and never a V.  An S-holder waits
 /// for nothing: each side write is one compare-and-write that reads again on a refusal.  T→S
 /// edges only, with S a sink, leave no cycle.
-pub(in crate::wasm) async fn hold_file(folder: bool, path: &str) -> Outcome<FileHold> {
-    match web_lock_in(&crate::fsname::file_lock_name(folder, path), LockHow::Timeout(FILE_WAIT_MS)).await {
+pub(in crate::wasm) async fn hold_file(path: &str) -> Outcome<FileHold> {
+    // Browser storage alone: the browser opens no real folder (R1).
+    match web_lock_in(&crate::fsname::file_lock_name(path), LockHow::Timeout(FILE_WAIT_MS)).await {
         Locked::Held(lock) => Ok(FileHold { _lock: Some(lock) }),
         Locked::NoManager  => Ok(FileHold { _lock: None }),
         Locked::TimedOut | Locked::Busy => Err(err!(

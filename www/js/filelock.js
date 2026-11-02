@@ -9,7 +9,7 @@
    was overwritten and kept in no version row; two restores could both
    "win". Measured: 194-200 of 200 races both won, in Chrome and Firefox.
 
-   The fix is a lock named for the file, `daimond-file:<root>:<path>`,
+   The fix is a lock named for the file, `daimond-file:sandbox:<path>`,
    held by every writer from before it opens the file until after it
    closes it. The wasm takes the same name (`file_lock_name`,
    src/fsname.rs); the two spellings are the same rule, and
@@ -41,7 +41,7 @@
 (function () {
 	'use strict';
 
-	var PREFIX = 'daimond-file:';
+	var PREFIX = 'daimond-file:sandbox:';	// fixed: the wasm's name (`fsname::file_lock_name`), kept so a tab on the old build still meets it
 
 	/// How long a writer waits for its file before it is refused, in ms: the wasm's
 	/// `FILE_WAIT_MS` (src/wasm/diamond.rs).
@@ -62,10 +62,9 @@
 		return out.join('/').toLowerCase();
 	}
 
-	/// The lock's name. `root` is 'folder' for the real folder the user has open, and
-	/// anything else for this account's browser storage.
-	function name(root, path) {
-		return PREFIX + (root === 'folder' ? 'folder' : 'sandbox') + ':' + normal(path);
+	/// The lock's name: there is one root, this account's browser storage.
+	function name(path) {
+		return PREFIX + normal(path);
 	}
 
 	/// Refuse a path with a `..` in it. The page's walks DROP `..` (cloud.js `parts`, daimond.js
@@ -133,14 +132,14 @@
 	}
 
 	/// Run `fn` holding the file's lock, and answer what it answers.
-	async function hold(root, path, fn) {
+	async function hold(path, fn) {
 		refuseUp(path);
 		var m = manager();
 		// A held act may remove the file (cloud.js `removeLocal`): the mark moves after it, either way.
 		if (!m) { try { return await fn(); } finally { landed(path); } }
 		var ran = false;
 		try {
-			return await m.request(name(root, path), asking(), function () { ran = true; return fn(); });
+			return await m.request(name(path), asking(), function () { ran = true; return fn(); });
 		} catch (e) {
 			throw ran ? e : refused(path, e);
 		} finally {
@@ -160,13 +159,13 @@
 	/// it was, then runs `remove` (where given) STILL HOLDING THE LOCK, for the empty file the open
 	/// itself left where nothing stood. Removed after the lock was given back, a rival's write that
 	/// landed in between went with it. Only a caller that knows it created the file passes `remove`.
-	async function writable(root, path, open) {
+	async function writable(path, open) {
 		refuseUp(path);
 		var m = manager();
 		var release = null, given = false;
 		if (m) {
 			await new Promise(function (granted, nope) {
-				m.request(name(root, path), asking(), function () {
+				m.request(name(path), asking(), function () {
 					return new Promise(function (r) { release = r; granted(); });
 				}).catch(function (e) { nope(refused(path, e)); });
 			});
@@ -183,7 +182,7 @@
 			},
 			abort: async function (why) { try { return await w.abort(why); } finally { giveBack(); } },
 			discard: async function (remove) {
-				if (given) { if (remove) return await hold(root, path, remove); return; }
+				if (given) { if (remove) return await hold(path, remove); return; }
 				try {
 					try { if (typeof w.abort === 'function') await w.abort(); } catch (e) { /* already gone */ }
 					if (remove) { var r = await remove(); landed(path); return r; }
@@ -192,17 +191,6 @@
 		};
 	}
 
-	/// Whether `dest` is the folder `open` or inside it: a writer that walks its own handles
-	/// there (daimond.js "Save a copy") would write the open folder's files under no lock. A
-	/// question the browser cannot answer counts as inside, so the copy is refused, not risked.
-	async function inside(open, dest) {
-		if (!open || !dest) return false;
-		try {
-			if (await open.isSameEntry(dest)) return true;
-			return (await open.resolve(dest)) !== null;
-		} catch (e) { return true; }
-	}
-
-	window.DaimondFileLock = { name: name, hold: hold, writable: writable, inside: inside, WAIT_MS: WAIT_MS,
+	window.DaimondFileLock = { name: name, hold: hold, writable: writable, WAIT_MS: WAIT_MS,
 		bearsOnLinks: bearsOnLinks, linksChanged: linksChanged };
 })();

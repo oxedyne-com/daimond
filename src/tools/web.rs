@@ -74,6 +74,10 @@ pub(crate) fn is_stranger_at(abs: &str, root: &str) -> bool {
     if in_book(abs) {
         return true;
     }
+    // The runner's tool prefix is outside the home, so it is asked apart from the rows below it.
+    if in_registry_root(abs) {
+        return true;
+    }
     // `under` takes an empty prefix as the whole tree, and no granted folder means no home.
     if normalise(root).is_empty() {
         return in_book_canonical(abs);
@@ -86,6 +90,33 @@ pub(crate) fn is_stranger_at(abs: &str, root: &str) -> bool {
             || stranger_lexical(&at.to_string_lossy(), &home.to_string_lossy()),
         (Ok(at), Err(_))    => in_book(&at.to_string_lossy()) || stranger_lexical(&at.to_string_lossy(), root),
         (Err(_), _)         => false, // not made yet, or not on this disk: the spelling decided
+    }
+}
+
+/// Is the absolute `abs` under a folder the runner named package text ([`set_registry_roots`]),
+/// as spelt or where it lands once every link is followed, against each root as told and as its
+/// canonical form?  Off with the registry rows, by `KIMBERLITE_RULE_OFF=registry_text`.
+pub(super) fn in_registry_root(abs: &str) -> bool {
+    let roots = match REGISTRY_ROOTS.read() {
+        Ok(g)   => g.clone(),
+        Err(p)  => p.into_inner().clone(),
+    };
+    if roots.is_empty() || engine_rule_off("registry_text") {
+        return false;
+    }
+    let mut forms = roots.clone();
+    for r in &roots {
+        if let Ok(c) = std::fs::canonicalize(r) {
+            forms.push(normalise(&c.to_string_lossy()));
+        }
+    }
+    let hit = |at: &str| forms.iter().any(|r| under(at, r));
+    if hit(&normalise(abs)) {
+        return true;
+    }
+    match std::fs::canonicalize(abs) {
+        Ok(at)  => hit(&normalise(&at.to_string_lossy())),
+        Err(_)  => false, // not made yet: the spelling decided
     }
 }
 
@@ -157,6 +188,27 @@ pub(super) fn ws_stranger<H: Host>(ctx: &ToolContext<H>, raw: &str, rel: &str) -
 /// it grows; it only ever grows.
 pub(super) static STRANGER_PATHS: std::sync::RwLock<std::collections::BTreeSet<String>> =
     std::sync::RwLock::new(std::collections::BTreeSet::new());
+
+/// The runner's tool prefix (its config's `owner.tools_dir`), absolute and [`normalise`]d: where
+/// a run's commands install packages, outside the home (TREE-1j), so no row of
+/// [`REGISTRY_TREES`] under the granted folder reaches it.  Its text is a package's, anyone's
+/// (ruling l.256 (b), NF6).  Told by the runner ([`set_registry_roots`]); empty off the runner.
+pub(super) static REGISTRY_ROOTS: std::sync::RwLock<Vec<String>> = std::sync::RwLock::new(Vec::new());
+
+/// Sets the absolute folders whose text is a package's (the runner's tool prefix, NF6, ruling
+/// l.256 (b)), replacing any told before: Kimberlite tells the run child the prefix its config
+/// resolved.  A relative or empty path is no root and is dropped.
+pub fn set_registry_roots(roots: &[String]) {
+    let mut held = match REGISTRY_ROOTS.write() {
+        Ok(g)   => g,
+        Err(p)  => p.into_inner(),
+    };
+    *held = roots.iter()
+        .filter(|r| r.starts_with('/'))
+        .map(|r| normalise(r))
+        .filter(|r| !r.is_empty())
+        .collect();
+}
 
 /// What this process's file door wrote while its turn was tainted, absolute, not yet taken.
 pub(super) static TAINTED_WRITES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
@@ -349,11 +401,10 @@ pub(crate) fn named_stranger_root(machine: &Machine, argv: &[String], cwd_abs: &
 /// gives -- and reaching one from a command is not the impossibility it looks like.  A mailbox
 /// under [`MAIL_ROOT`] resolves to browser storage whatever folder is open (see
 /// [`is_store_path`]), so [`fence_spec`] drops it from every allow-list and no fence can NAME
-/// one.  But `crate::wasm::diamond::bring_mail_home` says of the messages an older build left in
-/// the user's real folder: *"IT COPIES AND IT NEVER DELETES."*  So `<root>/mail/<address>` is a
-/// real directory of a stranger's text, sitting inside the fence of every turn whose fence is the
-/// granted root -- permanently, by design, because deleting a draft that exists nowhere else is
-/// the worse mistake.  `run cat mail/x` reads it.
+/// one.  But an older build wrote messages into the user's real folder, and nothing deletes them
+/// (deleting a draft that exists nowhere else is the worse mistake).  So `<root>/mail/<address>`
+/// may be a real directory of a stranger's text, sitting inside the fence of every turn whose
+/// fence is the granted root.  `run cat mail/x` reads it.
 ///
 /// Hence the shape: both directions of containment, because a fence may sit above the mailbox or
 /// inside it, and a `deny` that covers it puts it back out of reach.  A deny NARROWER than the

@@ -83,7 +83,7 @@ if (!L.missing.length) {
 	check('a reason renders a label and its sentence', r && /^seat\.label_runner_unchecked/.test(r.label)
 		&& /^seat\.why_runner_unchecked/.test(r.why) && r.label.indexOf('argonaut') > 0, JSON.stringify(r));
 	for (const w of ['runner-source', 'runner-rekey', 'runner-engine', 'runner-credits-only', 'runner-silent',
-		'runner-busy', 'runner-phone', 'runner-require', 'runner-nosource', 'runner-unchecked', 'page-old']) {
+		'runner-busy', 'runner-phone', 'runner-nosource', 'runner-unchecked', 'page-old']) {
 		const k = api.seatWhyKey({ why: w, runnerId: 'rn', source: 'an', reach: 'nokey' });
 		check('switch reason ' + w + ' has a key with a label', !!k && !!en['seat.why_' + k.k] && whys.indexOf('seat.why_' + k.k) >= 0,
 			JSON.stringify(k));
