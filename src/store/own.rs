@@ -123,6 +123,10 @@ pub fn heap_mb() -> u32 { Backend::heap_mb() }
 
 pub fn forget_press(owner: &str, id: &str) -> Outcome<()> { Backend::forget_press(owner, id) }
 
+pub fn links_check() -> crate::store::LinksCheck { Backend::links_check() }
+
+pub fn links_changed() { Backend::links_changed() }
+
 pub async fn machine_door_root() -> Option<String> { b().machine_door_root().await }
 
 pub async fn user_read_file(root: FileRoot, path: &str) -> Outcome<Vec<u8>> {

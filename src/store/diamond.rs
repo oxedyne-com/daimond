@@ -8146,7 +8146,171 @@ pub async fn versions_diff(id: &str, was: &str, now: &str) -> Outcome<String> {
 /// and to every worker it dispatches, so a growing list of links would be paid
 /// for in tokens on every turn, by agents that have the file tools anyway.
 fn links_path(id: &str) -> String {
-    fmt!("{}/{}/{}/links.jsonl", ROOT_DIR, id, STORE_DIR)
+    fmt!("{}/{}/{}/{}", ROOT_DIR, id, STORE_DIR, LINKS_FILE)
+}
+
+/// The sidecar's file name, under [`STORE_DIR`].
+const LINKS_FILE: &str = "links.jsonl";
+
+/// Does a change at the store key `key` bear on a link sidecar?  The sidecar itself, the Diamond's
+/// `.daimond` folder, the Diamond's folder, the root of Diamonds, or anything above it: a move or a
+/// delete of any of those moves or removes a sidecar.  `www/js/filelock.js` `bearsOnLinks` is the
+/// same rule for the page's own writers.
+pub fn bears_on_links(key: &str) -> bool {
+    let parts: Vec<&str> = key.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
+    match parts.as_slice() {
+        []              => true,
+        [r]             => *r == ROOT_DIR,
+        [r, _]          => *r == ROOT_DIR,
+        [r, _, d]       => *r == ROOT_DIR && *d == STORE_DIR,
+        [r, _, d, f]    => *r == ROOT_DIR && *d == STORE_DIR && *f == LINKS_FILE,
+        _               => false,
+    }
+}
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The links index (U86)                                          │
+// └───────────────────────────────────────────────────────────────┘
+//
+// THE BURST (U86, 1 Nov 2026). Every link read walked `diamonds/` and read every sidecar: a sync
+// collect asked once per Diamond (`Files.shareRoots`), so 31 Diamonds were ~961 sidecar opens per
+// collect, and a turn's every tool call asked again (`bounds_now` -> `diamond_reach`). The tab sat
+// at 40-90% CPU through a sync while a turn ran. Now one index per thread holds every Diamond's
+// rows, and answers only where the host vouches that nothing moved ([`LinksCheck`]): in the tab
+// a mark every writer of the origin moves (wasm, `www/js/filelock.js`), natively each sidecar's
+// own stamp, asked per file, so a write by any other process or handle is seen.
+
+/// One Diamond's sidecar as the index holds it: the rows, and the stamp they were read under.
+struct Sidecar {
+    stamp:  Option<(f64, f64)>,
+    links:  std::sync::Arc<Vec<Link>>,
+}
+
+#[derive(Default)]
+struct LinksIndex {
+    mark:   Option<String>,                                 // The host mark the rows were read under.
+    rows:   std::collections::BTreeMap<String, Sidecar>,
+    wrote:  u64,                                            // Changes noted here, so a walk that overlapped one keeps nothing.
+}
+
+thread_local! {
+    static LINKS_INDEX: std::cell::RefCell<LinksIndex> = std::cell::RefCell::new(LinksIndex::default());
+    static SIDECAR_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many sidecars this thread has read for the index: the arm's measure of the burst.
+pub fn sidecar_reads() -> u64 { SIDECAR_READS.with(|c| c.get()) }
+
+/// Forget every row the index holds, as when another store is put in place under this thread.
+pub fn forget_links() {
+    LINKS_INDEX.with(|x| {
+        let mut x = x.borrow_mut();
+        x.mark = None;
+        x.rows.clear();
+        x.wrote = x.wrote.wrapping_add(1);
+    });
+}
+
+/// Note a change at the store key `key`: where it bears on a sidecar ([`bears_on_links`]), the
+/// index forgets what it held of it and the host's mark moves, so every other page sees it too.
+pub fn links_wrote(key: &str) {
+    if !bears_on_links(key) {
+        return;
+    }
+    let id: Option<String> = key.split('/').filter(|p| !p.is_empty() && *p != ".").nth(1)
+        .map(|s| s.to_string());
+    LINKS_INDEX.with(|x| {
+        let mut x = x.borrow_mut();
+        x.mark = None;
+        match &id {
+            Some(id)    => { x.rows.remove(id); }
+            None        => x.rows.clear(),
+        }
+        x.wrote = x.wrote.wrapping_add(1);
+    });
+    own::links_changed();
+}
+
+/// Every Diamond's links, by the Diamond whose sidecar holds them: from the index where the host
+/// vouches that nothing moved, else read afresh and kept.  One unreadable sidecar is logged and
+/// skipped, never hiding every other Diamond's links.
+async fn indexed_links() -> Outcome<Vec<(String, std::sync::Arc<Vec<Link>>)>> {
+    use crate::store::LinksCheck;
+    let check = own::links_check();
+    if let LinksCheck::Mark(m) = &check {
+        let hit = LINKS_INDEX.with(|x| {
+            let x = x.borrow();
+            match x.mark.as_deref() == Some(m.as_str()) {
+                true    => Some(x.rows.iter().map(|(id, s)| (id.clone(), s.links.clone())).collect()),
+                false   => None,
+            }
+        });
+        if let Some(rows) = hit {
+            return Ok(rows);
+        }
+    }
+    let wrote = LINKS_INDEX.with(|x| x.borrow().wrote);
+    let entries = match own::list_dir(ROOT_DIR).await {
+        Ok(e)  => e,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut out:  Vec<(String, std::sync::Arc<Vec<Link>>)> = Vec::new();
+    let mut keep: std::collections::BTreeMap<String, Sidecar> = std::collections::BTreeMap::new();
+    let mut whole = true;
+    for (id, is_dir, _size) in entries {
+        if !is_dir {
+            continue;
+        }
+        // Natively, the stamp is taken BEFORE the read, so a write landing between the two leaves
+        // a stamp the next call finds moved.
+        let stamp = match check {
+            LinksCheck::Stamp   => match own::stamp(&links_path(&id)).await {
+                Ok(s)   => Some(s),
+                Err(_)  => None,
+            },
+            _                   => None,
+        };
+        if let Some(st) = stamp {
+            let held = LINKS_INDEX.with(|x| x.borrow().rows.get(&id)
+                .filter(|s| s.stamp == st)
+                .map(|s| s.links.clone()));
+            if let Some(links) = held {
+                out.push((id.clone(), links.clone()));
+                keep.insert(id, Sidecar { stamp: st, links });
+                continue;
+            }
+        }
+        SIDECAR_READS.with(|c| c.set(c.get() + 1));
+        let links = match read_links(&id).await {
+            Ok(l)  => std::sync::Arc::new(l),
+            Err(e) => {
+                console_log(&fmt!("Diamond '{}' has an unreadable link sidecar: {}", id, e));
+                whole = false;
+                continue;
+            }
+        };
+        out.push((id.clone(), links.clone()));
+        match (&check, stamp) {
+            (LinksCheck::Stamp, Some(st))   => { keep.insert(id, Sidecar { stamp: st, links }); }
+            (LinksCheck::Mark(_), _)        => { keep.insert(id, Sidecar { stamp: None, links }); }
+            _                               => {}
+        }
+    }
+    LINKS_INDEX.with(|x| {
+        let mut x = x.borrow_mut();
+        // A change noted during the walk may have landed after its sidecar was read: keep nothing.
+        if x.wrote != wrote {
+            x.mark = None;
+            x.rows.clear();
+            return;
+        }
+        x.rows = keep;
+        x.mark = match (&check, whole) {
+            (LinksCheck::Mark(m), true) => Some(m.clone()),
+            _                           => None,
+        };
+    });
+    Ok(out)
 }
 
 /// Read one Diamond's links.  A missing sidecar is no links, not a failure.
@@ -8526,33 +8690,18 @@ async fn touch_after_link(owner: &str) {
 /// by keeping a mirrored copy -- there is no second copy to fall out of step,
 /// and a link hand-written into either end's sidecar counts just the same.
 ///
-/// The scan walks every Diamond, which is the same walk [`list`] already does on
-/// each load of the rail.
+/// The rows come from the links index ([`indexed_links`]): a sidecar is read again only where it
+/// may have moved since.
 pub async fn links_touching(node_ref: &str) -> Outcome<Vec<(String, Link)>> {
     let node = match Node::parse(node_ref) {
         Some(n) => n,
         None    => return Err(err!("'{}' is not a kind:rest reference.", node_ref; Invalid, Input)),
     };
     let mut out: Vec<(String, Link)> = Vec::new();
-    let entries = match own::list_dir(ROOT_DIR).await {
-        Ok(e)  => e,
-        Err(_) => return Ok(out),
-    };
-    for (id, is_dir, _size) in entries {
-        if !is_dir {
-            continue;
-        }
-        // One unreadable sidecar must not hide every other Diamond's links.
-        let links = match read_links(&id).await {
-            Ok(l)  => l,
-            Err(e) => {
-                console_log(&fmt!("Diamond '{}' has an unreadable link sidecar: {}", id, e));
-                continue;
-            }
-        };
-        for l in links {
+    for (id, links) in res!(indexed_links().await) {
+        for l in links.iter() {
             if l.touches(&node) {
-                out.push((id.clone(), l));
+                out.push((id.clone(), l.clone()));
             }
         }
     }
@@ -8576,24 +8725,12 @@ pub async fn all_links() -> Outcome<String> { all_links_among(None).await }
 pub async fn all_links_among(only: Option<&std::collections::BTreeSet<String>>)
     -> Outcome<String>
 {
-    let entries = match own::list_dir(ROOT_DIR).await {
-        Ok(e)  => e,
-        Err(_) => return Ok("[]".to_string()),
-    };
     let mut items: Vec<String> = Vec::new();
-    for (id, is_dir, _size) in entries {
-        if !is_dir || only.is_some_and(|o| !o.contains(&id)) {
+    for (id, links) in res!(indexed_links().await) {
+        if only.is_some_and(|o| !o.contains(&id)) {
             continue;
         }
-        // One unreadable sidecar must not hide every other Diamond's links.
-        let links = match read_links(&id).await {
-            Ok(l)  => l,
-            Err(e) => {
-                console_log(&fmt!("Diamond '{}' has an unreadable link sidecar: {}", id, e));
-                continue;
-            }
-        };
-        for l in links {
+        for l in links.iter() {
             items.push(fmt!(
                 "{{\"owner\":\"{}\",\"id\":\"{}\",\"ts\":{},\"from\":\"{}\",\"to\":\"{}\",\
                   \"rel\":\"{}\",\"note\":\"{}\",\"by\":\"{}\",\"share\":{}}}",
@@ -10438,6 +10575,10 @@ mod claims_turn_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "../../tests/unit/store/diamond/link_sidecar_tests.rs"]
 mod link_sidecar_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../../tests/unit/store/diamond/links_index_tests.rs"]
+mod links_index_tests;
 
 // UNBLOCK-48: a Diamond whose `meta.json` went missing while its crystal stayed.
 #[cfg(all(test, not(target_arch = "wasm32")))]

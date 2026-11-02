@@ -102,8 +102,10 @@ impl NativeBackend {
         }
     }
 
-    /// Note a write where this is the lying double: a `versions/` key is the next one lied about.
+    /// Note a change of `key`: the links index forgets what it held of it, and where this is the
+    /// lying double, a `versions/` key is the next one lied about.
     fn wrote(&self, _key: &str) {
+        crate::store::diamond::links_wrote(_key);
         #[cfg(test)]
         if let Self::Lying(_) = self {
             if _key.contains("/versions/") {
@@ -181,6 +183,8 @@ thread_local! {
 
 /// Put `backend` in place for this thread's store, answering what stood before.
 pub fn install(backend: NativeBackend) -> NativeBackend {
+    // Another store under this thread: nothing read of the last one's links stands.
+    crate::store::diamond::forget_links();
     INSTALLED.with(|b| b.replace(backend))
 }
 
@@ -311,6 +315,7 @@ impl NativeBackend {
         }
         res!(pre().await);
         on!(self, m => res!(m.delete_file(key).await), return refused("delete", key));
+        crate::store::diamond::links_wrote(key);
         Ok(None)
     }
 
@@ -324,7 +329,10 @@ impl NativeBackend {
     {
         let (_one, _two) = res!(self.hold_both(from, to).await);
         res!(pre().await);
-        on!(self, m => m.move_entry(from, to).await, refused("move", from))
+        on!(self, m => res!(m.move_entry(from, to).await), return refused("move", from));
+        crate::store::diamond::links_wrote(from);
+        crate::store::diamond::links_wrote(to);
+        Ok(())
     }
 
     /// Both names' file locks, in one order (the names'), so two moves across the same pair
@@ -375,7 +383,12 @@ impl StoreBackend for NativeBackend {
         -> Outcome<Option<Seen>>
     {
         let _held = res!(self.hold_file(key).await);
-        on!(self, m => m.write_file_if(key, bytes, expect).await, refused("write", key))
+        let found = on!(self, m => res!(m.write_file_if(key, bytes, expect).await),
+            return refused("write", key));
+        if found.is_none() {
+            crate::store::diamond::links_wrote(key);
+        }
+        Ok(found)
     }
     async fn exists(&self, key: &str) -> Outcome<bool> {
         self.pause().await;
@@ -392,18 +405,30 @@ impl StoreBackend for NativeBackend {
     }
     async fn delete_file(&self, key: &str) -> Outcome<()> {
         let _held = res!(self.hold_plain(key).await);
-        on!(self, m => m.delete_file(key).await, refused("delete", key))
+        on!(self, m => res!(m.delete_file(key).await), return refused("delete", key));
+        crate::store::diamond::links_wrote(key);
+        Ok(())
     }
     async fn delete_file_if(&self, key: &str, expect: &Seen) -> Outcome<Option<Seen>> {
         let _held = res!(self.hold_file(key).await);
-        on!(self, m => m.delete_file_if(key, expect).await, refused("delete", key))
+        let found = on!(self, m => res!(m.delete_file_if(key, expect).await),
+            return refused("delete", key));
+        if found.is_none() {
+            crate::store::diamond::links_wrote(key);
+        }
+        Ok(found)
     }
     async fn delete_entry(&self, key: &str, recursive: bool) -> Outcome<()> {
-        on!(self, m => m.delete_entry(key, recursive).await, refused("delete", key))
+        on!(self, m => res!(m.delete_entry(key, recursive).await), return refused("delete", key));
+        crate::store::diamond::links_wrote(key);
+        Ok(())
     }
     async fn move_entry(&self, from: &str, to: &str) -> Outcome<()> {
         let (_one, _two) = res!(self.hold_both(from, to).await);
-        on!(self, m => m.move_entry(from, to).await, refused("move", from))
+        on!(self, m => res!(m.move_entry(from, to).await), return refused("move", from));
+        crate::store::diamond::links_wrote(from);
+        crate::store::diamond::links_wrote(to);
+        Ok(())
     }
 
     async fn lock(&self, name: &str, how: LockHow) -> Locked<NativeLock> {
@@ -473,6 +498,10 @@ impl StoreEnv for NativeBackend {
     fn heap_mb() -> u32 { 0 }
     /// No device presses are kept natively, so there is none to drop.
     fn forget_press(_owner: &str, _id: &str) -> Outcome<()> { Ok(()) }
+    /// By each sidecar's own stamp, so a write by any other process or handle is seen.
+    fn links_check() -> crate::store::LinksCheck { crate::store::LinksCheck::Stamp }
+    /// No mark: the stamp is the check.
+    fn links_changed() {}
     async fn machine_door_root(&self) -> Option<String> { None }
 
     async fn user_read_file(&self, root: FileRoot, path: &str) -> Outcome<Vec<u8>> {

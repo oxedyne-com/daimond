@@ -23,6 +23,20 @@ thread_local! {
     static PAGE: String = generate_session_id();
 }
 
+/// The localStorage key of the origin's links mark (U86), shared with `www/js/filelock.js`.
+const LINKS_MARK: &str = "daimond-links-mark"; // fixed: the name the page's writers move
+
+thread_local! {
+    /// This page's moves of the links mark, so two in one millisecond still differ.
+    static LINKS_MOVES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The origin's links mark, or `None` where there is none or no local storage to hold one.
+fn links_mark() -> Option<String> {
+    let store = web_sys::window().and_then(|w| w.local_storage().ok().flatten());
+    store.and_then(|s| s.get_item(LINKS_MARK).ok().flatten())
+}
+
 /// The store's backend in the tab.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpfsBackend;
@@ -145,6 +159,29 @@ impl StoreEnv for OpfsBackend {
     fn heap_mb() -> u32 { crate::wasm::entry::heap_mb() }
     fn forget_press(owner: &str, id: &str) -> Outcome<()> {
         crate::wasm::marks::forget_press(owner, id)
+    }
+    /// By the origin's links mark, which every writer in it moves; a page with no local storage
+    /// has none, and reads afresh.
+    fn links_check() -> crate::store::LinksCheck {
+        use crate::store::LinksCheck;
+        match links_mark() {
+            Some(m) => LinksCheck::Mark(m),
+            None    => {
+                Self::links_changed();
+                match links_mark() {
+                    Some(m) => LinksCheck::Mark(m),
+                    None    => LinksCheck::Never,
+                }
+            }
+        }
+    }
+    /// A fresh mark, never a count: two pages moving it at once still leave one neither held.
+    fn links_changed() {
+        let n = LINKS_MOVES.with(|c| { let n = c.get().wrapping_add(1); c.set(n); n });
+        let mark = fmt!("{}-{}-{}", PAGE.with(|p| p.clone()), Self::now_ms(), n);
+        if let Some(store) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            let _ = store.set_item(LINKS_MARK, &mark);
+        }
     }
     async fn machine_door_root(&self) -> Option<String> {
         crate::tools::machine_door_root(&crate::wasm::host::WasmHost::default()).await

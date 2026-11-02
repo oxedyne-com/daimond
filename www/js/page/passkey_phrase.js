@@ -1835,6 +1835,8 @@ export async function forgetIdentity() {
 			}
 		}
 	} catch (e) { /* OPFS may be unavailable */ }
+	// Every link sidecar went with it: no page may answer links from its index (U86).
+	if (window.DaimondFileLock) window.DaimondFileLock.linksChanged();
 
 	// The FSA reconnect handle, the machine folder ids it keys marks by (M2), and the
 	// write-ahead journal for this account, and — for a non-primary account — the registry

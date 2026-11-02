@@ -7,7 +7,7 @@ import { filesSyncable, nominatedDeviceId, parseSyncListing } from './parcel_col
 import { deviceLabelFor, isMobileDeviceSelf, peerSyncShim, selfDeviceId } from './handoff.js';
 import { PeerAgents, tools } from './workers.js';
 import { diag } from './passkey_phrase.js';
-import { attachedTruly, attachedTrulyAll, attachmentsOf, bind, clear, closePop, closePreview, curDir,
+import { attachedTruly, attachedTrulyAll, attachmentsOf, linksByDiamond, bind, clear, closePop, closePreview, curDir,
 	docFilling, fmtFileBytes, isOpen, joinPath, list, listNote, listed,
 	openFile, parseListing, pickListing, pvEl, relabelListing, renderCrumbs,
 	renderFocus, renderMode, machineFolderKept, retireMachineFolder, showLineNos, showModeMsg, showViewedFile, toggleAttach,
@@ -2261,11 +2261,15 @@ export function install() { // page-split: install
 		/// once and the set is the same on two devices that hold the same Diamonds.
 		shareRoots:    async function () {
 			var out = [];
+			// ONE read of the whole graph, not one per Diamond (U86): each ask read every sidecar.
+			var by = {};
+			try { by = linksByDiamond(JSON.parse(await diamondApp().all_links() || '[]')); }
+			catch (e) { by = {}; }
 			for (var i = 0; i < pg.diamonds.length; i++) {
 				var d = pg.diamonds[i];
 				if (!d || !d.id || trashed(d.id)) continue;
 				var list = [];
-				try { list = await attachmentsOf(d.id); } catch (e) { list = []; }
+				try { list = await attachmentsOf(d.id, by[d.id] || []); } catch (e) { list = []; }
 				list.forEach(function (a) {
 					if (a.here === false || !a.path) return;
 					// The flag, and not the mark. See above.

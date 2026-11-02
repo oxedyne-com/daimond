@@ -29,6 +29,14 @@
    before anything is opened. No page caller passes one.
 
    With no lock manager (an old browser), writes run unheld, as before.
+
+   THE LINKS MARK (U86, 2026-11-01). The wasm keeps one index of every
+   Diamond's links and trusts it while `localStorage['daimond-links-mark']`
+   stands where it read it (`diamond::indexed_links`). Every writer in the
+   origin passes here, so here a change that bears on a link sidecar
+   (`bearsOnLinks`, the wasm's `bears_on_links`) moves the mark once it
+   has landed: a fresh unique value, never a count, so two tabs moving it
+   at once still leave one neither held.
    ============================================================ */
 (function () {
 	'use strict';
@@ -69,6 +77,35 @@
 		}
 	}
 
+	/// The localStorage key of the links mark, shared with src/wasm/store_opfs.rs.
+	var LINKS_MARK = 'daimond-links-mark';
+	var linksMoves = 0;
+
+	/// Does a change at `path` bear on a link sidecar? The sidecar, its `.daimond` folder, the
+	/// Diamond's folder, `diamonds` itself or the root: src/store/diamond.rs `bears_on_links`.
+	function bearsOnLinks(path) {
+		var p = String(path).split('/').filter(function (c) { return c && c !== '.'; });
+		if (p.length === 0) return true;
+		if (p[0] !== 'diamonds') return false;
+		if (p.length <= 2) return true;
+		if (p.length === 3) return p[2] === '.daimond';
+		return p.length === 4 && p[2] === '.daimond' && p[3] === 'links.jsonl';
+	}
+
+	/// Move the links mark: every page's index of the links reads them again.
+	function linksChanged() {
+		try {
+			var ls = (typeof localStorage !== 'undefined' && localStorage) || null;
+			if (!ls) return;
+			linksMoves++;
+			ls.setItem(LINKS_MARK, 'page-' + Date.now() + '-' + Math.random().toString(36).slice(2)
+				+ '-' + linksMoves);
+		} catch (e) { /* no storage: the wasm reads afresh without a mark */ }
+	}
+
+	/// `linksChanged` where a change at `path` bears on a sidecar.
+	function landed(path) { if (bearsOnLinks(path)) linksChanged(); }
+
 	function manager() {
 		var n = (typeof navigator !== 'undefined' && navigator) || null;
 		var l = n && n.locks;
@@ -99,12 +136,15 @@
 	async function hold(root, path, fn) {
 		refuseUp(path);
 		var m = manager();
-		if (!m) return await fn();
+		// A held act may remove the file (cloud.js `removeLocal`): the mark moves after it, either way.
+		if (!m) { try { return await fn(); } finally { landed(path); } }
 		var ran = false;
 		try {
 			return await m.request(name(root, path), asking(), function () { ran = true; return fn(); });
 		} catch (e) {
 			throw ran ? e : refused(path, e);
+		} finally {
+			if (ran) landed(path);
 		}
 	}
 
@@ -137,13 +177,16 @@
 		catch (e) { giveBack(); throw e; }
 		return {
 			write: function (x) { return w.write(x); },
-			close: async function () { try { return await w.close(); } finally { giveBack(); } },
+			// The bytes land at `close`, so the links mark moves after it, never before.
+			close: async function () {
+				try { var r = await w.close(); landed(path); return r; } finally { giveBack(); }
+			},
 			abort: async function (why) { try { return await w.abort(why); } finally { giveBack(); } },
 			discard: async function (remove) {
 				if (given) { if (remove) return await hold(root, path, remove); return; }
 				try {
 					try { if (typeof w.abort === 'function') await w.abort(); } catch (e) { /* already gone */ }
-					if (remove) return await remove();
+					if (remove) { var r = await remove(); landed(path); return r; }
 				} finally { giveBack(); }
 			},
 		};
@@ -160,5 +203,6 @@
 		} catch (e) { return true; }
 	}
 
-	window.DaimondFileLock = { name: name, hold: hold, writable: writable, inside: inside, WAIT_MS: WAIT_MS };
+	window.DaimondFileLock = { name: name, hold: hold, writable: writable, inside: inside, WAIT_MS: WAIT_MS,
+		bearsOnLinks: bearsOnLinks, linksChanged: linksChanged };
 })();

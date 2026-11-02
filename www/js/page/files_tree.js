@@ -513,11 +513,33 @@ async function ownDirRows(id) {
 ///
 /// # Arguments
 /// * `id` - The Diamond, or '' for none.
-export async function attachmentsOf(id) {
+/// Every row of `all_links`, grouped by the Diamond each touches, each with its `other` end, as
+/// `links_touching('diamond:<id>')` answers for that Diamond alone: one read of the graph for a
+/// caller that asks of every Diamond (U86: `shareRoots` asked once per Diamond, and each ask
+/// read every sidecar).
+export function linksByDiamond(rows) {
+	var by = {};
+	function put(ref, l, other) {
+		if (typeof ref !== 'string' || ref.indexOf('diamond:') !== 0) return;
+		var id = ref.slice('diamond:'.length);
+		var row = Object.assign({}, l, { other: other });
+		(by[id] = by[id] || []).push(row);
+	}
+	(rows || []).forEach(function (l) {
+		put(l.from, l, l.to);
+		if (l.to !== l.from) put(l.to, l, l.from);
+	});
+	return by;
+}
+
+/// The attachments of the Diamond `id`, from `rows` where the caller has read them
+/// (`linksByDiamond`), else from its own read.
+export async function attachmentsOf(id, rows) {
 	var out = [];
 	if (!id) return out;
 	var links = [];
-	try {
+	if (Array.isArray(rows)) links = rows;
+	else try {
 		links = JSON.parse(await diamondApp().links_touching('diamond:' + id) || '[]');
 	} catch (e) { return out; }
 	var own = 'diamonds/' + id, seen = {};

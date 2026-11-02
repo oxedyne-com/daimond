@@ -75,14 +75,38 @@
 	// localStorage is namespaced per account by accounts.js, so these keys need
 	// no prefixing of their own.
 
+	var _kept = Object.create(null);		// localStorage key -> the parsed map (`kept`, below)
 	function readJson(key, fallback) {
 		try { return JSON.parse(localStorage.getItem(key) || 'null') || fallback; }
 		catch (e) { return fallback; }
 	}
 	function writeJson(key, val) {
+		if (_kept[key]) _kept[key] = val;
 		try { localStorage.setItem(key, JSON.stringify(val)); return true; }
 		catch (e) { return false; }		// quota: recomputed next round rather than corrupted.
 	}
+
+	// A DEVICE-LOCAL MAP IS PARSED ONCE, NOT ONCE PER LOOK (UNBLOCK-86, 2 Nov 2026). The held
+	// notes, the pins, the use times and the away paths are each one localStorage entry with a
+	// row per file, and a walk over N files (a pull's `localState` per shared entry, `touch`
+	// per fetched file, `isPinned` per adopted one) parsed the whole entry per file: N copies of
+	// an N-row map, which took gilgamesh's renderer from 0.44 to 1.79 GB on a 1.58 MB parcel.
+	// `kept` hands back the one parsed map; a caller changes it in place and writes it with
+	// `writeJson`, which keeps the copy current. Another tab's write (a `storage` event naming
+	// the key, under any account's prefix: accounts.js stores `d~<id>~<key>`) drops the copy.
+	function kept(key) {
+		if (!_kept[key]) _kept[key] = readJson(key, {});
+		return _kept[key];
+	}
+	try {
+		window.addEventListener('storage', function (e) {
+			var k = (e && typeof e.key === 'string') ? e.key : null;
+			if (k === null) { _kept = Object.create(null); return; }	// a clear: every key went
+			Object.keys(_kept).forEach(function (n) {
+				if (k === n || k.slice(-(n.length + 1)) === '~' + n) delete _kept[n];
+			});
+		});
+	} catch (e) { /* no window events (a worker or a test): this tab is the only writer */ }
 
 	// ── The index, backed by the durable store ─────────────────
 	// THE INDEX LEFT THE ~5 MiB BOX. It now lives in IndexedDB (durable.js), whose
@@ -412,8 +436,8 @@
 	/// has landed -- the state in which committing would sweep the parcel's own chunks.
 	function indexDurable() { return _durableMode ? !IXM.dirty : !indexDirty; }
 
-	function pins()       { return readJson(PIN_KEY, {}); }
-	function atimes()     { return readJson(ATIME_KEY, {}); }
+	function pins()       { return kept(PIN_KEY); }
+	function atimes()     { return kept(ATIME_KEY); }
 
 	// ── Content manifests, co-located under a reserved prefix ──────
 	// Diamonds and chats too large for the inline parcel are offloaded like a
@@ -1300,7 +1324,8 @@
 		return folder === true ? HELD_FOLDER_KEY : HELD_FOLDER_KEY + '@' + String(folder);
 	}
 
-	function heldMap(folder) { return readJson(heldKeyOf(folder), {}); }
+	// Kept parsed (`kept`): a pull's walk looks here once per file of the folder.
+	function heldMap(folder) { return kept(heldKeyOf(folder)); }
 
 	function heldOf(path, folder) {
 		var h = heldMap(folder)[path];
@@ -1590,7 +1615,7 @@
 	}
 
 	/// The paths in cloud storage that this device is not holding.
-	function awayPaths() { return readJson(PATHS_KEY, {}); }
+	function awayPaths() { return kept(PATHS_KEY); }
 
 	// ── Merging the index across devices ───────────────────────
 

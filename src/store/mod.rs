@@ -77,6 +77,15 @@ pub fn backend() -> Backend { Backend::default() }
 #[cfg(not(target_arch = "wasm32"))]
 pub fn backend() -> Backend { native::installed() }
 
+/// How a host vouches that a link sidecar read earlier is still what is stored (U86): the index
+/// of every Diamond's links (`diamond::indexed_links`) answers from memory only on its word.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinksCheck {
+    Mark(String),   // One mark every writer in the origin moves: unchanged, no sidecar did.
+    Stamp,          // Each sidecar's own (mtime, size), asked of the store per file.
+    Never,          // Nothing to vouch with: every sidecar is read afresh.
+}
+
 /// How a lock is asked for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LockHow {
@@ -166,6 +175,10 @@ pub trait StoreEnv {
     fn heap_mb() -> u32;
     /// Drop this device's press of the link `id` of the Diamond `owner`.
     fn forget_press(owner: &str, id: &str) -> Outcome<()>;
+    /// How a link sidecar read earlier is known to stand unchanged ([`LinksCheck`]).
+    fn links_check() -> LinksCheck;
+    /// A link sidecar, or a folder holding one, changed: move the mark, where the host keeps one.
+    fn links_changed();
     /// The root a paired machine hands out, where no folder is open and a hand holds its mark.
     async fn machine_door_root(&self) -> Option<String>;
 

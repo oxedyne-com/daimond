@@ -907,6 +907,9 @@ async fn stage(writable: &FileSystemWritableFileStream, file: &FileSystemFileHan
 /// # Arguments
 /// * `path` - The workspace-relative path that just changed.
 fn announce_change(path: &str) {
+    // Every change that lands passes here, whatever the root: one that bears on a link sidecar
+    // moves the origin's links mark (U86).
+    crate::store::diamond::links_wrote(path);
     let win = match web_sys::window() {
         Some(w) => w,
         None    => return,
