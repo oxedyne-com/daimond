@@ -202,6 +202,10 @@
 
 	/// Decode a base64 string to a Uint8Array.
 	function b64dec(str) {
+		// Straight into bytes where the engine can, with no binary string of the whole blob
+		// beside them: a pulled parcel is megabytes (UNBLOCK-86 fix 4). Both throw on a bad
+		// character (SyntaxError, InvalidCharacterError), which sync.js reads alike.
+		if (typeof Uint8Array.fromBase64 === 'function') return Uint8Array.fromBase64(String(str));
 		var bin = atob(String(str));
 		var out = new Uint8Array(bin.length);
 		for (var i = 0; i < bin.length; i++) {
@@ -440,14 +444,15 @@
 		return b64enc(out);
 	}
 
-	/// Decrypt a base64 `IV(12) || ciphertext` blob produced by seal().
+	/// Decrypt a base64 `IV(12) || ciphertext` blob produced by seal(), or those bytes
+	/// already decoded (sync.js hands over a pulled envelope's sealed part as bytes).
 	/// Rejects (throws) on a wrong key or tampered ciphertext — the
 	/// GCM authentication failure. Callers that treat that as "wrong
 	/// passphrase" must catch it rather than let it propagate.
 	async function open(key, b64) {
-		var buf = b64dec(b64);
+		var buf = (b64 instanceof Uint8Array) ? b64 : b64dec(b64);
 		var iv  = buf.slice(0, IV_BYTES);
-		var ct  = buf.slice(IV_BYTES);
+		var ct  = buf.subarray(IV_BYTES);		// a view: the ciphertext is not copied again
 		var pt  = await crypto.subtle.decrypt(
 			{ name: 'AES-GCM', iv: iv },
 			key,
@@ -2072,7 +2077,7 @@
 		requireUnlocked();
 		var buf = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
 		var pt = await crypto.subtle.decrypt(
-			{ name: 'AES-GCM', iv: buf.slice(0, IV_BYTES) }, _wrapKey, buf.slice(IV_BYTES));
+			{ name: 'AES-GCM', iv: buf.slice(0, IV_BYTES) }, _wrapKey, buf.subarray(IV_BYTES));
 		return new Uint8Array(pt);
 	}
 

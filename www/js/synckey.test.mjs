@@ -125,6 +125,9 @@ function makeTab(seed) {
 		posts: [],					// every body a push actually sent
 		gets: 0,
 		mailbox: null,				// what the gateway holds: { version, blob }
+		getQueries: [],				// the query of every mailbox GET, as the gateway saw it
+		unwraps: 0,					// parcels opened (decrypted) by this tab
+		honoursHave: false,			// the gateway leaves out a blob the reader says it holds
 	};
 
 	win.DaimondIdentity = {
@@ -132,7 +135,7 @@ function makeTab(seed) {
 		// What travels: the sealed parcel. Kept verbatim so the test can read back
 		// WHICH bytes were sent, which is how it tells the mask from a rewrite.
 		wrap: async (plain) => 'sealed:' + plain,
-		unwrap: async (blob) => String(blob).slice('sealed:'.length),
+		unwrap: async (blob) => { tab.unwraps++; return String(blob).slice('sealed:'.length); },
 		handle: () => '',
 		deviceId: () => SELF,
 	};
@@ -157,6 +160,13 @@ function makeTab(seed) {
 		gwFetch: async (path, opts) => {
 			if (!opts || opts.method === 'GET') {
 				tab.gets++;
+				const q = String(path || '').split('?')[1] || '';
+				tab.getQueries.push(q);
+				const have = /(?:^|&)have=(\d+)/.exec(q);
+				if (tab.mailbox && tab.honoursHave && have && +have[1] === tab.mailbox.version) {
+					return { status: 200, json: async () => ({ present: true, held: true,
+						version: tab.mailbox.version }) };
+				}
 				// THE MAILBOX HOLDS WHAT THIS TAB LAST SENT, at the version it landed
 				// at. An empty-mailbox answer would be wrong here and not merely thin:
 				// `present: false` zeroes the cursor (adoptVersion), and the skip in
@@ -597,7 +607,7 @@ console.log('\nF. the asker — its own dispatch parcel is never held behind its
 		third.posts.length === tb, (third.posts.length - tb) + ' POST(s) during the hand-off');
 }
 
-console.log('\nG. his own turn on a Kimberlite runner — his row leaves the device while it runs (UNBLOCK-86)\n');
+console.log('\nG. his own turn on a Kimberlite runner — his row leaves the device while it runs (UNBLOCK-91)\n');
 
 {
 	// OWNER PROVENANCE (1 Nov 2026, gilgamesh a7b34e2d5181, chat cmvxu4l4z-1-s3b5m): he sent
@@ -640,6 +650,180 @@ console.log('\nG. his own turn on a Kimberlite runner — his row leaves the dev
 	await third.win.DaimondSync.push();
 	check('G2. [ctl] a device the lease does not name as asker still stands off the turn',
 		third.posts.length === tb, (third.posts.length - tb) + ' POST(s) during the hand-off');
+}
+
+console.log('\nH. a version this device wrote or already holds is never pulled again (UNBLOCK-86)\n');
+
+{
+	// OWNER PROVENANCE (1 Nov 2026, gilgamesh a7b34e2d5181): `pull to 10781 from "Chrome on gi"`
+	// twelve times between 21:33 and 22:08, the version never moving, each 3.5-8.7 s: the whole
+	// sealed parcel (~2.1 MB) fetched, decrypted and parsed, only for the merge to be skipped as
+	// already adopted.
+	const tab = makeTab();
+	tab.unlocked = true;
+	tab.parcel = parcel({ selfSeen: 1000, chats: [{ id: 'cmvxu4l4z-1-s3b5m', messages: ['one'] }] });
+	await tab.win.DaimondSync.push();
+	await tab.win.DaimondSync.pull();		// the session's first read of the mailbox
+	tab.parcel = parcel({ selfSeen: 2000, chats: [{ id: 'cmvxu4l4z-1-s3b5m', messages: ['one', 'two'] }] });
+	await tab.win.DaimondSync.push();		// the mailbox now holds THIS device's own parcel
+	const v = tab.mailbox.version;
+	const u0 = tab.unwraps, g0 = tab.getQueries.length;
+	const got = await tab.win.DaimondSync.pull();
+	check('H1. its own version, read back on today\'s gateway, is not opened',
+		got === v && tab.unwraps === u0, 'pull answered ' + got + ' (mailbox v' + v + '), ' + (tab.unwraps - u0) + ' parcel(s) opened');
+	const q = tab.getQueries.slice(g0).join(' | ');
+	check('H2. the read tells the gateway which version it holds',
+		new RegExp('(^|&)have=' + v + '($|&)').test(q), 'GET query: ' + (q || '(none)'));
+	tab.honoursHave = true;
+	const u1 = tab.unwraps;
+	const got2 = await tab.win.DaimondSync.pull();
+	check('H3. a gateway that leaves the held blob out is answered without a parcel',
+		got2 === v && tab.unwraps === u1, 'pull answered ' + got2 + ', ' + (tab.unwraps - u1) + ' opened');
+	// The rule it keeps: a version another device wrote is opened and merged.
+	tab.mailbox = { version: v + 3, blob: 'sealed:' + JSON.stringify(parcel({ selfSeen: 2000, peerSeen: 3000 })) };
+	const u2 = tab.unwraps;
+	const got3 = await tab.win.DaimondSync.pull();
+	check('H4. [ctl] a newer version from another device is opened and adopted',
+		got3 === v + 3 && tab.unwraps === u2 + 1, 'pull answered ' + got3 + ', ' + (tab.unwraps - u2) + ' opened');
+}
+
+{
+	// OWNER PROVENANCE (1 Nov 2026, gilgamesh a7b34e2d5181): pushed 10777 after a crash-boot, then at
+	// 21:21:29 pulled 10777 whole (2.5 s) before its next push. A folder-mounted device whose chunk index
+	// is never known whole is owed a merge of the index once per version (`syncIndexOwed`), and that merge
+	// skipped the held-version check -- so it re-read the parcel it had just written, which can make
+	// nothing whole: what it holds is its own index, as collected.
+	const tab = makeTab();
+	tab.unlocked = true;
+	tab.win.DaimondCore.syncIndexOwed = async () => true;		// an index never whole
+	tab.parcel = parcel({ selfSeen: 1000, chats: [{ id: 'c1', messages: ['one'] }] });
+	await tab.win.DaimondSync.push();
+	tab.parcel = parcel({ selfSeen: 2000, chats: [{ id: 'c1', messages: ['one', 'two'] }] });
+	const u0 = tab.unwraps, g0 = tab.gets;
+	await tab.win.DaimondSync.push();
+	check('H5. a device owing its index a merge does not re-read the version it just pushed',
+		tab.unwraps === u0 && tab.gets === g0, (tab.unwraps - u0) + ' parcel(s) opened, ' + (tab.gets - g0) + ' GET(s)');
+	// The rule it keeps: another device's version is merged again for the index, once.
+	tab.mailbox = { version: tab.mailbox.version + 3, blob: 'sealed:' + JSON.stringify(parcel({ selfSeen: 2000, peerSeen: 3000 })) };
+	await tab.win.DaimondSync.pull();
+	const u1 = tab.unwraps;
+	tab.parcel = parcel({ selfSeen: 3000, chats: [{ id: 'c1', messages: ['one', 'two', 'three'] }] });
+	await tab.win.DaimondSync.push();
+	check('H6. [ctl] another device\'s version is still merged again for an index not whole',
+		tab.unwraps === u1 + 1, (tab.unwraps - u1) + ' parcel(s) opened');
+}
+
+console.log('\nK. a section the core sends as null is the device\'s own, never "carried" (UNBLOCK-86 fix 3)\n');
+
+{
+	// gilgamesh re-sent its unchanged parcel after a reload and after reading a version back whole. The core
+	// sends `avatars: null` on an account with no chosen icons; sync.js did not list `avatars` as a section it
+	// knows, so the merge of a whole parcel filed it as CARRIED (another build's section riding on), and the
+	// key then skipped it (`null === null`): the key moved with nothing changed, and the push went.
+	const own = () => Object.assign(parcel({ selfSeen: 1000, chats: [{ id: 'c1', messages: ['one'] }] }), { avatars: null, perms: null });
+	const tab = makeTab();
+	tab.unlocked = true;
+	tab.parcel = own();
+	await tab.win.DaimondSync.push();
+	await tab.win.DaimondSync.pull();
+	const n0 = tab.posts.length;
+	// A version read back whole: the same account at the next version (another device's push of it, or this
+	// device's own read with the held-version skip not taking).
+	tab.mailbox = { version: tab.mailbox.version + 1, blob: tab.mailbox.blob };
+	await tab.win.DaimondSync.pull();
+	tab.parcel = own();
+	await tab.win.DaimondSync.push();
+	check('K1. after a whole read of the unchanged account, the push sends nothing', tab.posts.length === n0,
+		(tab.posts.length - n0) + ' POST(s)');
+	// A reload: the boot pull merges the mailbox before this page has collected anything.
+	const tab2 = makeTab(tab.store);
+	tab2.unlocked = true;
+	tab2.mailbox = tab.mailbox;
+	tab2.parcel = own();
+	await tab2.win.DaimondSync.pull();
+	await tab2.win.DaimondSync.push();
+	check('K2. after a reload and its boot pull, the push sends nothing', tab2.posts.length === 0, tab2.posts.length + ' POST(s)');
+	// The rule stays: a section this build does not produce rides on and is not news.
+	const tab3 = makeTab(tab.store);
+	tab3.unlocked = true;
+	tab3.mailbox = { version: tab.mailbox.version, blob: 'sealed:' + JSON.stringify(Object.assign(own(), { zeta: { from: 'newer' } })) };
+	tab3.parcel = own();
+	await tab3.win.DaimondSync.pull();
+	await tab3.win.DaimondSync.push();
+	check('K3. [ctl] a newer build\'s unknown section is still carried, and is not news', tab3.posts.length === 0, tab3.posts.length + ' POST(s)');
+}
+
+console.log('\nS. the push sensor — each push names the sections that moved since the last landing (UNBLOCK-86)\n');
+
+{
+	const tab = makeTab();
+	tab.unlocked = true;
+	const S = tab.win.DaimondSync;
+	const T = S.forTest;
+	// The key is built section by section, and must be the very bytes the guard compared before.
+	const p0 = Object.assign(parcel({ selfSeen: 1000 }), { chunkedFrom: 7, chunkedOld: undefined, diamonds: [{ id: 'd1' }] });
+	const old = (st) => { const o = {}; Object.keys(st).forEach((k) => { if (k !== 'chunkedFrom') o[k] = k === 'devices'
+		? Object.fromEntries(Object.entries(st.devices).map(([id, l]) => [id, Object.assign({}, l, { seen: 0 })])) : st[k]; });
+		return JSON.stringify(o); };
+	check('S1. the key is unchanged by being built in sections', T.compareKey(p0) === old(p0) && T.compareParts(p0).key === old(p0));
+	check('S1. and a parcel with nothing to mask is still its own JSON', T.compareKey({ v: 3, chats: [], x: undefined }) === JSON.stringify({ v: 3, chats: [] }));
+	const events = [];
+	tab.win.DEBUG_SHARE = { event: (kind, payload) => { events.push([kind, payload]); return true; } };
+	const landed = () => events.filter((e) => e[0] === 'sync' && e[1] && e[1].dir === 'push' && e[1].to).map((e) => e[1]);
+	tab.parcel = Object.assign(parcel({ selfSeen: 1000 }), { diamonds: [{ id: 'd1', title: 'x' }] });
+	await S.push();
+	tab.parcel = Object.assign(parcel({ selfSeen: 2000 }), { diamonds: [{ id: 'd1', title: 'x' }], ledger: [{ at: 1 }] });
+	await S.push();
+	const ev = landed();
+	check('S2. the first push has no record to compare with, and says so', ev.length === 2 && ev[0].moved === '?' && ev[0].vs === 'none',
+		ev.length ? JSON.stringify({ moved: ev[0].moved, vs: ev[0].vs }) : 'no event');
+	check('S3. the next names only the section that changed (a moved `seen` is not one)', ev.length === 2
+		&& JSON.stringify(ev[1].moved) === '["ledger"]' && ev[1].vs === 'key', ev.length > 1 ? JSON.stringify({ moved: ev[1].moved, vs: ev[1].vs }) : '');
+	check('S4. the Diamonds\' size rides as `dd`, clear of the feed\'s device field `d`', ev.length > 0 && ev[0].dd > 0 && ev[0].d === undefined,
+		ev.length ? 'dd=' + ev[0].dd + ' d=' + ev[0].d : '');
+	// A fresh page in the same browser: the record survives, so a reload's push still names what moved.
+	const tab2 = makeTab(tab.store);
+	tab2.unlocked = true;
+	const ev2 = [];
+	tab2.win.DEBUG_SHARE = { event: (kind, payload) => { ev2.push([kind, payload]); return true; } };
+	tab2.mailbox = tab.mailbox;
+	tab2.parcel = Object.assign(parcel({ selfSeen: 3000 }), { diamonds: [{ id: 'd1', title: 'y' }], ledger: [{ at: 1 }] });
+	await tab2.win.DaimondSync.push();
+	const l2 = ev2.filter((e) => e[0] === 'sync' && e[1] && e[1].dir === 'push' && e[1].to).map((e) => e[1]);
+	check('S5. across a reload the record is read back, and names the section that moved', l2.length === 1
+		&& JSON.stringify(l2[0].moved) === '["diamonds"]', l2.length ? JSON.stringify({ moved: l2[0].moved, vs: l2[0].vs }) : 'no landed push');
+}
+
+console.log('\nM. a pulled parcel is decoded once, and only an envelope is (UNBLOCK-86 fix 4)\n');
+
+{
+	// gilgamesh's renderer rose 0.44 -> 1.79 GB over a pull of another device's 1.5 MB parcel. `openEnvelope` decoded
+	// every blob whole to look at its first four bytes, and for an envelope sliced the sealed part off and encoded it
+	// back to base64, for the open to decode it a second time. The REAL functions, lifted out of sync.js.
+	const src = readPage(join(HERE, 'sync.js'), 'utf8');
+	const lift = (re, what) => { const m = re.exec(src); if (!m) throw new Error('synckey.test: ' + what + ' not found in sync.js'); return m[0]; };
+	const code = lift(/\n\tvar DRK_B0 = [^\n]*\n/, 'DRK_B0')
+		+ lift(/\n\tfunction b64FromBytes\([\s\S]*?\n\t\}\n/, 'b64FromBytes')
+		+ lift(/\n\tfunction bytesFromB64\([\s\S]*?\n\t\}\n/, 'bytesFromB64')
+		+ lift(/\n\tfunction openEnvelope\([\s\S]*?\n\t\}\n/, 'openEnvelope');
+	const decoded = [];		// the length of every base64 input decoded
+	const countingAtob = (x) => { decoded.push(String(x).length); return atob(x); };
+	const openEnv = new Function('atob', 'btoa', 'TextDecoder', 'return (function(){' + code + 'return openEnvelope; })()')(countingAtob, btoa, TextDecoder);
+	const sealed = Buffer.alloc(200000, 7);
+	sealed[0] = 1;		// a legacy IV that is not 'DRK1'
+	const legacy = sealed.toString('base64');
+	const got = openEnv(legacy);
+	check('M1. a legacy blob is not decoded to find it has no envelope', got.sealed === legacy && got.rec === null
+		&& Math.max(0, ...decoded) <= 12, 'decoded input lengths: ' + JSON.stringify(decoded));
+	const rec = Buffer.from(JSON.stringify({ v: 1, epoch: 2, salt: 's' }));
+	const hdr = Buffer.from([68, 82, 75, 49, (rec.length >>> 24) & 255, (rec.length >>> 16) & 255, (rec.length >>> 8) & 255, rec.length & 255]);
+	decoded.length = 0;
+	const env = openEnv(Buffer.concat([hdr, rec, sealed]).toString('base64'));
+	const bytes = env.sealed instanceof Uint8Array;
+	check('M2. an envelope\'s sealed part is handed on as its bytes, not encoded back to base64',
+		env.rec && env.rec.epoch === 2 && bytes && Buffer.from(env.sealed).equals(sealed),
+		'sealed is ' + (bytes ? 'bytes (' + env.sealed.length + ')' : typeof env.sealed + ' (' + String(env.sealed).length + ')'));
+	check('M3. [ctl] and the whole blob is decoded once', decoded.filter((n) => n > 12).length === 1, 'decoded input lengths: ' + JSON.stringify(decoded));
 }
 
 console.log(failures ? '\n' + failures + ' FAILED\n' : '\nall push-skip and parcel-size checks passed\n');

@@ -452,6 +452,17 @@ function poisonEngine(why) {
 var _thrown = 0;                            // uncaught rejections this sitting
 // page-split: install 58
 
+/// A chat or a Diamond is chosen: the conversation is what shows. On a phone that is
+/// the turn page, through `mshow`. At a desktop width the floor shows it already, beside
+/// the rail, and the phone's stack is put away: it keeps the turn page, so a window that
+/// narrows stands on the conversation it was showing. A phone turned to landscape is
+/// such a width (780-932 px): a chat opened there came back in portrait under the home
+/// page, and a tap on Send landed on the rail (SEND-COVER, UNBLOCK-93).
+export function showChosen() {
+	if (isMobile()) { mshow('ai'); return; }
+	if (DaimondStack.away()) DaimondStack.push('turn');
+}
+
 // And when it does NOT move on its own. A balance can change outside this tab -- an
 // auto-reload top-up, a purchase on the phone, an operator adjustment -- and nothing here
 // would hear it. So the app asks, but only when it is idle and at most once a minute: a

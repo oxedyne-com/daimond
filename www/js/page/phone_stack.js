@@ -92,6 +92,8 @@ export function newStack(win) {
 		adopt(st && Array.isArray(st.stack) && st.stack[0] === name ? st : null, '');
 		if (hist) hist.replace(entry());
 		at = stack.slice();
+		// A window that opened wide and has now narrowed: what it opened there goes on over the floor.
+		if (waiting) { const ps = waiting; waiting = null; lay(ps); }
 	}
 
 	// History follows the stack. `at` is the stack of the entry history stands on. The
@@ -152,17 +154,32 @@ export function newStack(win) {
 	// A wider window has no stack (QA ccp29 F7): history goes back to the floor's
 	// entry, so the desktop's Back is never spent on a page it does not show, and the
 	// pages above are kept to come back when the window narrows again.
+	//
+	// WHILE IT IS PUT AWAY, A PUSH IS KEPT, NOT SHOWN (SEND-COVER, UNBLOCK-93). A chat
+	// opened at a desktop width is a page the phone must stand on when the window
+	// narrows: a phone turned to landscape (780-932 px) is such a width. Kept only
+	// when pushed on the phone, the chat opened in landscape came back in portrait
+	// under the home page, and a tap on Send landed on the rail. So a push while put
+	// away is recorded as a push on the phone is (the floor clears what is above it,
+	// a page already kept is gone back to), and laid on when the window narrows. A
+	// window that opens wide is put away before the stack has begun: what it keeps
+	// waits for the floor (`begin`).
 	let parked = null;	// [name, opts] above the floor, while put away
+	let waiting = null;	// the same, handed to a stack whose floor is not yet down
 	function park() {
-		if (!root || parked) return;
+		if (parked) return;
 		parked = stack.slice(1).map((n) => [n, opts[n] || {}]);
+		if (!root) return;
 		if (stack.length > 1) back(stack.length - 1);
 		else show('');
 	}
-	function unpark() {
-		if (!root || !parked) return;
-		const ps = parked;
-		parked = null;
+	function keep(name, o) {
+		if (name === root) { parked.length = 0; return; }
+		const at = parked.findIndex(([n]) => n === name);
+		if (at >= 0) { parked.length = at + 1; if (o) parked[at][1] = o; return; }
+		parked.push([name, o || {}]);
+	}
+	function lay(ps) {
 		for (const [n, o] of ps) if (pages.has(n) && stack.indexOf(n) < 0) {
 			opts[n] = o;
 			stack.push(n);
@@ -170,6 +187,13 @@ export function newStack(win) {
 		}
 		show('push');
 		move();
+	}
+	function unpark() {
+		if (!parked) return;
+		const ps = parked;
+		parked = null;
+		if (!root) { waiting = ps; return; }
+		lay(ps);
 	}
 
 	return {
@@ -180,6 +204,7 @@ export function newStack(win) {
 		push(name, o) {
 			const p = pages.get(name);
 			if (!p) throw new Error('DaimondStack.push: no page "' + name + '" is registered');
+			if (parked) { keep(name, o); return p.el; }	// put away: kept for the narrow window, not shown
 			if (!root) { if (o) opts[name] = o; begin(name); return p.el; }
 			const at = stack.indexOf(name);
 			// A page already on the stack is gone back to, never shown twice.
@@ -216,6 +241,10 @@ export function newStack(win) {
 		/// Put the stack away at a wider width, and bring it back (phone_home.js).
 		park,
 		unpark,
+		/// Is it put away (a desktop width), keeping what is pushed for the narrow window?
+		away() {
+			return !!parked;
+		},
 		/// Begin with `name` as the floor, or where the history entry left off (a reload).
 		start(name) {
 			if (!pages.has(name)) throw new Error('DaimondStack.start: no page "' + name + '" is registered');

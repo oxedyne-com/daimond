@@ -11,7 +11,7 @@ import { _sharedClients, moveComposerTo, peerHeldTurns, sendUserMessage, syncCom
 import { journalQueue, renderQueue, resumeQueue, stopGeneration } from './steer.js';
 import { WORKERS_PAUSED_KEY, Workers } from './workers.js';
 import { Files } from './files_view.js';
-import { DaimondPanels, isMobile, mshow, tel, turnsIn, viewNow } from './layout.js';
+import { DaimondPanels, showChosen, tel, turnsIn, viewNow } from './layout.js';
 import { commitFold, foldEnvelope, signalDiamondChanged, signalLinksChanged } from './links.js';
 import { diag, toast } from './passkey_phrase.js';
 import { _renderingHistory, appendError, appendNote, buildTile, idCopyBtn, nearBottom, postToChat,
@@ -401,7 +401,7 @@ export function newChat() {
 	persistChats();
 	selectChat(chat);
 	renderSessionList();
-	if (isMobile()) mshow('ai');
+	showChosen();
 }
 
 /// Confirm a pending chat's model -- and its workers' model -- and activate it so it can take

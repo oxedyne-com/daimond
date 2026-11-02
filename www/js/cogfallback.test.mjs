@@ -76,6 +76,7 @@ function mkEl(tag) {
 			return out;
 		};
 		Object.defineProperty(el, 'innerHTML', { set: () => { el.children = []; el._chosen = null; }, get: () => '' });
+		el.replaceChildren = (...cs) => { el.children = []; el._chosen = null; cs.forEach((c) => el.appendChild(c)); };
 		el.querySelectorAll = () => all();
 		el.querySelector = () => all().find((o) => !o.disabled) || null;
 		Object.defineProperty(el, 'selectedOptions', {
@@ -131,6 +132,8 @@ win.fetch = async () => ({
 });
 
 const sel = () => mkEl('select');
+// A closed pulldown holds only its choice (U86-MEM); the list it offers is drawn as its picker opens.
+const fill = (s, provider, model) => { M.fillSelect(s, provider, model); M.fullSelect(s); };
 const opts = (s) => s.options();
 const chosen = (s) => s.selectedOptions[0] || null;
 
@@ -144,10 +147,14 @@ async function main() {
 	// ── (c) LISTED IS UNCHANGED ────────────────────────────────
 	console.log('(c) a model that is offered is selected, and nothing else is drawn');
 	const sBase = sel();
-	M.fillSelect(sBase, '', '');
+	fill(sBase, '', '');
 	const baseCount = opts(sBase).length;
+	const sClosed = sel();
+	M.fillSelect(sClosed, 'fw', 'm-other');
+	check('closed, the pulldown holds only its choice',
+		opts(sClosed).length === 1 && chosen(sClosed) && chosen(sClosed).value === 'm-other', opts(sClosed).length + ' option(s)');
 	const sListed = sel();
-	M.fillSelect(sListed, 'fw', 'm-other');
+	fill(sListed, 'fw', 'm-other');
 	check('the listed model is the selection',
 		!!chosen(sListed) && chosen(sListed).value === 'm-other' && chosen(sListed).dataset.provider === 'fw');
 	check('no kept option is drawn', !opts(sListed).some((o) => o.dataset.kept === '1'));
@@ -163,7 +170,7 @@ async function main() {
 	// ── (a) KEPT ───────────────────────────────────────────────
 	console.log('(a) a saved model that is not offered stays the selection');
 	const sGone = sel();
-	M.fillSelect(sGone, 'fw', 'm-gone');
+	fill(sGone, 'fw', 'm-gone');
 	const kept = chosen(sGone);
 	check('the selection is the saved model', !!kept && kept.value === 'm-gone',
 		kept ? kept.value : 'none');
@@ -181,7 +188,7 @@ async function main() {
 
 	console.log('(a′) the same when the saved provider is gone');
 	const sNoProv = sel();
-	M.fillSelect(sNoProv, 'removed-provider', 'm-star');
+	fill(sNoProv, 'removed-provider', 'm-star');
 	const k2 = chosen(sNoProv);
 	check('a model named for a provider that is not listed is kept, not swapped for the starred one',
 		!!k2 && k2.dataset.kept === '1' && k2.dataset.provider === 'removed-provider' && k2.value === 'm-star');

@@ -12,7 +12,7 @@ import { queueBadge, renderQueue, resumeSteerQueue } from './steer.js';
 import { PeerAgents, Workers } from './workers.js';
 import { Files } from './files_view.js';
 import { DaimondAdmin } from './admin.js';
-import { DaimondPanels, _origins, isMobile, mshow, tel } from './layout.js';
+import { _origins, DaimondPanels, isMobile, mshow, showChosen, tel } from './layout.js';
 import { signalDiamondChanged } from './links.js';
 import { toast } from './passkey_phrase.js';
 import { renderHistory } from './turns.js';
@@ -1524,7 +1524,7 @@ function diamondBox(f) {
 	if (meterRow.firstChild) box.appendChild(meterRow);
 	box.addEventListener('click', function () {
 		selectDiamond(f);
-		if (isMobile()) mshow('ai');
+		showChosen();
 	});
 	// Last, so every span this tile is made of is already in it.
 	paintTileColour(box, f.id);
@@ -2335,7 +2335,7 @@ export async function createDiamond() {
 		noticeDialog(t('rail.created_unreadable'),
 			t('rail.created_unreadable_body', { name: name }));
 	}
-	if (isMobile()) mshow('ai');
+	showChosen();
 }
 
 /// Put the rail's tag filter and its search down. Nothing is remembered: a

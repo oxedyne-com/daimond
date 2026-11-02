@@ -68,7 +68,7 @@ function device(src, name, skew) {
 	const env = {
 		window: window, Date: FakeDate,
 		diag: function () {}, tel: function () {}, persistChats: function () {}, selectChat: function () {},
-		renderSessionList: function () {}, isMobile: function () { return false; }, mshow: function () {},
+		renderSessionList: function () {}, isMobile: function () { return false; }, mshow: function () {}, showChosen: function () {},
 		renderPendingCentre: function () {}, openSettings: function () {}, t: function (k) { return k; },
 		slimMessages: function (m) { return m || []; },
 		mergeMessages: function (l, r) {

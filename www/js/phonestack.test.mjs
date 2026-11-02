@@ -377,3 +377,56 @@ test('(q) a step back is cut at the floor, and a reload above it rewrites the en
 	H.push({ x: 1 }); H.push({ x: 2 });
 	assert.equal(H.go(-5), -2, 'cut to the two pushes above the floor');
 });
+
+// ── SEND-COVER (UNBLOCK-93): a push while the stack is put away is kept for the narrow window ──
+// A chat opened at a desktop width (a phone turned to landscape is 780-932 px) came back in portrait
+// under the home page: the stack kept only what was pushed on the phone, so it narrowed to [home]
+// and a tap on Send landed on the rail.
+
+test('(r) a page pushed while put away is not shown, and comes back over home when the window narrows', () => {
+	const { s, win } = freshIn();
+	s.on('turn', () => {});
+	s.start('home');
+	s.park();
+	s.push('turn');
+	assert.equal(s.top(), 'home', 'a desktop width shows no page of the stack');
+	assert.deepEqual(win.history.state.stack, ['home'], 'and history is not moved for it');
+	s.unpark();
+	assert.deepEqual(s.pages(), ['home', 'turn']);
+	assert.deepEqual(win.history.state.stack, ['home', 'turn'], 'the turn page is a history entry of its own');
+	win.history.back();
+	assert.equal(s.top(), 'home', 'so Back goes home');
+});
+
+test('(s) a window that opens wide keeps what it opens until the floor is down, then lays it on', () => {
+	const { s, win } = freshIn();
+	s.on('turn', () => {});
+	s.park();					// phone_home.js at a desktop width, before any push
+	assert.equal(s.started(), false);
+	assert.equal(s.away(), true);
+	s.push('turn');
+	assert.equal(s.started(), false, 'a push while put away does not begin the stack');
+	s.unpark();
+	s.push('home');				// phone_home.js lays the floor
+	assert.deepEqual(s.pages(), ['home', 'turn']);
+	assert.equal(s.top(), 'turn');
+	win.history.back();
+	assert.equal(s.top(), 'home');
+});
+
+test('(t) while put away, the floor clears what is above it, and a page already kept is gone back to', () => {
+	const { s } = freshIn();
+	s.on('turn', () => {});
+	s.start('home');
+	s.push('turn');
+	s.park();
+	s.push('settings');
+	s.push('turn');				// back to it: settings goes
+	s.unpark();
+	assert.deepEqual(s.pages(), ['home', 'turn']);
+	s.park();
+	s.push('home');
+	s.unpark();
+	assert.deepEqual(s.pages(), ['home']);
+	assert.equal(s.away(), false);
+});

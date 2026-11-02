@@ -3,7 +3,7 @@ import { DEFAULT_REL_SUGGESTIONS, REL_MAX, pg } from './state.js';
 import { friendlyError, t, tn } from './util.js';
 import { bumpDiamonds, persistChats, touchChatMeta } from './chatstore.js';
 import { Workers } from './workers.js';
-import { isMobile, mshow } from './layout.js';
+import { showChosen } from './layout.js';
 import { DaimondTerm } from './termpanel.js';
 import { confirmDialog, noticeDialog } from './consent.js';
 import { renderSessionList } from './tilestyle.js';
@@ -215,7 +215,7 @@ function linkRow(l, selfRef) {
 		var f = diamondOfRef(l.other);
 		if (!f) { noticeDialog(t('link.gone'), t('link.gone_body', { ref: l.other })); return; }
 		selectDiamond(f);
-		if (isMobile()) mshow('ai');
+		showChosen();
 	});
 
 	var phrase = document.createElement('div');

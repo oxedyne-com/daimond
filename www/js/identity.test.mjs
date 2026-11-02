@@ -162,6 +162,9 @@ async function main() {
 		check('the unlock was announced to the app', u.fired.includes('daimond:unlock'));
 		check('the restored key opens what the typed one sealed',
 			(await u.ID.unwrap(sealed)) === 'the BYOK key this account holds');
+		// UNBLOCK-86 fix 4: sync.js hands a pulled envelope's sealed part over as its bytes, not re-encoded.
+		check('and opens the same parcel handed over as its bytes',
+			(await u.ID.unwrap(Uint8Array.from(Buffer.from(sealed, 'base64')))) === 'the BYOK key this account holds');
 		check('it can sign, so the signing key came back too',
 			typeof (await u.ID.sign('anything')) === 'string');
 		// The fingerprint is a RENDERING the wasm bridge draws, and there is no bridge

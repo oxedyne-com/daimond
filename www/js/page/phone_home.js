@@ -28,10 +28,12 @@ export function install() {
 
 	function place() {
 		if (isMobile()) {
+			// Brought back first: what the wide window opened (a chat, a Diamond) goes on over
+			// home, which is laid as the floor here when the window opened wide (phone_stack.js).
+			DaimondStack.unpark();
 			const home = DaimondStack.top() ? document.querySelector('#phone-stack > [data-page="home"]')
 				: DaimondStack.push('home');
 			if (home && rail.parentNode !== home) home.appendChild(rail);
-			DaimondStack.unpark();
 		} else {
 			if (seat.nextSibling !== rail) seat.parentNode.insertBefore(rail, seat.nextSibling);
 			DaimondStack.park();

@@ -85,10 +85,16 @@ const BREAKS = {
 		what: 'the footer strip scrolls a chip in with no padding, so it stands under the fade' },
 	// Showing a destination no longer pushes the turn page (`mshow`, page/layout.js), as the drawer's close once went
 	// missing on 5.2.8; that takes the sheet guests with it, as an Admin prompt row did before gatefix moved it up.
-	drawer: { section: 'DR', file: 'js/daimond.js',
-		from: "\tif (DaimondStack.started() && isMobile()) DaimondStack.push('turn');\n\t// A guest rises as a sheet;",
+	drawer: { section: 'DR', file: 'js/page/layout.js',
+		from: "\tif (DaimondStack.started() && isMobile() && !restore) DaimondStack.push('turn');\n\t// A guest rises as a sheet;",
 		to:   '\t// A guest rises as a sheet;',
 		what: 'showing a destination leaves the home page over it' },
+	// A chat chosen at a desktop width is not kept for the phone's stack, as before SEND-COVER: a phone turned to
+	// landscape to open a chat comes back to portrait on the home page, over the chat and its Send.
+	turned: { section: 'DR', file: 'js/page/layout.js',
+		from: "\tif (DaimondStack.away()) DaimondStack.push('turn');\n}",
+		to:   '}',
+		what: 'a chat opened at a desktop width is not kept for the narrow window' },
 	// `openPop` no longer hides the other popovers, as before QA1 F1: the mode chip and "more" stand open together.
 	pops:   { section: 'HP', file: 'js/workspace.js',
 		from: '\t\tdismissPops(pop);\n\t\tpop.hidden = false;',
@@ -940,6 +946,31 @@ await section('DR', async () => {
 	await tap(sel); await sleep(500);
 	check(`DR: a tap that chooses nothing (${sel}) leaves home in view`, await drawerIs(true));
 	await tap(sel); await sleep(300);
+	await closeDrawer();
+	// A phone turned to landscape is a desktop width (780-932 px): a chat opened there is the page it stands on when it is
+	// turned back, and a tap on Send lands on Send. The stack kept only what was pushed on the phone, so the chat came back
+	// under the home page and the tap landed on the rail (SEND-COVER, UNBLOCK-93; red in every postgate since CCP29).
+	for (const [pw, ph] of [[360, 780], [390, 844], [430, 932]]) {
+		await S.page.setViewportSize({ width: pw, height: ph }); await sleep(500);
+		await goHome();
+		await S.page.setViewportSize({ width: ph, height: pw }); await sleep(700);
+		const row = await ev(() => {
+			const b = [...document.querySelectorAll('#session-list .session-box .tile-label')].find((e) => e.getClientRects().length);
+			if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+		});
+		need(row, `no chat row on the rail at ${ph}x${pw}`);
+		await S.page.touchscreen.tap(row.x, row.y); await sleep(900);
+		await S.page.setViewportSize({ width: pw, height: ph }); await sleep(900);
+		const turned = await ev(() => {
+			const b = document.getElementById('chat-send'), r = b && b.getBoundingClientRect();
+			const h = r && r.width ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
+			return { top: window.DaimondStack.top(), stack: history.state && history.state.stack, send: !!h && b.contains(h),
+				hit: h ? h.tagName.toLowerCase() + '.' + String(h.className || '').trim().split(/\s+/).join('.') : null };
+		});
+		check(`DR: a chat opened with the phone turned to landscape (${ph}x${pw}) is the turn page when turned back to ${pw}x${ph}, and a tap on Send lands on Send`,
+			turned.top === 'turn' && J(turned.stack) === J(['home', 'turn']) && turned.send, J(turned));
+	}
+	await S.page.setViewportSize({ width: 390, height: 844 }); await sleep(600);
 	await closeDrawer();
 	// Installed (fix 8 of the Stack review): Playwright cannot emulate `display-mode`, so iOS's own signal,
 	// `navigator.standalone`, is stubbed before the page loads; a left-edge touch swipe on the turn page must be a

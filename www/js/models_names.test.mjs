@@ -42,6 +42,8 @@ class El {
 	constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.dataset = {}; this.textContent = ''; }
 	get firstChild() { return this.children[0] || null; }
 	set innerHTML(v) { this.children = []; }
+	get selectedOptions() { return this.options().filter((o) => o.selected); }
+	replaceChildren(...cs) { this.children = cs; }
 	appendChild(c) { this.children.push(c); return c; }
 	insertBefore(c, ref) { const i = this.children.indexOf(ref); this.children.splice(i < 0 ? 0 : i, 0, c); return c; }
 	options() { return this.children.flatMap((c) => c.tagName === 'OPTION' ? [c] : c.options()); }

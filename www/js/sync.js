@@ -299,6 +299,7 @@
 	// prefix as the two above and for the same reason: accounts.js namespaces
 	// every one of these, so a second account answers its own question.
 	var K_SIG     = 'daimond-sync-sig';
+	var K_SECS    = 'daimond-sync-secs';	// pushedSecs (above), namespaced by accounts.js as K_SIG is
 	// What this build writes into it. A stored value that does not say this is
 	// from another format and reads as no fixed point at all -- which sends.
 	//
@@ -333,6 +334,11 @@
 	// left from an earlier run of this build (daimond.js `syncIndexOwed`).
 	var upgradedAt    = -1;
 	var lastPushed    = null;	// comparison key of the state last pushed (see compareKey).
+	// THE PUSH SENSOR (UNBLOCK-86): a digest of each section of the key that last LANDED, kept on disk
+	// (K_SECS) and never cleared with `lastPushed`, so every push event names the sections that moved
+	// since (`moved`), across a reload, a heal or a re-key too. An empty `moved` on a push is a send
+	// with nothing changed: the guard was reset, not fed a new field.
+	var pushedSecs    = null;
 	// SECTIONS A PARCEL LOSES, AND SECTIONS THIS BUILD DOES NOT KNOW (review fix 5, 2026-10-16).
 	// An older build collects only what it knows, so its push dropped a newer section
 	// (`alerts`) from the mailbox and nothing put it back. Two rules, for every section:
@@ -340,7 +346,9 @@
 	// `pulledLacks`); CARRY -- a pulled section this build does not know rides on verbatim
 	// in its pushes (`carried`) and is never itself news (compareKey skips it).
 	// Fixed in code, never derived from one collect: a known section legitimately left out of a round (`post`, whose refs keep chunks alive) must never be echoed back.
-	var KNOWN_SECTIONS = ['alerts', 'calendar', 'chats', 'chunked', 'chunkedFrom', 'chunkedFull',
+	// `avatars` was missing (UNBLOCK-86 fix 3): a whole read then filed the core's `avatars: null` as carried, the key
+	// skipped it, and an unchanged account was pushed again after every reload.
+	var KNOWN_SECTIONS = ['alerts', 'avatars', 'calendar', 'chats', 'chunked', 'chunkedFrom', 'chunkedFull',
 		'chunkedOld', 'chunkedTombs', 'chunks', 'debugShare', 'dev', 'devices', 'deviceTombs',
 		'diamonds', 'diamondsComplete', 'diamondTombs', 'files', 'filesComplete', 'fileTombs',
 		'fileTombsStamped', 'ledger', 'left', 'mail', 'models', 'msgTombs', 'nominated', 'own',
@@ -491,6 +499,9 @@
 	// The version this session last merged again because the index was not known whole
 	// (push()), so a device that stays so pays one extra read per version, never per round.
 	var wholeTriedAt  = -1;
+	// The version this page's own push last landed at, or -1. Its parcel is this device's own
+	// state, index included, so merging it again for the index can make nothing whole (UNBLOCK-86).
+	var wroteAt       = -1;
 	// Whether this device had already synced THIS account when the page loaded.
 	// Read once, at start, before this session's own rounds move the cursor, and
 	// it is the only honest evidence that a device is not new to the account:
@@ -1627,18 +1638,25 @@
 	/// otherwise unchanged account still give byte-identical keys -- which is the
 	/// whole point of having one. A parcel with no roster and no `chunkedFrom` in it is
 	/// its own key: there is nothing to mask and nothing to throw.
-	function compareKey(state) {
-		if (!state || typeof state !== 'object') return JSON.stringify(state);
+	function compareKey(state) { return compareParts(state).key; }
+
+	/// The key, and where each top-level section's text lies in it (`at[k] = [start, end)`), so the push
+	/// event can name the sections that moved (`sectionSigs`) without stringifying the parcel twice. The
+	/// key is built section by section exactly as `JSON.stringify` would join them: same order, and a
+	/// section whose value stringifies to nothing (undefined) is left out.
+	function compareParts(state) {
+		if (!state || typeof state !== 'object') return { key: JSON.stringify(state), at: {} };
 		// A CARRIED section (see `carried`) is not news: it is the mailbox's own value
 		// riding on. Identity, not equality -- a section this device produced is never it.
-		var skip = Object.keys(carried).filter(function (k) { return state[k] === carried[k]; });
+		// And only a section this build does not know: a known one equal to a carried primitive (`null`) is its own.
+		var skip = Object.keys(carried).filter(function (k) { return !knownSection[k] && state[k] === carried[k]; });
 		if (skip.length) {
 			var lean = {};
 			Object.keys(state).forEach(function (k) { if (skip.indexOf(k) < 0) lean[k] = state[k]; });
 			state = lean;
 		}
 		var roster = !!state.devices && typeof state.devices === 'object';
-		if (!roster && !Object.prototype.hasOwnProperty.call(state, 'chunkedFrom')) return JSON.stringify(state);
+		if (!roster && !Object.prototype.hasOwnProperty.call(state, 'chunkedFrom')) return joinParts(state);
 		var devs = {};
 		if (roster) {
 			var src = state.devices;
@@ -1655,7 +1673,43 @@
 			if (k === 'chunkedFrom') return;
 			out[k] = (k === 'devices' && roster) ? devs : state[k];
 		});
-		return JSON.stringify(out);
+		return joinParts(out);
+	}
+
+	function joinParts(obj) {
+		var key = '{', at = {}, first = true;
+		Object.keys(obj).forEach(function (k) {
+			var v = JSON.stringify(obj[k]);
+			if (v === undefined) return;		// JSON.stringify leaves such a member out
+			key += (first ? '' : ',') + JSON.stringify(k) + ':';
+			first = false;
+			at[k] = [key.length, key.length + v.length];
+			key += v;
+		});
+		return { key: key + '}', at: at };
+	}
+
+	/// A cheap digest (FNV-1a, 32 bits) of each section's text in a key, for the push event's `moved`.
+	/// A sensor, not a guard: nothing decides on it, so a collision costs only a name left out.
+	function sectionSigs(cp) {
+		var out = {};
+		Object.keys(cp.at).forEach(function (k) {
+			var r = cp.at[k], h = 0x811c9dc5;	// fixed: the FNV-1a offset basis
+			for (var i = r[0]; i < r[1]; i++) {
+				h ^= cp.key.charCodeAt(i);
+				h = Math.imul(h, 0x01000193) >>> 0;	// fixed: the FNV prime
+			}
+			out[k] = (h >>> 0).toString(16) + ':' + (r[1] - r[0]);
+		});
+		return out;
+	}
+
+	/// The sections whose digest differs between two `sectionSigs` (arrived, left or changed), or null
+	/// when there is no record to compare with.
+	function movedSections(was, now) {
+		if (!was || typeof was !== 'object') return null;
+		var ks = Object.keys(now).concat(Object.keys(was).filter(function (k) { return !(k in now); }));
+		return ks.filter(function (k) { return was[k] !== now[k]; });
 	}
 
 	// ── What the parcel will weigh on the wire ─────────────────
@@ -2185,12 +2239,17 @@
 		// while the read is in flight makes the version this read returns with stale,
 		// and it must not overwrite the push's. See `adoptVersion`.
 		var preRead = serverVersion;
+		// THE VERSION THIS DEVICE ALREADY HOLDS, MERGED, or 0. Told to the gateway (`have`),
+		// which then leaves the blob out, and checked again when the answer lands, so the
+		// parcel this device wrote or merged is never fetched, opened or parsed again. On
+		// gilgamesh that re-read ran every ~5 min, 3.5-8.7 s and ~2.1 MB each (UNBLOCK-86).
+		var heldV = await heldVersion();
 		var res;
 		var tGet = Date.now();		// the /api/sync GET round-trip, for the sync-latency picture
 		// Tracked and budgeted: a GET iOS froze on a backgrounded socket aborts at the
 		// budget (freeing the gate) or the instant a resume breaks it. Only a pull is
 		// tracked; the push below ends at its own deadline and never on a resume.
-		try { res = await call('GET', undefined, undefined, { track: true }); }
+		try { res = await call('GET', undefined, heldV > 0 ? '?have=' + heldV : undefined, { track: true }); }
 		catch (e) { diag('pull GET error', (Date.now() - tGet) + 'ms'); log('pull network error', e); restStatus(); return -1; }
 		if (res.status !== 200 || !res.json) { diag('pull GET status', res.status + ' after ' + (Date.now() - tGet) + 'ms'); log('pull status', res.status); restStatus(); return -1; }
 		lastPullAt = Date.now();		// asked, and answered: see the catch-up in push().
@@ -2220,6 +2279,18 @@
 		// An empty mailbox is an answer: this device has heard, and there was
 		// nothing to hear. See `pulledOk`.
 		if (!j.present) { diag('pull', 'v' + (j.version | 0) + ' empty mailbox'); adoptAt(0, preRead, 'empty', null); reapplyDone(); pulledOk = true; restStatus(); return serverVersion; }
+		// HELD ALREADY: the mailbox is at the version this device holds, merged, and no push
+		// has moved the cursor while the read was out. Nothing in it is news, so it is not
+		// opened, whether the gateway left the blob out (`held`) or sent it anyway (a gateway
+		// that predates `have`).
+		if (heldV > 0 && (j.version | 0) === heldV && serverVersion === heldV) {
+			j.blob = null;
+			diag('pull', 'v' + heldV + ' held already' + (j.held ? '' : ' (blob sent)') + ', not opened');
+			trail('sync files', 'v' + heldV + ' held already, not opened');
+			lastFailed = [];
+			return pullLanded(j, quiet, readWasOwed, tGet, true);
+		}
+		if (j.held) { diag('pull', 'v' + (j.version | 0) + ' answered held for v' + heldV + ', re-read'); restStatus(); return -1; }
 		var state;
 		// ── Read the parcel, EPOCH-AWARE ──────────────────────────
 		//
@@ -2410,6 +2481,7 @@
 			state = got;
 			trail('sync parsed');
 		}
+		env.sealed = null;		// opened: the ciphertext is not held through the merge (UNBLOCK-86 fix 4)
 		// A parcel opened, so this device is not behind the chain -- clears the sticky
 		// 'rekey' state a re-link (importBundle brings the epoch forward) or an adopt
 		// resolves, whichever it was.
@@ -2518,6 +2590,24 @@
 		}
 		// Merged HERE, in the location the apply ran in -- unless the device moved during it.
 		if ((await fileLoc()) === mergeLoc) noteMergedAt(mergeLoc, j.version | 0);
+		return pullLanded(j, quiet, readWasOwed, tGet, false);
+	}
+
+	/// Does this device hold the mailbox's version already, merged here? The version it
+	/// holds, or 0. The same claim the already-adopted skip makes, made before the read so the
+	/// gateway need not send it: a version this device merged or wrote, with its durable note
+	/// still there, no merge of it being retried or owed, opened, and merged at this location.
+	async function heldVersion() {
+		if (serverVersion <= 0 || !pulledOk || reapplyTries !== 0 || remergeOwed || unopenedAt === serverVersion) return 0;
+		try {
+			var rawV = localStorage.getItem(K_VERSION);
+			if ((rawV === null ? -1 : (parseInt(rawV, 10) || 0)) !== serverVersion) return 0;
+		} catch (e) { /* cannot tell; the claim stands, as the skip's does */ }
+		return locMerged(await fileLoc()) ? serverVersion : 0;
+	}
+
+	/// The end of a pull that landed: merged, or held already (`held`).
+	function pullLanded(j, quiet, readWasOwed, tGet, held) {
 		reapplyDone();				// a clean apply settles any re-pull that was armed.
 		unjam();
 		// THE PULL LANDED, and work a refused push left unsent can go now, on the next
@@ -2558,7 +2648,7 @@
 		try {
 			if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
 				DEBUG_SHARE.event('sync', { dir: 'pull', to: serverVersion | 0,
-					ms: Date.now() - tGet, from: String(j.device || '').slice(0, 12) });
+					ms: Date.now() - tGet, from: String(j.device || '').slice(0, 12), held: held ? 1 : 0 });
 			}
 		} catch (e) { /* the feed must never break a sync */ }
 		// A pull working says nothing about whether this device's own parcel will
@@ -2667,7 +2757,12 @@
 			if (wholeTriedAt !== serverVersion && DaimondCore.syncIndexOwed) {
 				var owedAt = serverVersion, owed = false;
 				try { owed = await DaimondCore.syncIndexOwed(knownDevice); } catch (e) { owed = false; }
-				if (owed) {
+				if (owed && owedAt === wroteAt) {
+					// ITS OWN PARCEL: the mark it could earn was set as it landed (`syncIndexAt`,
+					// 'pushed'), and a read of it back cost gilgamesh the whole sealed parcel
+					// once per version. Only another device's parcel can say its writer was whole.
+					wholeTriedAt = owedAt;
+				} else if (owed) {
 					wholeTriedAt = owedAt;
 					remergeOwed  = true;
 					diag('index not whole', 'v' + owedAt + ' -> merging it again before collecting');
@@ -2679,7 +2774,8 @@
 				if ((await fileLoc()) !== pushLoc) { schedule(); return; }	// moved while collecting
 				var plain = JSON.stringify(state);
 				// What is SENT is `plain`; what is COMPARED is the key. See compareKey.
-				var cmp   = compareKey(state);
+				var cparts = compareParts(state);
+				var cmp   = cparts.key;
 				// THE FORK POINT THIS PARCEL SETS IF IT LANDS, taken in the tick it is serialised:
 				// what lands is this parcel, and a file deleted or edited while it flies is not in
 				// it (fix/r52-del). The index is one mirror written in place, so later is too late.
@@ -2731,6 +2827,12 @@
 				// browser reports a reset instead, and neither says WHICH section
 				// grew. See wireBytes and parcelSizes.
 				var pbytes = utf8Len(plain);			// scanned once; both of the next two want it
+				// What moved since the last landing, and what this round was compared against: the
+				// key in memory, the carried digest, or nothing (a fresh page, a heal, a re-key).
+				var secs  = sectionSigs(cparts);
+				var moved = movedSections(pushedSecs, secs);
+				var vs    = (lastPushed !== null) ? 'key' : (bootSig ? 'sig' : 'none');
+				cparts = null;							// the offsets are spent; the key lives on in `cmp`
 				var wire   = wireBytes(pbytes);
 				var sizes  = parcelSizes(state, pbytes);
 				log('parcel', Math.round(wire / 1024) + 'K on the wire of'
@@ -2813,7 +2915,9 @@
 
 				if (res.status === 200 && res.json && res.json.ok) {
 					serverVersion = res.json.version | 0;
+					wroteAt    = serverVersion;
 					lastPushed = cmp;
+					saveSecs(secs);
 					sentKeys = presentKeys(state);
 					saveVersion();
 					// This device's own parcel is the mailbox now: whole at this version if it
@@ -2920,8 +3024,11 @@
 							// Japanese transcripts, and reading one as the other is how a
 							// parcel inside its budget reached the door anyway.
 							var pev = { dir: 'push', to: serverVersion | 0,
-								bytes: (plain && plain.length) | 0, wire: wire, tries: attempt + 1 };
-							Object.keys(sizes).forEach(function (k) { pev[k] = sizes[k]; });
+								bytes: (plain && plain.length) | 0, wire: wire, tries: attempt + 1,
+								moved: moved === null ? '?' : moved, vs: vs };
+							// `d` is the feed's own device field, so the Diamonds' size rides as `dd`
+							// (it was overwritten, and gilgamesh's pushes showed no Diamonds at all).
+							Object.keys(sizes).forEach(function (k) { pev[k === 'd' ? 'dd' : k] = sizes[k]; });
 							DEBUG_SHARE.event('sync', pev);
 						}
 					} catch (e) { /* the feed must never break a sync */ }
@@ -3568,13 +3675,17 @@
 
 	// Base64 of raw bytes and back -- the door blob is bytes, unlike the parcel
 	// which travels as a string through DaimondIdentity.wrap.
+	// Where the engine has them, the native codecs: no binary string of the whole blob beside its
+	// bytes, which for a parcel is megabytes (UNBLOCK-86 fix 4).
 	function b64FromBytes(bytes) {
 		var b = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
+		if (typeof b.toBase64 === 'function') return b.toBase64();
 		var s = '';
 		for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
 		return btoa(s);
 	}
 	function bytesFromB64(s) {
+		if (typeof Uint8Array.fromBase64 === 'function') return Uint8Array.fromBase64(String(s));
 		var raw = atob(String(s));
 		var out = new Uint8Array(raw.length);
 		for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
@@ -3629,18 +3740,26 @@
 	/// `{ rec: null, sealed: <the blob unchanged> }`. Only a blob whose first four
 	/// decoded bytes are 'DRK1' AND whose length and JSON both parse cleanly is read as
 	/// an envelope; a random legacy IV beginning 'DRK1' is 2^-32, and the parse fallback
-	/// catches even that. `sealed` is what DaimondIdentity.unwrap / unwrapPrev opens.
+	/// catches even that. `sealed` is what DaimondIdentity.unwrap / unwrapPrev opens: the
+	/// blob itself, or for an envelope its sealed bytes, a view of the one decode.
+	///
+	/// ONE DECODE, AND ONLY FOR AN ENVELOPE (UNBLOCK-86 fix 4). The header is read off the
+	/// first 12 characters; a legacy blob is never decoded here, and an envelope's sealed
+	/// part is handed on as bytes rather than sliced and encoded back to base64 for the
+	/// open to decode a second time: on gilgamesh's 1.5 MB parcel that was four copies.
 	function openEnvelope(b64) {
 		try {
-			var bytes = bytesFromB64(b64);
-			if (bytes.length >= 8
-				&& bytes[0] === DRK_B0 && bytes[1] === DRK_B1
-				&& bytes[2] === DRK_B2 && bytes[3] === DRK_B3) {
+			var str  = String(b64);
+			var head = bytesFromB64(str.slice(0, 12));		// fixed: 12 base64 chars = 9 bytes, past the 8-byte header
+			if (head.length >= 8
+				&& head[0] === DRK_B0 && head[1] === DRK_B1
+				&& head[2] === DRK_B2 && head[3] === DRK_B3) {
+				var bytes = bytesFromB64(str);
 				var len = ((bytes[4] << 24) | (bytes[5] << 16) | (bytes[6] << 8) | bytes[7]) >>> 0;
 				if (8 + len <= bytes.length) {
-					var rec = JSON.parse(new TextDecoder().decode(bytes.slice(8, 8 + len)));
+					var rec = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + len)));
 					if (rec && rec.v === 1 && typeof rec.epoch === 'number') {
-						return { rec: rec, sealed: b64FromBytes(bytes.slice(8 + len)) };
+						return { rec: rec, sealed: bytes.subarray(8 + len) };
 					}
 				}
 			}
@@ -5110,8 +5229,19 @@
 		} catch (e) { /* private mode: this page keeps its own copy and that is all */ }
 	}
 
+	/// The push sensor's record (see `pushedSecs`), on disk beside the version.
+	function saveSecs(secs) {
+		pushedSecs = secs || null;
+		try { if (pushedSecs) localStorage.setItem(K_SECS, JSON.stringify(pushedSecs)); }
+		catch (e) { /* private mode: this page keeps its own copy */ }
+	}
+
 	/// Take up the one a previous page left, if it is one this build wrote.
 	function loadSig() {
+		try {
+			var secs = JSON.parse(localStorage.getItem(K_SECS) || 'null');
+			pushedSecs = (secs && typeof secs === 'object') ? secs : null;
+		} catch (e) { pushedSecs = null; }
 		bootSig = '';
 		try {
 			var raw = localStorage.getItem(K_SIG);
@@ -5335,6 +5465,9 @@
 		/// are all measured against. Reached by nothing in the app.
 		forTest: {
 			compareKey:  compareKey,
+			compareParts: compareParts,
+			sectionSigs: sectionSigs,
+			movedSections: movedSections,
 			utf8Len:     utf8Len,
 			wireBytes:   wireBytes,
 			doorPlain:   doorPlain,

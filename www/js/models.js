@@ -1974,36 +1974,6 @@
 		}
 	}
 
-	/// Whether a check is already waiting for the panel to appear.
-	var showCheck = false;
-
-	/// Try the panel again one task after a redraw that found nothing on screen.
-	///
-	/// `settings()` in daimond.js draws this list and THEN reveals the drawer holding it, so at
-	/// the instant of that draw the list has no box and `onScreen` is quite correctly false —
-	/// which means the redraw the trigger was written for, the panel being OPENED, is the one
-	/// redraw the trigger misses. Measured: a click on Models asks nothing, and the ask waits
-	/// for whatever the user does next inside the panel. A task later the drawer is up and the
-	/// box is real, so the same test is asked again then.
-	///
-	/// The credit probe above has the same blind spot and is deliberately left with it: it has a
-	/// heartbeat behind it that catches the panel within the minute, this has none, and rewiring
-	/// somebody else's trigger is not what this change is.
-	///
-	/// One timer at a time. A run of redraws must not become a run of timers — that is the same
-	/// loop again wearing a different hat — and a single check is all any of them wanted.
-	function askWhenShown() {
-		if (showCheck || typeof setTimeout !== 'function') return;
-		showCheck = true;
-		setTimeout(function () {
-			showCheck = false;
-			// Still nothing on screen: the redraw was a sync pull or a change of language, and
-			// nobody is looking. The panel will be drawn again when somebody is.
-			if (!onScreen(document.getElementById('models-list'))) return;
-			refreshLists();
-		}, 0);
-	}
-
 	/// Ask a provider what is left on its key.
 	///
 	/// Two questions, because a key answers only one of them. `/key` describes THIS key: its
@@ -3714,6 +3684,32 @@
 		else bal.removeAttribute('data-stale');
 	}
 
+	var drawn = false;    // does #models-list hold the panel
+	var shownObs = null;  // the observer that draws it on show and drops it on hide
+
+	/// Watch the list for gaining or losing a box; false where the browser has no observer.
+	///
+	/// A `ResizeObserver` reports the list at 0×0 under a hidden view or drawer and at its real
+	/// size once shown, after layout and before paint, so the draw lands in the frame that shows
+	/// it. Drawing changes only the list's height, which finds it already drawn: no loop.
+	function watchShown(el) {
+		if (shownObs) return true;
+		if (typeof ResizeObserver === 'undefined') return false;
+		shownObs = new ResizeObserver(function () {
+			var on = onScreen(el);
+			if (on && !drawn) render();
+			else if (!on && drawn) drop(el);
+		});
+		shownObs.observe(el);
+		return true;
+	}
+
+	/// Drop the hidden panel's DOM; what it showed lives in the store and `open`.
+	function drop(el) {
+		if (drawn || el.firstChild) el.textContent = '';
+		drawn = false;
+	}
+
 	/// Draw the providers, each one expandable to the models it can run.
 	///
 	/// The default is a star ON the model, not a separate dropdown somewhere else: the thing a
@@ -3728,6 +3724,11 @@
 	function render() {
 		var el = document.getElementById('models-list');
 		if (!el) return;
+		// Drawn only while shown (UNBLOCK-86). His 42 hidden pulldowns held the whole catalogue
+		// each, 172k of the page's 196k Blink nodes, rebuilt whole on every save, sync pull and
+		// credit probe while nobody looked. A hidden panel now holds nothing; `watchShown` draws
+		// it the moment it gains a box and drops it the moment it loses one.
+		if (watchShown(el) && !onScreen(el)) { drop(el); return; }
 		// Opening this panel is the "I am looking at it now" moment, and the one moment a person
 		// most expects the figure to be current. Only when the panel is actually on screen: this
 		// same function redraws for a sync pull and a change of language, and neither is somebody
@@ -3743,12 +3744,12 @@
 		// see the paragraph above `refreshLists` for what the second gate holds back that the
 		// first one could not have.
 		//
-		// The `else` is not decoration; see `askWhenShown`. The one redraw that matters most —
-		// the panel being opened — happens while the panel is still hidden, so the test above is
-		// false at exactly the moment it was written for.
+		// Opening the panel draws it from `watchShown`'s observer, once it has a box, so the
+		// test below is true at the moment it was written for. Without an observer the panel is
+		// drawn hidden as before and asks nothing until somebody acts inside it.
 		if (onScreen(el)) { refreshCredits(); refreshLists(); }
-		else askWhenShown();
 		el.innerHTML = '';
+		drawn = true;
 
 		var list = providers();
 		if (!list.length) {
@@ -3965,11 +3966,8 @@
 		sel.title = t('models.change_row', { name: x.name });
 		top.appendChild(sel);
 		row.appendChild(top);
-		fillSelect(sel, own.daimon.provider, own.daimon.model);
-		var first = elt('option', '', t('models.default_named', { model: def.model ? displayName(def.provider, def.model) : '—' }));
-		first.value = '';
-		sel.insertBefore(first, sel.firstChild);
-		if (!own.daimon.model) first.selected = true;
+		fillSelect(sel, own.daimon.provider, own.daimon.model,
+			{ lead: { text: t('models.default_named', { model: def.model ? displayName(def.provider, def.model) : '—' }) } });
 		picker(sel);
 		// "Default" or the default itself clears the pick: the row follows from then on.
 		sel.addEventListener('change', function () {
@@ -4003,11 +4001,7 @@
 			sel.dataset.job = role;
 			lab.appendChild(sel);
 			box.appendChild(lab);
-			fillSelect(sel, cur.provider, cur.model);
-			var same = elt('option', '', t('models.same_as_daimon'));
-			same.value = '';
-			sel.insertBefore(same, sel.firstChild);
-			if (!cur.model) same.selected = true;
+			fillSelect(sel, cur.provider, cur.model, { lead: { text: t('models.same_as_daimon') } });
 			picker(sel);
 			sel.addEventListener('change', function () {
 				var g = pick(sel);
@@ -4423,7 +4417,53 @@
 			.map(function (k) { return { provider: live[k].p, model: live[k].m }; });
 	}
 
+	/// Fill a model pulldown, holding only the chosen option until its picker opens (U86-MEM).
+	///
+	/// Every pulldown used to carry the whole catalogue: the models panel draws one per Except
+	/// row, per job and for Everyone, so his 35 held 28,552 options (8.5 MB of markup, about
+	/// three quarters of the page's nodes) in a panel nobody had open, rebuilt on every save,
+	/// sync pull and language change. A closed pulldown shows one name and answers `pick`, and
+	/// that needs only the chosen option; `fullSelect` draws the rest when the picker opens, and
+	/// `trimSelect` gives them back when it closes.
 	function fillSelect(sel, provider, model, opts) {
+		fillAll(sel, provider, model, opts);
+		sel._mpOpts = opts;
+		trimSelect(sel);
+	}
+
+	/// Keep only the chosen option: the closed field and `pick` read nothing else.
+	function trimSelect(sel) {
+		if (!sel || sel.disabled) return;
+		var o = sel.selectedOptions && sel.selectedOptions[0];
+		if (!o) { sel.innerHTML = ''; sel._mpTrim = true; return; }
+		sel.replaceChildren(o);
+		o.selected = true;
+		sel._mpTrim = true;
+	}
+
+	/// Draw the whole list back, on the current choice, before a picker reads it.
+	function fullSelect(sel) {
+		if (!sel || !sel._mpTrim) return;
+		var cur = pick(sel);
+		fillAll(sel, cur.provider, cur.model, sel._mpOpts);
+		sel._mpTrim = false;
+	}
+
+	/// The whole list, and `opts.lead` (a `{ text }`: "Same as daimon", "Default (name)") first, chosen when no model
+	/// is asked for. The lead is drawn here and not by the caller after `fillSelect`, so a picker's `fullSelect` redraws
+	/// it with the rest: added after, it was trimmed off the closed field's redraw and lost from the open list.
+	function fillAll(sel, provider, model, opts) {
+		fillList(sel, provider, model);
+		var lead = opts && opts.lead;
+		if (!lead) return;
+		var o = document.createElement('option');
+		o.value = '';
+		o.textContent = lead.text;
+		sel.insertBefore(o, sel.firstChild);
+		if (!model) o.selected = true;
+	}
+
+	function fillList(sel, provider, model) {
 		sel.innerHTML = '';
 		var list = providers().filter(function (p) { return p.count > 0; });
 
@@ -4833,6 +4873,7 @@
 			if (isOpen) return;
 			if (mpCur && mpCur !== api) mpCur.close(true);
 			if (inp.disabled) return;
+			fullSelect(sel);
 			if (!mpPop) {
 				mpPop = document.createElement('div');
 				mpPop.className = 'mp-pop';
@@ -4879,6 +4920,7 @@
 			inp.setAttribute('aria-expanded', 'false');
 			inp.removeAttribute('aria-activedescendant');
 			if (restore !== false) repaint();
+			trimSelect(sel);
 		}
 
 		/// Choose row `n`. The select takes it and says so, exactly as a native pick would.
@@ -4934,7 +4976,8 @@
 			Object.defineProperty(sel, key, {
 				configurable: true,
 				get: function () { return d.get.call(sel); },
-				set: function (v) { d.set.call(sel, v); repaint(); },
+				// A closed pulldown holds only its choice, so the list is drawn for the set and given back.
+				set: function (v) { if (!isOpen) fullSelect(sel); d.set.call(sel, v); if (!isOpen) trimSelect(sel); repaint(); },
 			});
 		});
 		sel.focus = function (o) { inp.focus(o); };
@@ -5110,6 +5153,7 @@
 		noteUse:        noteUse,
 		favourites:     favourites,
 		fillSelect:     fillSelect,
+		fullSelect:     fullSelect,	// a filled pulldown's whole list drawn back, as its picker does on open
 		// A model's display name, "GLM 5.3 Flash" for z-ai/glm-5.3-flash (U3a).
 		displayName:    displayName,
 		pick:           pick,

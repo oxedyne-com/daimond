@@ -11,7 +11,7 @@ import { drainSteerQueue, enqueueMessage, journalTurnBegins, landInterjection, p
 	reclaimInterjections, recordSpend, recordTurnOutcome, renderQueue, turnMeter } from './steer.js';
 import { Workers, governorClearsDispatch, notStartedWords } from './workers.js';
 import { Files } from './files_view.js';
-import { isMobile, mshow, turnKill } from './layout.js';
+import { mshow, showChosen, turnKill } from './layout.js';
 import { commitRatings, mountRateControls, pushUserRecord, rateArm, storedEffort, storedPre, tsPast } from './rating.js';
 import { renderLinks, signalLinksChanged } from './links.js';
 import { diag, toast } from './passkey_phrase.js';
@@ -1816,7 +1816,7 @@ async function makeCappDiamond(key) {
 		if (!open) return 'cancelled';
 		clearDiamondFilters();
 		await selectDiamond(had);
-		if (isMobile()) mshow('ai');
+		showChosen();
 		return 'opened';
 	}
 
@@ -1911,7 +1911,7 @@ async function makeCappDiamond(key) {
 	var made = null;
 	(pg.diamonds || []).forEach(function (x) { if (x.id === id) made = x; });
 	if (made) await selectDiamond(made);
-	if (isMobile()) mshow('ai');
+	showChosen();
 	if (failed) {
 		await noticeDialog(title, tOr('capp.page_failed',
 			'The diamond was made, but its page could not be written: {why}', { why: failed }));

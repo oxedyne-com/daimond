@@ -9,7 +9,7 @@ import { shortModel } from './parcel_apply.js';
 import { noteHerePrompt, selfDeviceId } from './handoff.js';
 import { captureSession, ensureApp } from './send.js';
 import { queueBadge } from './steer.js';
-import { isMobile, mshow } from './layout.js';
+import { showChosen } from './layout.js';
 import { turnModelOf } from './rating.js';
 import { renderEffortStep } from './sourcemenu.js';
 import { toast } from './passkey_phrase.js';
@@ -2507,7 +2507,7 @@ function sessionBox(s) {
 	label.appendChild(when); label.appendChild(clock);
 	label.title = t('tile.click_to_open');
 	label.setAttribute('aria-label', chatDisplayName(s));
-	label.addEventListener('click', function (e) { e.stopPropagation(); selectChat(s); if (isMobile()) mshow('ai'); });
+	label.addEventListener('click', function (e) { e.stopPropagation(); selectChat(s); showChosen(); });
 	// Its icon, as a Diamond's (js/avatar.js). A chat has no tags; its name is its title.
 	if (window.DaimondAvatar) header.appendChild(DaimondAvatar.button({ kind: 'chat', id: s.id, name: chatIconName(s), tags: [] }));
 	header.appendChild(label);
@@ -2677,9 +2677,9 @@ function sessionBox(s) {
 	}
 
 	box.addEventListener('click', function () {
-		if (pg.current && s.id === pg.current.id) { if (isMobile()) mshow('ai'); return; }
+		if (pg.current && s.id === pg.current.id) { showChosen(); return; }
 		selectChat(s);
-		if (isMobile()) mshow('ai');
+		showChosen();
 	});
 	// Last, so every span this tile is made of is already in it.
 	paintTileColour(box, s.id);
