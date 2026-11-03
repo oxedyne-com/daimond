@@ -100,6 +100,7 @@ function world() {
 		function buildTile(kind) { var n = el('ctile', 'handoff'); n._body = el('body'); n.appendChild(n._body); return n; }
 		function renderDispatchedFooter() {}
 		function seatTileNote() { return null; }
+		function handoffEnded() { return false; }	// its one turn is the newest (UNBLOCK-99)
 		function drawHandoffWorkers() {}
 		function tagTurn() {}
 		${body}

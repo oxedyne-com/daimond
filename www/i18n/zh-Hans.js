@@ -1839,8 +1839,6 @@
 	'turn.rows_cut.other':    '{n} 步未显示',
 	'turn.not_run':           '未运行。无法开始移交。',
 	'turn.not_run_because': '未运行 · {why}',
-	'turn.not_run_on': '未运行 · {when}',
-	'turn.not_run_old': '未运行',
 	'turn.interrupted_early': '还没来得及回答就被打断了。',
 	'turn.offline': '连接在完成前中断了。',
 	'turn.offline_early': '连接在回答到达前中断了。',

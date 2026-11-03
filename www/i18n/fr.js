@@ -1818,8 +1818,6 @@
 	'turn.rows_cut.other': '{n} étapes non affichées',
 	'turn.not_run': 'Non exécuté. Le transfert n’a pas pu commencer.',
 	'turn.not_run_because': 'Non exécuté · {why}',
-	'turn.not_run_on': 'Non exécuté · {when}',
-	'turn.not_run_old': 'Non exécuté',
 	'turn.interrupted_early': 'Interrompu avant d’avoir pu répondre.',
 	'turn.offline': 'La connexion a été interrompue avant la fin.',
 	'turn.offline_early': 'La connexion a été interrompue avant l’arrivée d’une réponse.',

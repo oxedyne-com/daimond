@@ -46,7 +46,7 @@ const FNS = ['markInterrupted', 'isNotRunRow', 'isLostRow', 'notRunAsk', 'drawNo
 	'runRetryHere', 'retryDiamond', 'retryWhenIdle', 'askAgain'];
 // UNBLOCK-83's, lifted for every world (the drawing reads them); RH1 asks only the FNS lift
 // whole, so on the live record, where these are absent, only RH7-RH9 go red.
-const FNS83 = ['turnSuperseded', 'opensTurn', 'turnLive', 'drawOldNotRun', 'renderDispatchedFooter',
+const FNS83 = ['turnSuperseded', 'opensTurn', 'turnLive', 'handoffEnded', 'renderDispatchedFooter',
 	'runnerRefusalRow', 'dispatchedAnswerPresent', 'healLeftoverPlaceholders', 'continueTurn'];
 
 // A small element, enough for `markInterrupted` to draw a footer and its buttons.

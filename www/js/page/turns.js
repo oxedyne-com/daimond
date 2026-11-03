@@ -3250,6 +3250,8 @@ export function drawHistoryMessage(m, i, arr) {
 		if (m.interrupted && m.why === 'dispatched' && !(m.content && m.content.trim())
 			&& window.DaimondPeer && DaimondPeer.uiState) {
 			appendDispatchedTile(m);
+		} else if (notRunEnded(m)) {
+			// A "not run" row a later turn follows is history, drawn nowhere (UNBLOCK-99).
 		} else {
 			appendAssistantText(logRowText(m), m.ranOn, m.handoffFellBack, m);
 			var div = pg.curAsstDiv;
@@ -3262,7 +3264,8 @@ export function drawHistoryMessage(m, i, arr) {
 	else if (m.role === 'error_log') {
 		// A runner's refusal draws as the turn's one "not run" row (`runnerRefusalRow`).
 		var nr = runnerRefusalRow(m, arr || []);
-		if (nr) {
+		if (nr && notRunEnded(nr)) { /* a later turn follows it: history, drawn nowhere (UNBLOCK-99) */ }
+		else if (nr) {
 			appendAssistantText('', null, null, nr);
 			var ndiv = pg.curAsstDiv;
 			finalizeAssistant();
@@ -3713,14 +3716,23 @@ export function runnerRefusalRow(m, msgs) {
 			to: String(m.ranOn || ''), said: said } };
 }
 
-/// The words of a settled turn's row (`turnSuperseded`): "Not run · <date>", its reason on hover.
-function drawOldNotRun(label, m) {
-	var ts = +((m && m.notRun && m.notRun.ts) || (m && m.ts)) || 0, when = '';
-	try { when = (ts && window.DaimondTime) ? DaimondTime.fmtLocal(ts, 'dayMonth') : ''; } catch (e) { when = ''; }
-	label.className = 'ti-label lead-warn';
-	label.textContent = when ? t('turn.not_run_on', { when: when }) : t('turn.not_run_old');
-	var r = (m && m.notRun) ? seatReason(notRunWhyKey(m.notRun)) : null;
-	if (r) label.title = r.why;
+/// AN ENDED TURN A LATER ONE FOLLOWS IS HISTORY, NOT A TILE (UNBLOCK-99, superseding
+/// UNBLOCK-83's "Not run · <date>" record). His Lifelog stacked three October hand-offs that
+/// had found nobody, each "Not run · <date>" over "Runs here -- keep this open", at the foot
+/// of the chat on every load. Such a row stays in the chat's messages and is drawn nowhere;
+/// a hand-off still on the road keeps its live tile wherever it stands.
+///
+/// Is `m`, a "not run" row with nothing to read, one a later turn follows?
+function notRunEnded(m) {
+	return isNotRunRow(m) && !(m.content && String(m.content).trim()) && !turnLive(m);
+}
+
+/// Has the hand-off `m`, in §5 display state `st`, ended under a later turn? Only a turn on
+/// the road (sent, claimed, running, or waiting on his consent) or stopped on a blocker is
+/// still his to watch; any other state of a superseded turn is how it ended.
+function handoffEnded(st, m) {
+	var flying = st === 'dispatched' || st === 'claimed' || st === 'running' || st === 'awaiting-consent';
+	return !flying && st !== 'blocked' && !turnLive(m);
 }
 
 /// Is `m`'s turn still the one a press may act on? Asked at the press as well as at the draw,
@@ -3813,12 +3825,11 @@ function markInterrupted(div, m) {
 	// of it and offers nothing, so no press can ask an old message again.
 	var old = !turnLive(m);
 	if (old) {
-		if (isNotRunRow(m)) drawOldNotRun(label, m);
-		else {
-			label.className = 'ti-label lead-warn';
-			label.textContent = m.why === 'runner' ? runnerLostLabel(m)
-				: (m.content ? t('turn.interrupted') : t('turn.interrupted_early'));
-		}
+		// A "not run" row's answer is its words: under a later turn it says nothing (UNBLOCK-99).
+		if (isNotRunRow(m)) return;
+		label.className = 'ti-label lead-warn';
+		label.textContent = m.why === 'runner' ? runnerLostLabel(m)
+			: (m.content ? t('turn.interrupted') : t('turn.interrupted_early'));
 		foot.appendChild(label);
 		div.appendChild(foot);
 		return;
@@ -3917,16 +3928,10 @@ function renderDispatchedFooter(foot, m) {
 	// function and returned from here, so a blocker's words and buttons are one
 	// place and the state machine below is untouched.
 	if (st === 'blocked') { renderBlockerFooter(foot, m); return; }
-	// A HAND-OFF THAT ENDED WITH LATER TURNS AFTER IT IS A RECORD (UNBLOCK-83): "Not run ·
-	// <date>" and no control, so nothing can ask its message again. One still on the road or
-	// running keeps its live words below.
-	var flying = st === 'dispatched' || st === 'claimed' || st === 'running' || st === 'awaiting-consent';
-	if (!flying && !turnLive(m)) {
-		var ol = document.createElement('span');
-		drawOldNotRun(ol, m);
-		foot.appendChild(ol);
-		return;
-	}
+	// A HAND-OFF THAT ENDED WITH LATER TURNS AFTER IT (UNBLOCK-99): no words and no control,
+	// so nothing can ask its message again; the answer it drew, if any, is its record. One
+	// still on the road or running keeps its live words below.
+	if (handoffEnded(st, m)) return;
 	// A LIVE spinner for the whole in-flight wait, so a handed-off turn never
 	// looks dead. Up while the turn is on the road or running on a peer — from
 	// the moment it is dispatched, through the claim and the run, until the
@@ -4282,6 +4287,7 @@ function handoffLive(st) {
 function appendDispatchedTile(m) {
 	var st = peerUiStateFor(m);
 	if (st === 'done') return;			// the merged answer draws itself
+	if (handoffEnded(st, m)) return;	// ended under a later turn: history, not a tile (UNBLOCK-99)
 	// The answer may already be in the transcript while the placeholder still
 	// stands (the parcel synced back before its report was collected): treat that
 	// as done here too, so the spinner does not linger beside the reply.

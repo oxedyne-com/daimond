@@ -2550,8 +2550,6 @@
 	'turn.rows_cut.other':    '{n} steps not shown',
 	'turn.not_run':           'Not run. The hand-off couldn’t start.',
 	'turn.not_run_because': 'Not run · {why}',
-	'turn.not_run_on': 'Not run · {when}',
-	'turn.not_run_old': 'Not run',
 	'turn.interrupted_early': 'Interrupted before it could answer.',
 	'turn.offline':           'The connection dropped before this finished.',
 	'turn.offline_early':     'The connection dropped before an answer arrived.',

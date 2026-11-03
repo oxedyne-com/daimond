@@ -1811,8 +1811,6 @@
 	'turn.rows_cut.other': '{n} Schritte nicht angezeigt',
 	'turn.not_run': 'Nicht ausgeführt. Die Übergabe konnte nicht beginnen.',
 	'turn.not_run_because': 'Nicht ausgeführt · {why}',
-	'turn.not_run_on': 'Nicht ausgeführt · {when}',
-	'turn.not_run_old': 'Nicht ausgeführt',
 	'turn.interrupted_early': 'Unterbrochen, bevor eine Antwort kam.',
 	'turn.offline': 'Die Verbindung ist abgebrochen, bevor dies fertig war.',
 	'turn.offline_early': 'Die Verbindung ist abgebrochen, bevor eine Antwort ankam.',

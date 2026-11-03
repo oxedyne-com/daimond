@@ -234,7 +234,7 @@ const NAMES = ['runDispatchFallback', 'leaseDoorRead', 'electProvider', 'electSo
 	'sendPresenceRead', 'endHandOffNotRun', 'endTurnNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn',
 	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'turnLogState', 'handBackNote', 'seatReason', 'seatWhyKey', 'dropRefusedTiles',
 	'notRunCause', 'notRunRecord', 'placeholderNotRun', 'notRunWhyKey', 'drawNotRunReason',
-	'turnLive', 'turnSuperseded', 'opensTurn', 'drawOldNotRun'];	// a settled turn is a record (UNBLOCK-83)
+	'turnLive', 'turnSuperseded', 'opensTurn', 'notRunEnded', 'handoffEnded'];	// a settled turn is a record (UNBLOCK-83)
 
 // ── peer.js, loaded as the page loads it (the real recoverDecision / settledLease) ──
 const PW = { addEventListener() {}, dispatchEvent() { return true; } };
