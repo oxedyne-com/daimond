@@ -15,6 +15,7 @@ import { buildId } from './turns.js';
 import { INSTRUCTIONS_FILE, Instructions, Pending, Prompts, instructionsSeed } from './pending.js';
 import { diamondApp, diamondModels } from './diamonds.js';
 import { tOr } from './settingsui.js';
+import { isAppStatePath, isKeeperRecordPath } from './apppaths.js';
 // page-split: end imports
 export let _lastConflicts; // page-split: hoisted
 
@@ -1151,17 +1152,15 @@ var SYNC_SKIP_ROOT_DIRS  = { diamonds: 1 };		// Daimond's own per-diamond store.
 /// rather than a workspace file? Such a path never enters the census, is never written
 /// or deleted by a merge, is never tombed and never stands in the fork point: each
 /// device makes its own copy from something that does not travel. See
-/// `DaimondAppPaths.isAppStatePath`, the one mirror of the engine's `APP_STATE_DIRS`.
+/// `isAppStatePath` (page/apppaths.js), the one mirror of the engine's `APP_STATE_DIRS`.
 ///
-/// AND A KEEPER'S RECORD (`DaimondAppPaths.isKeeperRecordPath`): a chat's version store
+/// AND A KEEPER'S RECORD (`isKeeperRecordPath`): a chat's version store
 /// is this device's record of the files its turns changed here, and the copies it kept of
 /// them. It rode the census from a device in the browser sandbox until 2026-09-25, and a
 /// peer's census without it deleted it by absence, the copy of the person's save a chat's
 /// Undo had just kept included (U5 of the reopen rehearsal).
 function syncAppState(p) {
-	var m = window.DaimondAppPaths;
-	if (!m) return false;
-	return m.isAppStatePath(p) || m.isKeeperRecordPath(p);
+	return isAppStatePath(p) || isKeeperRecordPath(p);
 }
 
 /// A path map without the app's own state, as the fork point and the tombstones hold it.

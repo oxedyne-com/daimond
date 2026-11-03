@@ -17,6 +17,7 @@ import { diamondApp, loadDiamonds } from './diamonds.js';
 import { destroyDiamond, setDiamondWhen, showCentre } from './agentspanel.js';
 import { crystalArrived } from './crystal.js';
 import { tOr } from './settingsui.js';
+import { isDiamondId } from './apppaths.js';
 // page-split: end imports
 export let ChatStore; // page-split: hoisted
 
@@ -188,12 +189,11 @@ export function chatIdOk(id) {
 /// Does chat `c` name no Diamond, or one by an id the engine mints? A synced chat's
 /// `diamondId` reaches `wire_system` and `set_diamond_scope` as a path segment, and
 /// `X/../Y` or `..` there read another Diamond's prompt or the OPFS root (HIST-SAFE U2,
-/// live exposure). Fails closed when the checker is not loaded.
+/// live exposure).
 export function chatDiamondOk(c) {
 	var d = c && c.diamondId;
 	if (d == null || d === '') return true;
-	var m = window.DaimondAppPaths;
-	return !!(m && typeof m.isDiamondId === 'function' && m.isDiamondId(d));
+	return isDiamondId(d);
 }
 
 /// Give every stored message an id, minting one from its POSITION WITHIN ITS OWN CHAT

@@ -18,6 +18,7 @@ import { diamondApp, dropTagFilter, loadDiamonds, relTime, tagChip, tagsOf } fro
 import { fmtBytes } from './agentspanel.js';
 import { clearCrystalBody, crystalVersionText, isRestoreRow, refreshDiamondAfterChange,
 	renderCrystal, renderCrystalControls, showCrystalHistory, turnFileList, turnFileProds } from './crystal.js';
+import { isStorePath } from './apppaths.js';
 // page-split: end imports
 
 // ── A runner turn's Undo, on its History row (RUN-HIST, 23 Oct) ──────
@@ -1227,7 +1228,7 @@ export function placeHere() {
 export function refReachable(ref) {
 	var p = parseRef(ref);
 	var r = currentRoot();
-	if (!p.root || DaimondAppPaths.isStorePath(p.path)) return true;
+	if (!p.root || isStorePath(p.path)) return true;
 	if (p.root !== r.kind) return false;
 	// A different folder on the same machine is a different place, and a reference
 	// carries only the folder's name, so two folders of one name both fit.

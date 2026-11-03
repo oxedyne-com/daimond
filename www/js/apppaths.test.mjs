@@ -2,14 +2,12 @@
 // folder-grant model went (D-20261031-11), and the absence gate for markshere.js itself.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as P from './page/apppaths.js';
 
-const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
-const P = require('./apppaths.js');
 const A = '0123456789abcdef';
 
 test('isStorePath knows the store roots and nothing that only starts with one', () => {
@@ -37,5 +35,4 @@ test('absence: markshere.js and the DaimondMarksHere record are gone from the pa
 	assert.ok(!existsSync(join(here, 'markshere.js')), 'markshere.js is deleted');
 	const html = readFileSync(join(here, '..', 'index.html'), 'utf8');
 	assert.ok(!/markshere\.js/.test(html), 'index.html loads no markshere.js');
-	assert.ok(/apppaths\.js/.test(html), 'index.html loads apppaths.js');
 });

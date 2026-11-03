@@ -206,11 +206,65 @@ async function stamp() {
 	}
 }
 
-/// Put a fetched shell file away under the build that was live when it was
-/// asked for -- and only if that is still the live build once it has arrived. A
-/// deploy landing mid-load must not leave two builds' files in one cache.
+/// Which build each client's document came from: client id → build id, or ''
+/// when the worker could not tell. A page and every file it loads must be one
+/// build (UNBLOCK-97/98): his phone booted a new document beside the old build's
+/// scripts, and died on a name only the new scripts defined. So a client is
+/// pinned when its document is served, every later file it asks for is filed
+/// and recalled under that pin alone, and a pin is written into its build's own
+/// cache as well, because a browser stops an idle worker within seconds and a
+/// lazy import may come after the restart. The pin goes when its build's cache
+/// is swept, which is right: that build's files went with it.
+const PIN  = new URL('.daimond-client/', BASE).href;
+const pins = new Map();
+
+/// Pin `id` to build `b` (null: the build is not known).
+async function pin(id, b) {
+	if (!id) return;
+	pins.set(id, b || '');
+	if (!b) return;
+	try {
+		const c = await caches.open(PREFIX + b);
+		await c.put(PIN + encodeURIComponent(id), new Response(b));
+		await prune(c, id);
+	} catch (e) { /* no store: the pin lives as long as this worker */ }
+}
+
+/// Drop the pins of clients that have closed, so a build's cache does not
+/// collect one entry per page load for as long as the build is live. `id` is
+/// kept whatever the list says: a client being created is not in it yet.
+async function prune(c, id) {
+	const open = new Set((await self.clients.matchAll({ includeUncontrolled: true, type: 'all' }))
+		.map(function (k) { return PIN + encodeURIComponent(k.id); }));
+	open.add(PIN + encodeURIComponent(id));
+	for (const r of await c.keys()) {
+		if (r.url.indexOf(PIN) === 0 && !open.has(r.url)) await c.delete(r);
+	}
+}
+
+/// The build client `id` is pinned to: '' when it is not known.
+async function pinOf(id) {
+	if (!id) return '';
+	if (pins.has(id)) return pins.get(id);
+	try {
+		for (const n of await caches.keys()) {
+			if (n.indexOf(PREFIX) !== 0) continue;
+			const c = await caches.open(n);
+			if (await c.match(PIN + encodeURIComponent(id))) {
+				const b = n.slice(PREFIX.length);
+				pins.set(id, b);
+				return b;
+			}
+		}
+	} catch (e) { /* no store to look in */ }
+	return '';
+}
+
+/// Put a fetched shell file away under the build it belongs to -- and only if
+/// that is still the live build once it has arrived. A deploy landing mid-load
+/// must not leave two builds' files in one cache.
 async function store(p, res, at) {
-	if (live !== at) return;
+	if (!at || live !== at) return;
 	if (!res || !res.ok || res.type !== 'basic') return;
 	if ((res.headers.get('cache-control') || '').indexOf('no-store') >= 0) return;
 	const c = await caches.open(PREFIX + at);
@@ -218,45 +272,72 @@ async function store(p, res, at) {
 	if (live !== at) await caches.delete(PREFIX + at);
 }
 
+/// The answer when the network has failed and the file is not in the cache of
+/// the build its page came from. Said out loud -- a 504 naming why, and a line in
+/// the console -- rather than a bare network error or a file from another build:
+/// another build's file is how one page ends up running two.
+function refuse(p, why) {
+	try { console.warn('daimond sw: offline and ' + p + ' is ' + why); } catch (e) {}
+	return new Response('', { status: 504, statusText: 'Offline: not in this build', headers: { 'x-daimond-shell': why } });
+}
+
 /// A shell request: the network every time, the cache only when the network
 /// cannot be reached. Network-first -- so a plain open, a refresh or a hard
 /// refresh always loads the build the server is serving now, with no banner and
 /// no unregister dance. See the header.
 ///
+/// THE BUILD OF A LOAD. A document's build is the stamp the server answered for
+/// that very navigation, never a remembered `live`: a stamp that fails while the
+/// document arrives leaves `live` naming the previous build, and filing the new
+/// document there is what booted his phone on two builds. Every other file is of
+/// the build its client (`cid`) was pinned to, and a worker script's new client
+/// (`rid`) inherits its page's pin.
+///
 /// `done` releases the hold the fetch handler took on the event's lifetime; it is
 /// called on every path, including the failing ones, or the worker is kept alive
 /// by a promise nothing will settle.
-async function serve(req, p, done) {
+async function serve(req, p, done, cid, rid) {
 	try {
+		const nav = req.mode === 'navigate';
 		// A page load is when the build id is re-checked; everything else on that
-		// page rides on the answer until it goes cold. This no longer gates
-		// freshness -- the shell is fetched below regardless -- it only keeps the
-		// offline cache named after the live build and sweeps old ones.
-		if (req.mode === 'navigate' || Date.now() - seen > FRESH_MS) await stamp();
-
-		const at = live;
+		// page rides on the answer until it goes cold. This does not gate
+		// freshness -- the shell is fetched below regardless -- it names the build
+		// a document belongs to and sweeps old caches.
+		let asked = null;
+		if (nav || Date.now() - seen > FRESH_MS) asked = await stamp();
+		const at = nav ? asked : await pinOf(cid);
+		if (rid && !nav) await pin(rid, at);
 		try {
 			const res = await fetch(req);
-			// Squirrel the fresh copy away for offline, under the build that was
-			// live when it was asked for; store() drops it if a deploy has since
-			// moved on. A non-ok response (a 404, say) is returned as-is, not cached.
-			if (at) store(p, res.clone(), at).then(done, done); else done();
+			// Squirrel the fresh copy away for offline, under the build it belongs
+			// to; store() drops it if a deploy has since moved on, and files nothing
+			// whose build is not known. A non-ok response is returned as-is.
+			// Cloned NOW: once `res` is handed back the page reads its body, and a
+			// clone taken after that throws, leaving the document never stored.
+			const copy = res.clone();
+			const kept = nav ? pin(rid, at) : Promise.resolve();
+			kept.then(function () { return store(p, copy, at); }).then(done, done);
 			return res;
 		} catch (netErr) {
-			// Only here does the cache speak: the network failed, so serve the last
-			// shell this device saw the server offer. Guarded on its own -- a
-			// browser with no usable Cache Storage (some private modes, a full disk)
-			// must surface the network error, not take the whole app down with it.
-			try { await recall(); } catch (e) { /* no store; the failure stands */ }
-			if (live) {
-				try {
-					const c = await caches.open(PREFIX + live);
-					const hit = await c.match(key(p));
-					if (hit) { done(); return hit; }
-				} catch (e) { /* no store to read from; the failure stands */ }
+			// Only here does the cache speak, and only the cache of the build this
+			// load is: a page and its files never come from two. Guarded on its
+			// own -- a browser with no usable Cache Storage (some private modes, a
+			// full disk) must surface the network error, not take the app down.
+			let b = at;
+			if (nav) {
+				// No page yet: the build is the newest this device holds, whole.
+				try { b = await recall(); } catch (e) { b = null; }
 			}
+			if (!b) { done(); return refuse(p, 'build-unknown'); }
+			let hit;
+			try {
+				// `has` first: opening a swept build's name would create it again, empty.
+				if (await caches.has(PREFIX + b)) hit = await (await caches.open(PREFIX + b)).match(key(p));
+			} catch (e) { done(); throw netErr; }
+			if (!hit) { done(); return refuse(p, 'not-in-build ' + b); }
+			if (nav) await pin(rid, b);
 			done();
-			throw netErr;
+			return hit;
 		}
 	} catch (e) {
 		done();
@@ -297,7 +378,7 @@ self.addEventListener('fetch', function (ev) {
 	// refuse and the cache would quietly stay empty.
 	let done;
 	ev.waitUntil(new Promise(function (r) { done = r; }));
-	ev.respondWith(serve(req, p, done));
+	ev.respondWith(serve(req, p, done, ev.clientId, ev.resultingClientId));
 });
 
 self.addEventListener('message', function (ev) {

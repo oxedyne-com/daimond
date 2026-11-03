@@ -13,10 +13,10 @@
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as M from './page/apppaths.js';
 
 const require = createRequire(import.meta.url);
 const R = require('./recent.js');
-const M = require('./apppaths.js');
 
 test('pathOf names the written file for the three write tools only', () => {
 	assert.equal(R.pathOf('file_write', JSON.stringify({ path: 'docs/plan.md', content: 'x' })), 'docs/plan.md');

@@ -1,6 +1,7 @@
 // page-split: every page module, for tests
 export * from './wasm.js';
 export * from './state.js';
+export * from './apppaths.js';
 export * from './util.js';
 export * from './chatstore.js';
 export * from './parcel_collect.js';

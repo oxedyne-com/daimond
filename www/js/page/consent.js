@@ -17,6 +17,7 @@ import { Pending, Prompts } from './pending.js';
 import { publishWithheld } from './diamonds.js';
 import { chatScratchDir, placeHere } from './marks.js';
 import { tOr } from './settingsui.js';
+import { isStorePath } from './apppaths.js';
 // page-split: end imports
 
 // Turn a raw error — which may be an ANSI-coloured fe2o3 `Outcome` chain
@@ -1165,7 +1166,7 @@ var _recentChain = {};
 export function noteRecent(who, tool, args) {
 	var path = window.DaimondRecent ? DaimondRecent.pathOf(tool, args) : '';
 	if (!path || !who) return;
-	var e = { path: path, place: DaimondAppPaths.isStorePath(path) ? '' : placeHere(), at: Date.now() };
+	var e = { path: path, place: isStorePath(path) ? '' : placeHere(), at: Date.now() };
 	if (who.chat) {
 		var c = pg.chats.find(function (x) { return x.id === who.chat; });
 		if (!c) return;

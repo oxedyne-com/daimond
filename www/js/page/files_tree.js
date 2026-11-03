@@ -23,6 +23,7 @@ import { watchedPath } from './agentspanel.js';
 import { attachFocus, chatAttachFind, chatAttachList, chatAttachToggle, dropRefused, focusAdd, heldLink,
 	linkAmong, linkTo, ownLinks, parseRef, placeHere, refReachable, refWhere, removeLinkHere,
 	renderArtefacts, rootedRef, samePlace } from './marks.js';
+import { isStorePath } from './apppaths.js';
 // page-split: end imports
 export let showLineNos; // page-split: hoisted
 let sysShown, drawnKey, restShown; // page-split: hoisted
@@ -899,7 +900,7 @@ export async function renderFocus() {
 			row.title = e.path;
 			focusText(row, 'meta', DaimondRecent.when(e.at, now, lang, t('sync.when_just_now'), DaimondTime.fmtLocal));
 			sysRowAsButton(row, e.path, function () {
-				openFile(e.path, DaimondAppPaths.isStorePath(e.path) ? { store: true } : undefined);
+				openFile(e.path, isStorePath(e.path) ? { store: true } : undefined);
 			});
 			focusEl.appendChild(row);
 		});
