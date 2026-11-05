@@ -218,6 +218,20 @@ const parked = (log) => ({ ok: true, waited: true, version: 0, changed: false, p
 	lease: false, log });
 const logDoor = { ok: true, rows: [], head: 0, low: 0, more: false };	// the log read's answer
 
+// LAG-FLAKE: a batch that landed while the page was not parked woke nobody, so the rig's B
+// held the user row and never the answer. The gateway keeps a cursor; the page echoes it.
+console.log('\nC1: each park carries the log cursor the last answer gave\n');
+{
+	const { tab } = await run([Object.assign(parked(['cC1:5']), { logat: '7.3' }),
+		Object.assign(parked(['cC1:6']), { logat: '7.4' })]);
+	await fireTimeouts(tab);
+	await fireTimeouts(tab);
+	const at = (u) => { const m = /[?&]logat=([^&]*)/.exec(u || ''); return m ? decodeURIComponent(m[1]) : ''; };
+	check('C1. the first park has no cursor to carry', at(tab.parks[0]) === '', tab.parks[0]);
+	check('C1. the next park carries the cursor its answer gave', at(tab.parks[1]) === '7.3', tab.parks[1]);
+	check('C1. and the one after, the next', at(tab.parks[2]) === '7.4', tab.parks[2]);
+}
+
 console.log('\nP1: a park answered with log taps parks again\n');
 {
 	const { tab, S } = await run([parked(['cC1:5']), parked(['cC1:6'])]);

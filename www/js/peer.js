@@ -1950,6 +1950,14 @@
 			if (window.DaimondPost && DaimondPost.fitsRelay) return DaimondPost.fitsRelay(envLen);
 			return Math.floor(envLen / 4) * 3 <= lim;
 		}
+		// ONE VIEW OF THE CHAT FOR EVERY RE-SEAL (SIG-REFUSE, 5 Nov). Each rung below is built
+		// after an await (a seal, the session's chunk put), and a sync merge in that window
+		// (after a reload, the last turn's answer landing) changed the live chat, so a rebuild
+		// signed a thread other than the one the session's reference names and the runner
+		// refused the turn. The rungs read the chat as it stood here, and carry the plan's own
+		// `thread`, so the errand and its reference sign the same thread by construction.
+		chat = chat && Array.isArray(chat.messages)
+			? Object.assign({}, chat, { messages: chat.messages.slice() }) : chat;
 		var o = opts || {};
 		var prompt  = String(o.prompt == null ? '' : o.prompt);
 		var p       = plan || buildDispatch(chat, opts);
@@ -1979,6 +1987,7 @@
 			var o2 = {}; if (opts) Object.keys(opts).forEach(function (k) { o2[k] = opts[k]; });
 			o2.seedMaxChars = budgets[b];
 			o2.eid = p.fields.eid;			// keep the errand id stable across the re-seal
+			o2.thread = p.fields.thread;		// and the thread it signs
 			var pc   = buildDispatch(chat, o2);
 			var bc   = await sealForSelf(pc.errand(0));
 			tries++;
@@ -2009,6 +2018,7 @@
 			o1.words      = null;		// the log goes with the session it was folded beside (U2), in its chunks
 			o1.sessionRef = carried.ref;
 			o1.eid     = p.fields.eid;
+			o1.thread  = p.fields.thread;	// the thread the reference names
 			var bare = await sealFittingErrand(chat, o1, null, cap);
 			bare.tries     += tries;
 			bare.sessionRef = o1.sessionRef;	// the dispatcher's mark, for the hand-back's own words
@@ -2018,6 +2028,7 @@
 		var o3 = {}; if (opts) Object.keys(opts).forEach(function (k) { o3[k] = opts[k]; });
 		o3.seed = false;
 		o3.eid  = p.fields.eid;
+		o3.thread = p.fields.thread;
 		var pd = buildDispatch(chat, o3);
 		var bd = await sealForSelf(pd.errand(0));
 		tries++;

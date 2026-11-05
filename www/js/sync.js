@@ -4098,6 +4098,10 @@
 	// through the engine's TurnView. The read never parks; the gateway taps the wake
 	// channel with `c<chat>:<head>` when a chat's log moves, and `onLog` listeners hear it.
 	var logListeners = [];
+	/// The gateway's log cursor as this page's last park answer left it, echoed on the next
+	/// park so a batch landing between parks is not lost (LAG-FLAKE). Empty until a gateway
+	/// that keeps one answers.
+	var wakeLogAt = '';
 
 	/// GET the rows of `chat` above `since`: the door's answer (`{rows, head, low, more}` or
 	/// `{gap, low}`), or null when the read failed. Never throws.
@@ -4628,7 +4632,10 @@
 						// Chat log taps, the socket's `c<chat>:<head>`, for a page that
 						// hears them (LAG-1c): without them a device on this fallback saw
 						// a turn run elsewhere only at the next parcel.
-						+ (logListeners.length ? '&log=1' : ''),
+						+ (logListeners.length ? '&log=1' : '')
+						// Where the last answer left this page in the log taps (LAG-FLAKE):
+						// a batch that landed while it was not parked is heard by this park.
+						+ (logListeners.length && wakeLogAt ? '&logat=' + encodeURIComponent(wakeLogAt) : ''),
 						{ timeoutMs: 0, hold: wakeHold });
 					wakeParkPres = null;
 				} catch (e) {
@@ -4659,6 +4666,8 @@
 					&& gen === wakeGen) {
 					progressTapped();
 				}
+				// The log cursor first: the taps below are acted on whatever follows.
+				if (res.status === 200 && res.json && typeof res.json.logat === 'string') wakeLogAt = res.json.logat;
 				// Chat logs moved elsewhere: each tap goes where the socket's would.
 				if (res.status === 200 && res.json && Array.isArray(res.json.log) && wakeWanted()) {
 					res.json.log.forEach(function (d) { if (typeof d === 'string' && d.charAt(0) === 'c') logTapped(d); });

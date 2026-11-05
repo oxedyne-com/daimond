@@ -1274,6 +1274,31 @@ async function main() {
 		check('ER-1: and the dispatcher\'s mark is the full reference', JSON.stringify(nOver.sessionRef) === JSON.stringify(nOpen.sessionRef));
 		check('ER-3: the errand stays under the post door', phone.DaimondPost.fitsRelay(nOver.body.envelope.length) === true,
 			String(nOver.body.envelope.length));
+		// SIG-REFUSE (5 Nov, D-20261105-01): a sync merge that lands a row while the session's chunks
+		// are put (after a reload, the last turn's answer arriving) must not part the errand's
+		// `thread.sig` from the one its reference names, or the runner refuses the turn ("its
+		// session's signature is not its thread's"). Red before: the sessionless re-seal re-read
+		// the live chat after the await.
+		{
+			const mchat = { id: 'chat-k4b', provider: 'openrouter', model: 'test/m', holds: [], messages: nchat.messages.slice() };
+			const C = phone.DaimondChunks, put = C.offloadBytes;
+			C.offloadBytes = async function (name, bytes) {
+				const man = await put.call(C, name, bytes);
+				mchat.messages.splice(mchat.messages.length - 1, 0, { role: 'assistant', content: 'landed late', mid: 'r-late', ts: T0 + 999 });
+				return man;
+			};
+			let mOpen = null;
+			try {
+				const mOver = await P.sealFittingErrand(mchat, Object.assign({}, rOpts, { session: nancy(pad) }));
+				mOpen = await laptop.DaimondPeer.openEnvelope(mOver.body.envelope);
+			} finally { C.offloadBytes = put; }
+			check('SIG-REFUSE: a row merged during the chunk put leaves thread.sig the reference\'s',
+				!!mOpen.sessionRef && !!mOpen.thread && mOpen.thread.sig === mOpen.sessionRef.sig,
+				JSON.stringify([mOpen.thread, mOpen.sessionRef && mOpen.sessionRef.sig]));
+			check('SIG-REFUSE: and the reference names the thread as the plan took it',
+				!!mOpen.sessionRef && mOpen.sessionRef.sig === P.threadSig(nchat, 'TURN-REF').sig,
+				String(mOpen.sessionRef && mOpen.sessionRef.sig));
+		}
 		// ER-4 (replaces "an ABI-1 runner gets the bare ref", daimond-runner-b 25 Oct): the page
 		// seals to its own box, not to one runner, and every over-door errand carries the manifest.
 		let bare = [];
