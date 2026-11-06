@@ -10,7 +10,7 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail !== undefined ? '  (' + JSON.stringify(detail) + ')' : '')); failures++; }
 }
 
-const MERGE_FNS = ['withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats',
+const MERGE_FNS = ['withRecent', 'chatOwnsModel', 'chatOwnName', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats',
 	'chatMetaBeats', 'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit',
 	'mergeFold', 'mergeChatRecords', 'touchChatMeta', 'touchChatModel',
 	'chatTaintOf', 'chatTaintJoin',	// the one-way taint (H3)

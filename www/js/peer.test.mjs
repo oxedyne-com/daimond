@@ -503,6 +503,27 @@ async function main() {
 		const tl = await P.routeRows([{ envelope: db.envelope }], { onUndone: async (x) => { sawUndone = x; } });
 		check('N-a: an undone routes to onUndone', !!sawUndone && sawUndone.uid === 'u1' && tl.undones === 1);
 		check('N-a: and is held for the asker', db['for'] === 'PHONE');
+
+		// BIGRESULT D: a deleted chat's spill goes on every runner, by one row addressed to each,
+		// since a row for the account is dropped by the first device that acks it.
+		const PR = phone.DaimondPresence;
+		PR.adopt({ ARGO: { name: 'argonaut', lastSeen: Date.now() }, KIMB2: { name: 'k2', lastSeen: Date.now() },
+			SELF9: { name: 'me', lastSeen: Date.now() } });
+		const posted = [];
+		const went = P.tellChatGone ? await P.tellChatGone('chat-7', 'SELF9', async (b) => { posted.push(b); return { ok: true }; }) : 0;
+		check('BIGRESULT D: a deleted chat posts one chat-gone to each other device', went === 2 && posted.length === 2,
+			'went ' + went);
+		const gone = [];
+		for (const b of posted) {
+			try { gone.push({ b: b, e: await P.openEnvelope(b.envelope) }); } catch (e) { /* counted below */ }
+		}
+		check('BIGRESULT D: each chat-gone opens and verifies as the account\'s own', gone.length === 2);
+		check('BIGRESULT D: each names the chat and is held on the relay for its runner',
+			gone.length === 2 && gone.every((g) => g.e.t === 'chat-gone' && g.e.chat === 'chat-7' && g.e.v === P.ENVELOPE_V
+				&& !!g.e.uid && g.e.to !== 'SELF9' && g.b['for'] === g.e.to && g.b.ttl > 0)
+			&& new Set(gone.map((g) => g.e.to)).size === 2);
+		check('BIGRESULT D: peerType accepts chat-gone', P.peerType('chat-gone') === true);
+		PR.forget();
 	}
 
 	// The phone can of course also open its OWN errand (its self-slot); it just

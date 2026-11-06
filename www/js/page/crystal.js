@@ -4,7 +4,7 @@ import { _diamondIdle, _steerApp, _steerDetached, crystalBody, crystalControls, 
 	daimonOnScreen, diamondBusy, pg } from './state.js';
 import { dsEvent, dsFold, friendlyError, t, tn } from './util.js';
 import { ChatStore, bumpDiamonds, endedHow, newMid, persistChats, touchChat, touchMsg } from './chatstore.js';
-import { _liveMid, _liveProd, _liveTurn, _turnRun, beginTurnRun, noteHerePrompt, selfDeviceId } from './handoff.js';
+import { _liveMid, _liveProd, _liveTurn, _turnRun, beginTurnRun, deviceNameFor, noteHerePrompt, selfDeviceId } from './handoff.js';
 import { clearComposer, confirmHold, daimonPrior, foldFrom, landFailedTurn, sessionMarker,
 	syncComposer } from './send.js';
 import { drainSteerQueue, enqueueMessage, journalTurnBegins, landInterjection, putInComposer,
@@ -3079,8 +3079,15 @@ export async function showCrystalHistory() {
 	// above, never a prune row: a restore names the state it replaced.
 	var entries = files ? DaimondVersions.withPrunes(rows, g0.pruned || [])
 		: rows.map(function (r) { return { row: r }; });
+	// EVERY CHANGE TO THE NAME OR RECORD IS A ROW OF ITS OWN (UNBLOCK-96): who made it, on which
+	// device, and what it was before, so a name never changes unseen.
+	var changes = (window.DaimondVersions && DaimondVersions.metaChanges)
+		? await DaimondVersions.metaChanges(id) : [];
+	if (changes.length) entries = DaimondVersions.withMeta(entries, changes);
+	if (!rows.length && changes.length && list.firstChild) list.removeChild(list.firstChild);
 	var newer = null;
 	entries.forEach(function (e) {
+		if (e.meta) { list.appendChild(histMetaRow(e.meta)); return; }
 		if (!e.row) { list.appendChild(histPrunedRow(e.prune)); return; }
 		list.appendChild(histRow(id, e.row, files, newer));
 		newer = e.row;
@@ -3088,6 +3095,35 @@ export async function showCrystalHistory() {
 	crystalBody.appendChild(list);
 	if (files) crystalBody.appendChild(histFoot(g0));
 	renderCrystalControls();
+}
+
+/// One change to the Diamond's name or record, as a row of its own (UNBLOCK-96): the field, its
+/// old and new value, who changed it and on which device.
+function histMetaRow(m) {
+	var row = document.createElement('div');
+	row.className = 'hist-row hist-meta';
+	var head = document.createElement('div');
+	head.className = 'hist-head';
+	var kind = document.createElement('span');
+	kind.className = 'hist-kind';
+	kind.textContent = t(m.field === 'name' ? 'versions.meta_renamed_kind' : 'versions.meta_kind');
+	var when = document.createElement('span');
+	when.className = 'hist-when';
+	when.textContent = m.at ? relTime(m.at) : '';
+	head.appendChild(kind); head.appendChild(when);
+	row.appendChild(head);
+	var dev = '';
+	try { dev = deviceNameFor(m.dev) || m.dev; } catch (e) { dev = m.dev; }
+	var none = t('versions.meta_none');
+	var note = document.createElement('div');
+	note.className = 'hist-note';
+	note.textContent = t('versions.meta_row', {   // escaped via textContent
+		field: m.field, old: m.old || none, 'new': m['new'] || none,
+		by: t('versions.meta_by_' + (['user', 'daimon', 'sync', 'rebuild', 'app'].indexOf(m.by) >= 0 ? m.by : 'user')),
+		device: dev,
+	});
+	row.appendChild(note);
+	return row;
 }
 
 /// The versions one prune removed, as a row of their own: History never has a

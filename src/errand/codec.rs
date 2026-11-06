@@ -90,9 +90,11 @@ pub const T_GRANT: &str = "consent-grant";
 pub const T_UNDO: &str = "undo-turn";
 /// peer.js `T_UNDONE`: what the runner's undo did, runner to asker, kept until acked.
 pub const T_UNDONE: &str = "undone";
+/// peer.js `T_CHAT_GONE`: the tab deleted a chat, so each runner removes its spill (BIGRESULT D).
+pub const T_CHAT_GONE: &str = "chat-gone";
 /// Every tag peer.js `peerType` accepts.
-pub const PEER_TYPES: [&str; 8] = ["errand", "report", "consent-ask", "consent-grant", "compile", "built",
-    "undo-turn", "undone"];
+pub const PEER_TYPES: [&str; 9] = ["errand", "report", "consent-ask", "consent-grant", "compile", "built",
+    "undo-turn", "undone", "chat-gone"];
 /// peer.js `PERMIT_ASKS`, the permit kinds an errand's `asks` may name.  No toolchain or place is
 /// a grant (R2), so neither is an ask; peer.js drops its `place` and `toolkit` with G2.
 pub const PERMIT_ASKS: [&str; 1] = ["run"];

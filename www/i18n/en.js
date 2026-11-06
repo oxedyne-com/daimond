@@ -1179,6 +1179,7 @@
 	// `src/tools.rs`'s NO_NET_NOTE says the same thing to the model; this is the
 	// half a person can read. A statement of what happened, not a failure.
 	'chat.tool_no_net':    'This ran with no network, because Daimond had read something written by somebody else. Anything in it that tried to fetch, install or clone got nothing. The permissions button gives it back.',
+	'chat.tool_result_cut': 'The model was shown the first {shown} of this result’s {whole} characters. The rest was not kept.',
 	'chat.answered': 'Daimond answered, {n} words',
 	'chat.answer_failed': 'Daimond could not answer',
 	'chat.collapse': 'Collapse every answer',
@@ -5326,6 +5327,16 @@
 	'versions.pruned_row.one': '{list}, from {from}, was removed to keep History within its limit.',
 	'versions.pruned_row.other': '{n} versions ({list}), made {from} to {to}, were removed to keep History within its limit.',
 	'versions.renumbered_kind': 'Renumbered',
+	'versions.meta_renamed_kind': 'Renamed',
+	'versions.meta_kind': 'Changed',
+	'versions.meta_row': '{field}: {old} → {new}, by {by} on {device}.',
+	'versions.meta_none': 'none',
+	// i18n-family: versions.meta_by_ = user daimon sync rebuild app -- who changed a diamond's record (crystal.js metaRow, the History row's by)
+	'versions.meta_by_user': 'you',
+	'versions.meta_by_daimon': 'the daimon',
+	'versions.meta_by_sync': 'sync',
+	'versions.meta_by_rebuild': 'a rebuild',
+	'versions.meta_by_app': 'Daimond',
 	'versions.renumbered_row.one': '{list} is now {to}, because a copy from another device arrived with that number.',
 	'versions.renumbered_row.other': '{n} versions ({list}) are now {to}, because a copy from another device arrived with those numbers.',
 	'versions.limit_note':     'History is over its limit. Nothing is removed until the next update.',

@@ -257,6 +257,40 @@
 		return out;
 	}
 
+	/// Every change to the Diamond's name and record, from every device, newest first, each
+	/// `{ at, dev, by, field, old, new }` (UNBLOCK-96). An older engine sends none.
+	async function metaChanges(id) {
+		var a = app();
+		if (!id || !a || typeof a.meta_changes !== 'function') return [];
+		var list;
+		try { list = parse(await a.meta_changes(String(id)), []); }
+		catch (e) { list = []; }
+		if (!Array.isArray(list)) return [];
+		return list.filter(function (m) { return m && m.field; })
+			.map(function (m) {
+				return { at: +m.at || 0, dev: String(m.dev || ''), by: String(m.by || 'user'),
+					field: String(m.field), old: String(m.old || ''), 'new': String(m['new'] || '') };
+			})
+			.sort(function (x, y) { return y.at - x.at; });
+	}
+
+	/// History's list with each record change stood where it happened, newest first: a change is
+	/// its own row, `{ meta }`, never tied to a file version (UNBLOCK-96).
+	function withMeta(entries, changes) {
+		var out = [], k = 0;
+		var when = function (e) {
+			if (e.row) return e.row.ts || 0;
+			return e.prune ? (e.prune.on === 'renumber' ? e.prune.ts : e.prune.last) || 0 : 0;
+		};
+		var ms = (changes || []).slice().sort(function (x, y) { return y.at - x.at; });
+		(entries || []).forEach(function (e) {
+			while (k < ms.length && ms[k].at >= when(e)) out.push({ meta: ms[k++] });
+			out.push(e);
+		});
+		while (k < ms.length) out.push({ meta: ms[k++] });
+		return out;
+	}
+
 	/// One body, by content hash. `null` where this device does not hold it — a
 	/// diamond imported from a peer that had already pruned it. The row says
 	/// `versions.not_here` and greys Restore; nothing throws.
@@ -1254,6 +1288,8 @@
 		gauge:       gauge,
 		versionSpans: versionSpans,
 		withPrunes:  withPrunes,
+		metaChanges: metaChanges,
+		withMeta:    withMeta,
 		diff:        diff,
 		lineDiff:    lineDiff,
 		DIFF_MAX_LINES: DIFF_MAX_LINES,

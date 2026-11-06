@@ -28,8 +28,9 @@ const MAX_CARRIED: usize = 65_536;
 ///
 /// `toolkits` is the toolchain grant an older build wrote (R2 GOES, D-20261031-11): known so that
 /// it is read and dropped, never carried into `extra` and written back.
-const KNOWN_KEYS: [&str; 10] = ["name", "crystal_version", "brief_version", "updated", "touched",
-	"builtin", "builtin_named", "tags", "toolkits", "no_progress_rounds"];
+const KNOWN_KEYS: [&str; 13] = ["name", "crystal_version", "brief_version", "updated", "touched",
+	"builtin", "builtin_named", "tags", "toolkits", "no_progress_rounds", "provisional", "name_at",
+	"tags_at"];
 
 
 /// Per-Diamond metadata held in `meta.json`.
@@ -39,6 +40,7 @@ const KNOWN_KEYS: [&str; 10] = ["name", "crystal_version", "brief_version", "upd
 /// the cross-device merge compares.  Tagging moves the second and not the first,
 /// which is the whole reason there are two: filing a Diamond must not shuffle it
 /// to the top of the rail, and it must still travel.
+#[derive(Clone, Debug)]
 pub struct Meta {
 	/// Human-readable Diamond name.
 	pub name:    String,
@@ -76,6 +78,22 @@ pub struct Meta {
 	/// it knew, so a device on it that renamed a built-in wrote the `builtin` marker away for
 	/// good; a field a later build adds must ride through this build's writes untouched.
 	pub extra:   Vec<(String, String)>,
+	/// Is this record a guess rebuilt from the crystal rather than one a person or a device
+	/// wrote (UNBLOCK-96)?
+	///
+	/// A rebuilt record is dated 0, older than every real one, so the merge takes any device's
+	/// real record over it; and where a local change has since stamped it fresher, the device
+	/// receiving it keeps its own name, tags and marks ([`keep_real_record`]).  Cleared only by
+	/// a rename, which is a name someone chose, or by a real record arriving.
+	pub provisional: bool,
+	/// When the name was last set, on whichever device set it, or 0 where no build that keeps
+	/// the stamp has set it.
+	///
+	/// `touched` cannot decide the name: any activity moves it, so a device that had not yet seen
+	/// a rename, and then did anything at all, sent the old name back as the newer copy
+	/// ([`keep_set_fields`]).
+	pub name_at: u64,
+	pub tags_at: u64,	// As `name_at`, for the tags
 }
 
 impl Meta {
@@ -97,12 +115,18 @@ impl Meta {
 	/// Serialise to a compact single-line JSON object.
 	pub fn to_json(&self) -> String {
 		fmt!(
-			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{}{}{}}}",
+			"{{\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{}{}{}{}{}}}",
 			json_escape(&self.name), self.version, self.updated, self.touched,
 			json_escape(&self.builtin), self.named, self.tags_json(),
+			// Only when set, so a record no build stamped is byte for byte what it was.
+			if self.name_at > 0 || self.tags_at > 0 {
+				fmt!(",\"name_at\":{},\"tags_at\":{}", self.name_at, self.tags_at)
+			} else { String::new() },
 			// Only when set, so a record nobody tuned is byte for byte what it was.
 			if self.no_progress > 0 { fmt!(",\"no_progress_rounds\":{}", self.no_progress) }
 				else { String::new() },
+			// Only when set, so a real record is byte for byte what it was.
+			if self.provisional { ",\"provisional\":true" } else { "" },
 			self.extra_json(),
 		)
 	}
@@ -167,6 +191,9 @@ impl Meta {
 			named:   extract_json_bool(s, "builtin_named").unwrap_or(false),
 			no_progress: extract_json_number(s, "no_progress_rounds").unwrap_or(0) as usize,
 			extra:   unknown_fields(s),
+			provisional: extract_json_bool(s, "provisional").unwrap_or(false),
+			name_at: extract_json_number(s, "name_at").unwrap_or(0),
+			tags_at: extract_json_number(s, "tags_at").unwrap_or(0),
 		}
 	}
 }
@@ -200,6 +227,104 @@ fn unknown_fields(s: &str) -> Vec<(String, String)> {
 					out.push((key.clone(), text));
 				}
 			}
+		}
+	}
+	out
+}
+
+/// The incoming `meta.json` rewritten to keep this device's real record where the incoming one
+/// is a guess, or `None` when it is to be written as it came (UNBLOCK-96).
+///
+/// A device that lost its `meta.json` rebuilds a provisional one from the crystal, its name the
+/// crystal's title and its tags empty.  On 2 Nov 2026 such a guess, then dated as the newest edit,
+/// renamed "Fred Hoogland" to "The Hoogland Family Stories" on every device and dropped its tags.
+/// It is now dated 0, but a local change on that device stamps it fresher, and the copy then wins
+/// the merge on its content.  The content is taken; the identity is not: name, tags, the built-in
+/// marks, the no-progress figure and the fields this build does not know stay this device's own,
+/// and `touched` moves past the arrival so the settled record travels back and heals the guess.
+///
+/// # Arguments
+/// * `incoming` - The `meta.json` text an import is about to write.
+/// * `local` - This device's metadata for the same Diamond.
+pub fn keep_real_record(incoming: &str, local: &Meta, now: u64) -> Option<String> {
+	if local.provisional {
+		return None;
+	}
+	let mut m = Meta::from_json(incoming);
+	if !m.provisional {
+		return None;
+	}
+	m.name			= local.name.clone();
+	m.tags			= local.tags.clone();
+	m.builtin		= local.builtin.clone();
+	m.named			= local.named;
+	m.no_progress	= local.no_progress;
+	m.extra			= local.extra.clone();
+	m.provisional	= false;
+	m.name_at		= local.name_at;
+	m.tags_at		= local.tags_at;
+	m.updated		= m.updated.max(local.updated);
+	m.touched		= m.touched.max(local.touched);
+	m.bump_touched(now);
+	Some(m.to_json())
+}
+
+/// The incoming `meta.json` with this device's name and tags kept wherever they were set later
+/// than the incoming ones, or `None` when it is to be written as it came (UNBLOCK-96).
+///
+/// The merge takes the copy with the newer `touched`, and `touched` is activity: a device that
+/// had not yet seen a rename here, then did anything with the Diamond, sent its old name back
+/// as the newer copy and the rename was lost.  Each field a person sets now carries the time it
+/// was set, and that alone decides it; equal stamps (two records no build stamped) take the
+/// incoming one, as before.  Where this device's field is kept, `touched` moves past the
+/// arrival so the kept field travels back.
+pub fn keep_set_fields(incoming: &str, local: &Meta, now: u64) -> Option<String> {
+	let mut m = Meta::from_json(incoming);
+	let name = local.name_at > m.name_at && local.name != m.name;
+	let tags = local.tags_at > m.tags_at && local.tags != m.tags;
+	if name {
+		m.name		= local.name.clone();
+		m.name_at	= local.name_at;
+	}
+	if tags {
+		m.tags		= local.tags.clone();
+		m.tags_at	= local.tags_at;
+	}
+	if !name && !tags {
+		return None;
+	}
+	m.touched = m.touched.max(local.touched);
+	m.bump_touched(now);
+	Some(m.to_json())
+}
+
+/// The fields that differ between two records, as `(field, old, new)` (UNBLOCK-96): what the
+/// activity record says of a change.  The stamps, the version and the bookkeeping flags are not
+/// fields a person sees, so they never make a line; equal records make none.
+pub fn changes(old: &Meta, new: &Meta) -> Vec<(String, String, String)> {
+	let mut out = Vec::new();
+	if old.name != new.name {
+		out.push(("name".to_string(), old.name.clone(), new.name.clone()));
+	}
+	if old.tags != new.tags {
+		out.push(("tags".to_string(), old.tags.join(", "), new.tags.join(", ")));
+	}
+	if old.builtin != new.builtin {
+		out.push(("builtin".to_string(), old.builtin.clone(), new.builtin.clone()));
+	}
+	if old.no_progress != new.no_progress {
+		out.push(("no_progress_rounds".to_string(), old.no_progress.to_string(),
+			new.no_progress.to_string()));
+	}
+	let value = |m: &Meta, k: &str| m.extra.iter().find(|(key, _)| key == k)
+		.map(|(_, v)| v.clone()).unwrap_or_default();
+	let mut keys: Vec<&String> = old.extra.iter().chain(new.extra.iter()).map(|(k, _)| k).collect();
+	keys.sort();
+	keys.dedup();
+	for k in keys {
+		let (o, n) = (value(old, k), value(new, k));
+		if o != n {
+			out.push((k.clone(), o, n));
 		}
 	}
 	out

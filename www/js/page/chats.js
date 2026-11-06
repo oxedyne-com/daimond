@@ -17,7 +17,7 @@ import { diag, toast } from './passkey_phrase.js';
 import { _renderingHistory, appendError, appendNote, buildTile, idCopyBtn, nearBottom, postToChat,
 	renderHistory, setScrollTop, setSelectMode, syncJumps, tagTurn, tilePeek } from './turns.js';
 import { closeTurnAsks, confirmDialog, noticeDialog, promptDialog } from './consent.js';
-import { COG_D, chatDisplayName, clearDaimonSession, commitDaimonClear, renderSessionList,
+import { COG_D, chatDisplayName, chatName, clearDaimonSession, commitDaimonClear, renderSessionList,
 	updateActiveSession } from './tilestyle.js';
 import { meterDiamondTurn } from './pending.js';
 import { Triggers, claimDaimon, daimonApp, daimonSettled, diamondApp, diamondCanRun, diamondEffort,
@@ -472,6 +472,8 @@ export function startChat(chat, model, provider, worker) {
 ///   revert, which would otherwise offer to undo the undo.
 export function renameChat(chat, name, quiet) {
 	name = (name || '').trim();
+	// A daimon's chat holds no name: its name is its Diamond's, renamed there (UNBLOCK-96).
+	if (chat.diamondId) return;
 	var was = chat.name || '';
 	if (name === was) return;
 	chat.name = name;
@@ -1307,7 +1309,7 @@ export async function foldChatInto(chat, diamondId, turns) {
 	if (!turns && chat.foldedInto && chat.foldedInto.id === diamondId
 		&& chat.foldedInto.at_len === (chat.messages || []).length) {
 		noticeDialog(t('fold.nothing_new'),
-			t('fold.nothing_new_body', { chat: chat.name, diamond: f.name }));
+			t('fold.nothing_new_body', { chat: chatName(chat), diamond: f.name }));
 		return;
 	}
 	// A FOLD AND A STEER WRITE THE SAME `crystal.json`, so one Diamond takes one
@@ -2020,7 +2022,7 @@ export function pauseTree() {
 	// which is the property that matters — every leaf in the tree is a control
 	// somebody can see, and every control somebody can see is a leaf.
 	var cnodes = (pg.chats || []).filter(function (c) { return !c.diamondId; }).map(function (c) {
-		return { id: DaimondPause.id('root', 'chats', c.id), kind: 'chat', armed: false, label: c.name || t('pause.unnamed_chat') };
+		return { id: DaimondPause.id('root', 'chats', c.id), kind: 'chat', armed: false, label: chatName(c) || t('pause.unnamed_chat') };
 	});
 	return {
 		id: 'root', kind: 'root', label: t('pause.everything'),

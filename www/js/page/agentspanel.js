@@ -20,7 +20,7 @@ import { confirmDialog, dialog, noticeDialog, promptDialog } from './consent.js'
 import { destroyChat, detachChat, diamondAutomated, forgetTilePrefs, mountPause, renameDiamondTo,
 	renderEmptyState, repaintPause, selectChat, setCurrent, storedPick, tileDetail, undoAble,
 	workersHeld } from './chats.js';
-import { chatDisplayName, chatIconName, daimonWindow, openTileDialog, paintRailRow, paintTileColour,
+import { chatDisplayName, chatIconName, chatName, daimonWindow, openTileDialog, paintRailRow, paintTileColour,
 	railFocus, tileCog, tileCtxBar, tileWhen, updateActiveSession } from './tilestyle.js';
 import { Pending } from './pending.js';
 import { DEFAULT_IDS, cycleTagFilter, daimonChat, diamondApp, diamondMatches, diamondModel,
@@ -67,7 +67,7 @@ function agentChatOf(run) {
 /// itself has gone to the trash.
 function agentChatName(run) {
 	var s = agentChatOf(run);
-	if (s) return s.name || '';
+	if (s) return chatName(s);
 	return (run && run.chatName) || '';
 }
 

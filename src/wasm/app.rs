@@ -2366,20 +2366,34 @@ impl DaimondApp {
             .map_err(to_js_err)
     }
 
-    /// Rename a Diamond.
-    pub async fn rename_diamond(&self, id: String, name: String) -> Result<(), JsValue> {
-        diamond::rename(&id, &name).await.map_err(to_js_err)
+    /// Rename a Diamond.  `by` names the writer for its History (`"sync"` where another device's
+    /// copy is applied, `"merge"` where a two-sided merge settles it), the person where it is
+    /// absent (UNBLOCK-96).
+    pub async fn rename_diamond(&self, id: String, name: String, by: Option<String>)
+        -> Result<(), JsValue>
+    {
+        diamond::rename(&id, &name, crate::activity::Writer::from_name(by.as_deref().unwrap_or(""))).await.map_err(to_js_err)
+    }
+
+    /// The changes to a Diamond's name and record, from every device, oldest first, as a JSON
+    /// array of `{at, dev, by, field, old, new}` for its History (UNBLOCK-96).
+    pub async fn meta_changes(&self, id: String) -> String {
+        diamond::meta_changes(&id).await
     }
 
     /// Give a built-in its current name once, recording that it was given (R568-FU F2).
-    pub async fn name_built_in(&self, id: String, name: String) -> Result<(), JsValue> {
-        diamond::name_built_in(&id, &name).await.map_err(to_js_err)
+    pub async fn name_built_in(&self, id: String, name: String, by: Option<String>)
+        -> Result<(), JsValue>
+    {
+        diamond::name_built_in(&id, &name, crate::activity::Writer::from_name(by.as_deref().unwrap_or(""))).await.map_err(to_js_err)
     }
 
     /// Mark a Diamond as the built-in seeded at `fixed_id`, a lasting marker in its own record,
     /// so the page never has to recognise a built-in by its name (NAMES N1).
-    pub async fn mark_built_in(&self, id: String, fixed_id: String) -> Result<(), JsValue> {
-        diamond::mark_built_in(&id, &fixed_id).await.map_err(to_js_err)
+    pub async fn mark_built_in(&self, id: String, fixed_id: String, by: Option<String>)
+        -> Result<(), JsValue>
+    {
+        diamond::mark_built_in(&id, &fixed_id, crate::activity::Writer::from_name(by.as_deref().unwrap_or(""))).await.map_err(to_js_err)
     }
 
     /// Set a Diamond's tags, replacing whatever it held.  `tags_json` is a JSON
@@ -2389,9 +2403,11 @@ impl DaimondApp {
     /// lowercased, deduped, capped at 24 characters each and 8 in all -- so the
     /// caller need not, and cannot dirty the store by not doing so.  Which tags
     /// to offer is the interface's business: none is known here.
-    pub async fn set_tags(&self, id: String, tags_json: String) -> Result<(), JsValue> {
+    pub async fn set_tags(&self, id: String, tags_json: String, by: Option<String>)
+        -> Result<(), JsValue>
+    {
         let tags = parse_json_string_array(&tags_json);
-        diamond::set_tags(&id, &tags).await.map_err(to_js_err)
+        diamond::set_tags(&id, &tags, crate::activity::Writer::from_name(by.as_deref().unwrap_or(""))).await.map_err(to_js_err)
     }
 
     /// Delete a Diamond and all its stored state.

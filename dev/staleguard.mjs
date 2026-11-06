@@ -169,13 +169,14 @@ export function whyStaleBinary(bin, { subject, rebuild, what = 'binary' }) {
 	return '';
 }
 
-/// Every Rust source under `dir`, which is everything the bundle is built from.
-export function rustSources(dir) {
+/// Every Rust source and jdat file under `dir`, which is everything the bundle is built from:
+/// the engine compiles `src/limits.jdat` in (`include_str!`), so a changed limit is a stale bundle.
+export function engineSources(dir) {
 	const out = [];
 	for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
 		const f = path.join(dir, ent.name);
-		if (ent.isDirectory()) out.push(...rustSources(f));
-		else if (ent.name.endsWith('.rs')) out.push(f);
+		if (ent.isDirectory()) out.push(...engineSources(f));
+		else if (ent.name.endsWith('.rs') || ent.name.endsWith('.jdat')) out.push(f);
 	}
 	return out;
 }
@@ -196,13 +197,13 @@ export const WASM_SOURCE_RECORD = 'source.json';
 
 /// The `{ relpath: sha256 }` map of everything that goes into the bundle.
 ///
-/// The same set the mtime oracle walks — every `.rs` under `src/` — plus
+/// The same set the mtime oracle walks — every `.rs` and `.jdat` under `src/` — plus
 /// `Cargo.toml` and `Cargo.lock`, which decide what is compiled in and which
 /// `dev/gate.sh` already compares before it borrows. Paths are relative to
 /// `root` and POSIX, so two trees in different directories compare equal.
 export function sourceMap(root, srcDir = path.join(root, SRC_REL)) {
 	const map = {};
-	for (const f of rustSources(srcDir)) {
+	for (const f of engineSources(srcDir)) {
 		try { map[posix(path.relative(root, f))] = sha256(readPage(f)); }
 		catch (e) { /* removed under us; the next build will say so */ }
 	}
@@ -350,7 +351,7 @@ export function whyStaleWasm(wasm, srcDir, { subject, holds = '', quiet = false 
 		return '';
 	}
 	let newest = null;
-	for (const f of rustSources(srcDir)) {
+	for (const f of engineSources(srcDir)) {
 		let t;
 		try { t = fs.statSync(f).mtimeMs; }
 		catch (e) { continue; }		// removed under us; the next build will say so

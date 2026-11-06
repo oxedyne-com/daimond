@@ -22,7 +22,7 @@ import { appendError, runLive } from './turns.js';
 import { noteUndone } from './marks.js';
 import { applyPermissionMode, confirmDialog, noticeDialog } from './consent.js';
 import { initPauseUi } from './chats.js';
-import { openBodyDialog } from './tilestyle.js';
+import { chatName, openBodyDialog } from './tilestyle.js';
 import { renderCredits, syncCredits } from './pending.js';
 import { chatPicks, clearPick, diamondPicks, everyoneTargets, setPick, settlePicks, summarisingPick } from './diamonds.js';
 import { initCompose, mailDialog, showCompose, showMessage } from './agentspanel.js';
@@ -776,7 +776,7 @@ export function install() { // page-split: install
 					} catch (e) {}
 					return {
 						id:       c.id,
-						name:     c.name,
+						name:     chatName(c),
 						model:    turnModelOf(c).model,
 						provider: turnModelOf(c).provider,
 						messages: Array.isArray(c.messages) ? c.messages.length : (c.msgCount || 0),

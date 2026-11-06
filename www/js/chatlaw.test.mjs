@@ -73,7 +73,7 @@ function extractFn(src, name) {
 const { stampOf } = new Function('chatTaintOf', 'DaimondStamp', [
 	// `stampOf` and the residency-aware reads it makes (5.2.1's chatstore fix), as chatstamp.test lifts them.
 	extractFn(APP, 'stampOf'), extractFn(APP, 'msgStanding'), extractFn(APP, 'standingOf'),
-	extractFn(APP, 'chatMsgCount'), extractFn(APP, 'chatSessionMsgs'),
+	extractFn(APP, 'chatMsgCount'), extractFn(APP, 'chatSessionMsgs'), extractFn(APP, 'chatOwnName'),
 	'return { stampOf };',
 ].join('\n'))(F.chatTaintOf || (() => 0), w.DaimondStamp);
 

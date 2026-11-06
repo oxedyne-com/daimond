@@ -68,6 +68,7 @@ mod shown;	// what a chat was shown, and D1's payload test (UNBLOCK-88)
 #[macro_use] mod local;	// the native file tools, shell and `run`
 #[macro_use] mod verify;	// `verify`, `serve` and a project's own check
 #[macro_use] mod registry;	// `ToolRegistry`, several reads in one round, crystal looks
+mod spill;	// a result over the cap, cut, and the chat's spill (BIGRESULT C, D)
 
 // `dispatch`, `file_ops` and `local` hold only `impl Tool` methods, so they have nothing to re-export.
 pub use state::*;
@@ -82,6 +83,7 @@ pub use pending::OcrConf;	// but this, which `TurnLimits` carries to the runner 
 pub use tool::*;
 pub use verify::*;
 pub use registry::*;
+pub use spill::{ResultCap, Spill};
 
 #[cfg(test)]
 #[path = "../../tests/unit/tools/spawn_context_tests.rs"]

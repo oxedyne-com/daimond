@@ -366,11 +366,10 @@ function packTags(data) {
 /// there, and stamped identically because the tagging never moved a stamp)
 /// come back together, rather than needing the user to re-tag by hand.
 ///
-/// It settles. Writing the union moves `touched`, so this side becomes the
-/// fresher one and the union travels back on the next push, where it is taken
-/// wholesale -- an import lays the stamps down as they arrived, so nothing
-/// bounces back again. And once the two sets agree, the union adds nothing,
-/// nothing is written and no stamp moves. At most two rounds, then quiet.
+/// It settles. A write applied from sync keeps the stamps the copy arrived
+/// with and logs no row here (lead ruling U96g: the row is the origin's), so the
+/// union moves no stamp and nothing bounces. Once the two sets agree, the union
+/// adds nothing and nothing is written.
 ///
 /// The store owns normalisation and caps the list at eight, so a union that
 /// overflows is trimmed there; the extra write that costs is harmless, and
@@ -384,7 +383,7 @@ async function unionDiamondTags(app, r, mine, data) {
 		if (union.indexOf(there[i]) === -1) union.push(there[i]);
 	}
 	if (union.length === here.length) return false;		// the other side had nothing new
-	try { await app.set_tags(r.id, JSON.stringify(union)); }
+	try { await app.set_tags(r.id, JSON.stringify(union), 'sync'); }
 	catch (e) { return false; }							// it goes on the next pull
 	return true;
 }
@@ -741,6 +740,12 @@ async function applyDiamonds(remote, from) {
 					name:  (mine && typeof mine.name === 'string') ? mine.name : '',
 					links: loserLinks,
 				};
+				// A PROVISIONAL RECORD HERE CLAIMS NO CHANGE (UNBLOCK-96): its name is the crystal's
+				// heading and its tags are empty because the record was lost and rebuilt, not because
+				// anyone renamed or untagged it. Read three-way, the guess would win as "the edit made
+				// here"; so it reads as the arrival's own, and only the links, which are not in the
+				// record, are merged.
+				if (mine && mine.provisional === true) { lf.tags = wf.tags.slice(); lf.name = wf.name; }
 				plan = diamondMergePlan(wf, lf, wfOk ? seenAncestor(seen[r.id], rAnc) : null);
 			}
 			var storedAt = packStamp(idata) || diamondStamp(r);	// the stamp the import lays down
@@ -776,10 +781,11 @@ async function applyDiamonds(remote, from) {
 				trail('sync log joined', r.id + ' files ' + imp.files + ' rows +' + imp.here + '/+' + imp.arriving);
 			}
 			if (plan) {
-				// Each write moves `touched`, so the result travels back on the next push
-				// and the other device takes it one-sided: it descends from both copies.
-				if (plan.tags) { try { await app.set_tags(r.id, JSON.stringify(plan.tags)); } catch (e) {} }
-				if (plan.name !== null) { try { await app.rename_diamond(r.id, plan.name); } catch (e) {} }
+				// A plan's tags or name differ from the arrival's, so they are this device's record now:
+				// stamped, so they travel back, or the other device's next copy is taken over them. No
+				// row: each side's change has its own (lead ruling U96g).
+				if (plan.tags) { try { await app.set_tags(r.id, JSON.stringify(plan.tags), 'merge'); } catch (e) {} }
+				if (plan.name !== null) { try { await app.rename_diamond(r.id, plan.name, 'merge'); } catch (e) {} }
 				// A row the merge takes off is a removal this device made since the common
 				// copy, so it goes through the one door every removal here takes: the row,
 				// then the entry. `settle` above left the entry out already; the door keeps it

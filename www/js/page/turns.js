@@ -2903,8 +2903,34 @@ export function renderToolResult(name, result, outcome, paused) {
 		// after a reload says the same thing the live one said without a flag
 		// having had to survive the journey.
 		noNetLine(pg.lastToolBlock, ranWithoutNet(result));
+		cutLine(pg.lastToolBlock, resultCut(result));
 	}
 	pinBottom();
+}
+
+/// Say on the block that the model was given only the first part of this result.
+///
+/// The engine cuts a result longer than `run.tool_result_max` (src/limits.jdat) and keeps no
+/// file of the whole in the tab; its note in the result is written for the model, in English.
+function cutLine(block, cut) {
+	var line = block.querySelector('.ctile-cut');
+	if (!cut) { if (line) line.remove(); return; }
+	if (!line) {
+		line = document.createElement('div');
+		line.className = 'ctile-cut';
+		block.appendChild(line);
+	}
+	var vars = { shown: cut[0].toLocaleString(), whole: cut[1].toLocaleString() };
+	line.textContent = t('chat.tool_result_cut', vars);
+}
+
+/// `[shown, whole]` where the engine cut this result, else null. Asked of the engine, which
+/// owns the cut line's format; an older bundle has no such export, and then nothing is drawn.
+function resultCut(result) {
+	try {
+		var c = Wasm && Wasm.tool_result_cut && Wasm.tool_result_cut(String(result || ''));
+		return c && c.length === 2 ? [c[0], c[1]] : null;
+	} catch (e) { return null; }
 }
 
 /// Say on the block itself that this command ran with the network withheld.

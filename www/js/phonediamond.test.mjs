@@ -71,7 +71,7 @@ test('Chat opens the one conversation: daimonChat(f), made once, found again', (
 	const b = w.api.daimonChat(f);
 	assert.equal(a, b, 'the same record both times');
 	assert.equal(w.pg.chats.filter(c => c.diamondId === 'd1').length, 1);
-	assert.equal(a.name, 'Tax 2026');
+	assert.equal(a.name, '');	// the Diamond's name, read through chatName, never copied (UNBLOCK-96)
 	// The Chat face points `current` at that record and nothing else.
 	const sel = cut(AP, 'export async function selectDiamond', "	if (want === 'chat') {");
 	assert.match(sel, /view === 'files'/, 'selectDiamond takes the Files face');

@@ -3,6 +3,7 @@ import { Wasm } from './wasm.js';
 import { crystalRunning, pg } from './state.js';
 import { getSecret, hideSecret, installSecretMask, mark, secretEye, t, tn, trail } from './util.js';
 import { persistChats } from './chatstore.js';
+import { chatName } from './tilestyle.js';
 import { chatHoldingTurn, deviceLabelFor, dispatchedChat, handOffTurn, peerSyncShim, peerTakeBack,
 	renderDispatchedBadges, selfDeviceId } from './handoff.js';
 import { sendUserMessage } from './send.js';
@@ -758,7 +759,7 @@ function deleteAsker(keeper) {
 	var k = String(keeper || '');
 	if (k.indexOf('chat:') === 0) {
 		var c = pg.chats.find(function (x) { return x.id === k.slice(5); });
-		return (c && c.name) ? '"' + c.name + '"' : t('deletes.a_chat');
+		return chatName(c) ? '"' + chatName(c) + '"' : t('deletes.a_chat');
 	}
 	var d = pg.diamonds.find(function (x) { return x.id === k; });
 	return d ? '"' + d.name + '"' : t('deletes.a_daimon');

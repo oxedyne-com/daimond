@@ -90,6 +90,7 @@ const { stampOf, msgStanding, standingOf, chatMsgCount, chatSessionMsgs, slimCha
 	extractFn(APP, 'chatTaintOf'),		// H3: the taint stamp's reader
 	'var _chatModelShedSaid = false; function diag() {}',
 	extractFn(APP, 'chatOwnsModel'),
+	extractFn(APP, 'chatOwnName'),
 	extractFn(APP, 'slimChat'),
 	'function applyCarry(merged, c) { ' + carryBlock + ' }',
 	'return { stampOf, msgStanding, standingOf, chatMsgCount, chatSessionMsgs, slimChat, applyCarry };',

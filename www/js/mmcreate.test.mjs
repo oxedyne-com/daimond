@@ -27,7 +27,7 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail !== undefined ? '  (' + JSON.stringify(detail) + ')' : '')); failures++; }
 }
 
-const MERGE_FNS = ['withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats',
+const MERGE_FNS = ['withRecent', 'chatOwnsModel', 'chatOwnName', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats',
 	'chatMetaBeats', 'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit',
 	'mergeFold', 'mergeChatRecords', 'touchChatMeta', 'touchChatModel',
 	'chatTaintOf', 'chatTaintJoin',	// the one-way taint (H3)
@@ -233,7 +233,9 @@ console.log('\nC6: records without mat merge as before');
 		];
 		for (const [label, a, b] of pairs) {
 			const n = guarded('C6 runs: ' + label, N, () => [N.mergeChatRecords(a, b), N.mergeChatRecords(b, a)]);
-			const o = O.mergeChatRecords ? [O.mergeChatRecords(a, b), O.mergeChatRecords(b, a)] : null;
+			let o = O.mergeChatRecords ? [O.mergeChatRecords(a, b), O.mergeChatRecords(b, a)] : null;
+			// A daimon's chat now takes its Diamond's name and holds none of its own (`chatOwnName`).
+			if (o && a.diamondId) o = o.map((r) => Object.assign({}, r, { name: '' }));
 			check('C6 ' + label + ': the same bytes as 14ef947b', n && o && JSON.stringify(n) === JSON.stringify(o), n && n[0]);
 			check('C6 ' + label + ': no mat appears', n && !/"mat"/.test(JSON.stringify(n)));
 			check('C6 ' + label + ': slimChat writes no mat', !('mat' in JSON.parse(JSON.stringify(N.slimChat(a)))));

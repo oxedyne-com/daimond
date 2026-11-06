@@ -549,6 +549,12 @@ function chatOwnsModel(c) {
 	}
 	return false;
 }
+/// The name a chat record holds: its own, and none for a daimon's chat, whose name is its
+/// Diamond's (`chatName`, UNBLOCK-96). A record from before carries a copy, taken by value and
+/// stale the moment the Diamond was renamed; it is shed by every read and write through here.
+function chatOwnName(c) {
+	return (c && !c.diamondId && c.name) || '';
+}
 export function slimChat(c) {
 	// `name` and `model` are written as the summary writes them (`summaryOf`), a string
 	// even when absent, so a record held as a summary and one held live travel as the
@@ -556,7 +562,7 @@ export function slimChat(c) {
 	// chat inside a Diamond carries no model pair at all (`chatOwnsModel`): absent here
 	// and in the summary alike, so the two still agree.
 	var own = chatOwnsModel(c);
-	return withRecent(c, { id: c.id, name: c.name || '', messages: c.messages,
+	return withRecent(c, { id: c.id, name: chatOwnName(c), messages: c.messages,
 		model: own ? (c.model || '') : undefined, provider: own ? (c.provider || '') : undefined,
 		diamondId: c.diamondId || '',
 		workerModel: own ? (c.workerModel || '') : undefined, workerProvider: own ? (c.workerProvider || '') : undefined,
@@ -1659,7 +1665,7 @@ function hydrateChat(c) {
 		: (Array.isArray(c.messages) ? c.messages.length : 0);
 	var sessionMsgs = (typeof c.sessionMsgs === 'number') ? c.sessionMsgs
 		: ((c.session && c.session.msgs) ? c.session.msgs.length : 0);
-	return { id: c.id, name: c.name, app: null,
+	return { id: c.id, name: chatOwnName(c), app: null,
 		messages: loaded ? stampMessages(Array.isArray(c.messages) ? c.messages : [], c.id) : [],
 		_loaded: loaded, msgCount: msgCount, sessionMsgs: sessionMsgs,
 		standing: c.standing || '',		// the summary's, for `stampOf` while not resident
@@ -2727,7 +2733,7 @@ export function install() { // page-split: install
 			// the record-level twin of `txPending`. Normalised as the summary is, so a live
 			// chat and the summary it was hydrated from stamp the same and nothing is
 			// rewritten at boot.
-			var sv = [c.name || '', c.model || '', c.provider || '', c.diamondId || '',
+			var sv = [chatOwnName(c), c.model || '', c.provider || '', c.diamondId || '',
 				c.workerModel || '', c.workerProvider || '', c.status || 'active', c.foldedInto || null,
 				c.promptTokens || 0, c.completionTokens || 0, c.cachedTokens || 0, c.costUsd || 0,
 				c.prevPrompt || 0, c.prevCompletion || 0, c.prevCached || 0, c.prevCost || 0, c.lastPrompt || 0];
@@ -3301,7 +3307,7 @@ export function install() { // page-split: install
 			var own = chatOwnsModel(c);		// a Diamond's chat holds no model pair (C3)
 			return withRecent(c, {
 				id: c.id, v: SHADOW_V,
-				name: c.name || '', model: own ? (c.model || '') : undefined, provider: own ? (c.provider || '') : undefined,
+				name: chatOwnName(c), model: own ? (c.model || '') : undefined, provider: own ? (c.provider || '') : undefined,
 				diamondId: c.diamondId || '',
 				workerModel: own ? (c.workerModel || '') : undefined, workerProvider: own ? (c.workerProvider || '') : undefined,
 				effort: c.effort || undefined,			// absent when unset, as `slimChat` writes it

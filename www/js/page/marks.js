@@ -1800,6 +1800,10 @@ export function dropChatScope(chatId) {
 			app.remove_dir(chatId).catch(function () { /* already gone */ });
 		}
 	} catch (e) { /* the engine is not up; the record still goes */ }
+	// And each runner's spill of it, which holds the whole of every cut tool result.
+	if (window.DaimondPeer && DaimondPeer.tellChatGone && window.DaimondPost) {
+		DaimondPeer.tellChatGone(chatId, selfDeviceId(), DaimondPost.post).catch(function () { /* best effort */ });
+	}
 }
 
 /// A chat's own working folder: where a worker it dispatched may always write.

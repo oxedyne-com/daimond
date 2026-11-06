@@ -60,7 +60,7 @@ function liftVar(src, name) {
 	return src.slice(m.index + 1, end + 1);
 }
 
-const FNS = ['withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats',
+const FNS = ['withRecent', 'chatOwnsModel', 'chatOwnName', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats',
 	'chatMetaBeats', 'mergeFold', 'mergeChatRecords', 'hydrateChat', 'diamondModels', 'setDiamondModel',
 	'blankDiamondModel', 'mergeDiamondModel', 'adoptDiamondModel', 'diamondModel', 'turnEffortOf',
 	'turnModelOf', 'errandModelOf', 'respModel', 'shortModel', 'daimonChat', 'errandForRecovery',

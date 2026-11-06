@@ -3152,3 +3152,486 @@ fn standing_open_is_still_filed() {
     assert!(req.contains("the person's own task"), "what stood was lost: {}", req);
     assert!(!hl6_text(&mem, "diamonds/d/crystal.json").contains("\"open\""), "open[] stayed");
 }
+
+// ---- UNBLOCK-96: a rebuilt meta.json is a guess, never the newest record ----
+
+/// The Diamond `d`'s `meta.json` in `mem`, as text; empty when absent.
+fn u96_meta(mem: &MemBackend) -> String {
+    mem.files().get("diamonds/d/.daimond/meta.json")
+        .map(|b| String::from_utf8_lossy(b).into_owned())
+        .unwrap_or_default()
+}
+
+/// `d` as his phone held Fred Hoogland on 2 Nov 2026: a real record, and a crystal whose heading
+/// the daimon set to something else.
+fn u96_seeded() -> MemBackend {
+    let mem = seeded();
+    rt().block_on(async {
+        for (k, b) in [
+            ("diamonds/d/.daimond/meta.json", br#"{"name":"Fred Hoogland","crystal_version":0,"updated":100,"touched":100,"tags":["family"]}"#.as_slice()),
+            ("diamonds/d/crystal.json", br#"{"title":"The Hoogland Family Stories","sections":[]}"#.as_slice()),
+        ] {
+            if let Err(e) = mem.write_file(k, b).await {
+                panic!("seeding {}: {}", k, e);
+            }
+        }
+    });
+    mem
+}
+
+/// UNBLOCK-96 (a): a `meta.json` rebuilt from the crystal is dated 0 and marked provisional, so it
+/// never reads as the freshest edit.  Red on c98c74575: stamped with the newest file time.
+#[test]
+fn u96_a_rebuilt_meta_is_provisional_and_older_than_any_real_record() {
+    let mem = u96_seeded();
+    rt().block_on(async {
+        if let Err(e) = mem.delete_entry("diamonds/d/.daimond/meta.json", false).await {
+            panic!("losing the meta: {}", e);
+        }
+    });
+    let listed = direct(mem.clone(), |_| async move { diamond::list().await });
+    let listed = listed.expect("the list");
+    assert!(listed.contains("The Hoogland Family Stories"), "the Diamond did not list: {}", listed);
+    let meta = crate::diamond_meta::Meta::from_json(&u96_meta(&mem));
+    assert!(u96_meta(&mem).contains("\"provisional\":true"),
+        "the rebuilt record is not marked provisional: {}", u96_meta(&mem));
+    assert_eq!((0, 0), (meta.touched, meta.updated),
+        "the rebuilt record is dated as an edit: {}", u96_meta(&mem));
+}
+
+/// UNBLOCK-96 (b): a guess arriving from another device, stamped fresher by a later change there,
+/// brings its content and not its name or tags; this device's real record stands and is stamped
+/// past the arrival so it travels back.  Red on c98c74575: the guess renamed the Diamond.
+#[test]
+fn u96_a_guess_arriving_keeps_this_devices_real_name_and_tags() {
+    let mem = u96_seeded();
+    let got = direct(mem.clone(), |_| async move {
+        let pack = diamond::Pack {
+            id:    Some(s(D)),
+            name:  None,
+            files: Ok(vec![
+                (s(".daimond/meta.json"), br#"{"name":"The Hoogland Family Stories","crystal_version":0,"updated":0,"touched":200,"tags":[],"provisional":true}"#.to_vec()),
+                (s("crystal.json"), br#"{"title":"The Hoogland Family Stories","sections":["new"]}"#.to_vec()),
+            ]),
+        };
+        diamond::import_diamond_pack("{}", pack, false).await
+    });
+    if let Err(e) = got {
+        panic!("the import: {}", e);
+    }
+    let meta = crate::diamond_meta::Meta::from_json(&u96_meta(&mem));
+    assert_eq!("Fred Hoogland", meta.name, "the guess renamed the Diamond: {}", u96_meta(&mem));
+    assert_eq!(vec![s("family")], meta.tags, "the guess dropped the tags: {}", u96_meta(&mem));
+    assert!(!u96_meta(&mem).contains("provisional") && meta.touched > 200,
+        "the settled record would not travel back: {}", u96_meta(&mem));
+    let crystal = mem.files().get("diamonds/d/crystal.json").cloned().unwrap_or_default();
+    assert!(String::from_utf8_lossy(&crystal).contains("\"new\""), "the content was not taken");
+}
+
+/// UNBLOCK-96 (c): an import cut short before its `meta.json` -- here a pack that never reaches
+/// one -- leaves the Diamond its record, so no later read rebuilds a guess.  Red on c98c74575:
+/// the import deleted `meta.json` first and wrote it last.
+#[test]
+fn u96_an_import_cut_short_never_leaves_the_diamond_without_its_record() {
+    let mem = u96_seeded();
+    let got = direct(mem.clone(), |_| async move {
+        let pack = diamond::Pack {
+            id:    Some(s(D)),
+            name:  None,
+            files: Ok(vec![
+                (s("crystal.json"), br#"{"title":"The Hoogland Family Stories","sections":[]}"#.to_vec()),
+            ]),
+        };
+        diamond::import_diamond_pack("{}", pack, false).await
+    });
+    if let Err(e) = got {
+        panic!("the import: {}", e);
+    }
+    let meta = u96_meta(&mem);
+    assert!(meta.contains("Fred Hoogland"), "the import left no record: '{}'", meta);
+    assert!(!mem.files().contains_key("diamonds/d/crystal.html"),
+        "a file the copy does not carry was not replaced away");
+}
+
+/// UNBLOCK-96 (QA 6d4e (2)): a `meta.json` that stands but cannot be read holds the import back,
+/// as an unreadable page log does: nothing is written, and the arriving guess is not laid whole
+/// over the real record.
+#[test]
+fn u96_an_unreadable_record_holds_the_import() {
+    let mem = u96_seeded();
+    mem.unreadable("diamonds/d/.daimond/meta.json");
+    let got = direct(mem.clone(), |_| async move {
+        let pack = diamond::Pack {
+            id:    Some(s(D)),
+            name:  None,
+            files: Ok(vec![
+                (s(".daimond/meta.json"), br#"{"name":"The Hoogland Family Stories","crystal_version":0,"updated":0,"touched":200,"tags":[],"provisional":true}"#.to_vec()),
+                (s("crystal.json"), br#"{"title":"The Hoogland Family Stories","sections":["new"]}"#.to_vec()),
+            ]),
+        };
+        diamond::import_diamond_pack("{}", pack, false).await
+    });
+    match got {
+        Ok(crate::diamond_pagelog::ImportOutcome::Held(paths)) =>
+            assert!(paths.iter().any(|p| p.ends_with("meta.json")), "held without naming the record: {:?}", paths),
+        Ok(other)   => panic!("the import went through over an unreadable record: {}", other.to_json()),
+        Err(e)      => panic!("the import: {}", e),
+    }
+    assert!(u96_meta(&mem).contains("Fred Hoogland"), "the real record was replaced: {}", u96_meta(&mem));
+    let crystal = mem.files().get("diamonds/d/crystal.json").cloned().unwrap_or_default();
+    assert!(!String::from_utf8_lossy(&crystal).contains("\"new\""), "the held import wrote the content");
+}
+
+/// `d` arriving from the other device: `meta` as its record and a changed crystal.
+fn u96_arrive(mem: &MemBackend, meta: &'static [u8]) {
+    let got = direct(mem.clone(), move |_| async move {
+        let pack = diamond::Pack {
+            id:    Some(s(D)),
+            name:  None,
+            files: Ok(vec![
+                (s(".daimond/meta.json"), meta.to_vec()),
+                (s("crystal.json"), br#"{"title":"The Hoogland Family Stories","sections":["new"]}"#.to_vec()),
+            ]),
+        };
+        diamond::import_diamond_pack("{}", pack, false).await
+    });
+    if let Err(e) = got {
+        panic!("the import: {}", e);
+    }
+}
+
+/// UNBLOCK-96 (k): a copy whose `touched` is newer only because of activity never carries an
+/// older name or older tags over this device's.  The rename and the tagging here come after the
+/// other device last set either; its copy is fresher only by a join stamp.
+#[test]
+fn u96_a_fresher_copy_never_carries_an_older_name_over_this_devices() {
+    let mem = u96_seeded();
+    let got = direct(mem.clone(), |_| async move {
+        diamond::rename(D, "Fred", crate::activity::Writer::User).await
+    });
+    if let Err(e) = got {
+        panic!("the rename: {}", e);
+    }
+    let here = crate::diamond_meta::Meta::from_json(&u96_meta(&mem));
+    assert!(here.name_at > 0 && here.name_at == here.touched, "the rename set no name stamp: {}", u96_meta(&mem));
+    u96_arrive(&mem, br#"{"name":"Fred Hoogland","crystal_version":0,"updated":100,"touched":99999999999999,"tags":[],"name_at":50,"tags_at":50}"#);
+    let meta = crate::diamond_meta::Meta::from_json(&u96_meta(&mem));
+    assert_eq!("Fred", meta.name, "the touched clock decided the name: {}", u96_meta(&mem));
+    assert_eq!(here.name_at, meta.name_at, "the kept name lost its stamp: {}", u96_meta(&mem));
+    assert!(meta.touched > 99999999999999, "the kept name would not travel back: {}", u96_meta(&mem));
+    let crystal = mem.files().get("diamonds/d/crystal.json").cloned().unwrap_or_default();
+    assert!(String::from_utf8_lossy(&crystal).contains("\"new\""), "the content was not taken");
+}
+
+/// UNBLOCK-96 (l): a name set later on the other device is taken, whatever the two `touched` say.
+#[test]
+fn u96_a_name_set_later_elsewhere_is_taken() {
+    let mem = u96_seeded();
+    let got = direct(mem.clone(), |_| async move {
+        diamond::set_tags(D, &[s("kin")], crate::activity::Writer::User).await
+    });
+    if let Err(e) = got {
+        panic!("the tagging: {}", e);
+    }
+    u96_arrive(&mem, br#"{"name":"Fred H","crystal_version":0,"updated":100,"touched":99999999999999,"tags":["family"],"name_at":99999999999998,"tags_at":1}"#);
+    let meta = crate::diamond_meta::Meta::from_json(&u96_meta(&mem));
+    assert_eq!("Fred H", meta.name, "the later name was not taken: {}", u96_meta(&mem));
+    assert_eq!(vec![s("kin")], meta.tags, "the earlier tags were taken over these: {}", u96_meta(&mem));
+}
+
+/// The record's changes `d` holds, as the History reads them.
+fn u96_rows(mem: &MemBackend) -> Vec<String> {
+    let json = direct(mem.clone(), |_| async move { diamond::meta_changes(D).await });
+    json.trim_start_matches('[').trim_end_matches(']')
+        .split("},{").filter(|r| !r.trim().is_empty()).map(|r| r.to_string()).collect()
+}
+
+/// UNBLOCK-96 (QA 6d4e (1)): a two-sided merge's tags and name, differing from the arrival, are
+/// this device's record: stamped, so they travel back, and no row, each side's change having its own.
+#[test]
+fn u96_a_merge_result_is_stamped_and_logs_no_row() {
+    let mem = u96_seeded();
+    let got = direct(mem.clone(), |_| async move {
+        res!(diamond::set_tags(D, &[s("family"), s("kin")], crate::activity::Writer::Merge).await);
+        diamond::rename(D, "Fred", crate::activity::Writer::Merge).await
+    });
+    if let Err(e) = got {
+        panic!("the merge: {}", e);
+    }
+    let meta = crate::diamond_meta::Meta::from_json(&u96_meta(&mem));
+    assert!(meta.touched > 100 && meta.tags_at > 100 && meta.name_at == meta.touched,
+        "the merge result would not travel back: {}", u96_meta(&mem));
+    assert!(u96_rows(&mem).is_empty(), "the merge logged rows: {:?}", u96_rows(&mem));
+}
+
+/// QA U96 F4: Daimond's own naming of a built-in is no person's rename: it sets no name stamp, so
+/// his rename made on another device before this one named it still wins here.
+#[test]
+fn u96_app_naming_never_outranks_his_rename() {
+    let mem = u96_seeded();
+    let got = direct(mem.clone(), |_| async move {
+        diamond::name_built_in(D, "Daimond Guide", crate::activity::Writer::App).await
+    });
+    if let Err(e) = got {
+        panic!("the naming: {}", e);
+    }
+    let named = crate::diamond_meta::Meta::from_json(&u96_meta(&mem));
+    assert_eq!(0, named.name_at, "Daimond's naming stamped the name as a person's: {}", u96_meta(&mem));
+    u96_arrive(&mem, br#"{"name":"Fred H","crystal_version":0,"updated":100,"touched":200,"tags":["family"],"name_at":150,"tags_at":1}"#);
+    let meta = crate::diamond_meta::Meta::from_json(&u96_meta(&mem));
+    assert_eq!("Fred H", meta.name, "Daimond's naming outranked his rename: {}", u96_meta(&mem));
+}
+
+/// UNBLOCK-96 (d): a rename writes one line to this device's activity record, naming the writer,
+/// the device, the field and both values, for the Diamond's History.  Red on c98c74575: a rename
+/// left no trace anywhere a person could see.
+#[test]
+fn u96_a_rename_shows_one_row_in_history() {
+    let mem = u96_seeded();
+    let got = direct(mem.clone(), |_| async move {
+        diamond::set_self_device("phone-1");
+        diamond::rename(D, "Fred", crate::activity::Writer::User).await
+    });
+    if let Err(e) = got {
+        panic!("the rename: {}", e);
+    }
+    let rows = u96_rows(&mem);
+    assert_eq!(1, rows.len(), "one change, one row: {:?}", rows);
+    for want in ["\"dev\":\"phone-1\"", "\"by\":\"user\"", "\"field\":\"name\"",
+        "\"old\":\"Fred Hoogland\"", "\"new\":\"Fred\""]
+    {
+        assert!(rows[0].contains(want), "the row lacks {}: {}", want, rows[0]);
+    }
+    assert!(mem.files().contains_key("diamonds/d/.daimond/activity/phone-1.log"),
+        "the line is not in this device's own file");
+}
+
+/// UNBLOCK-96 (e): a write that changes no field -- the same name, the same tags -- adds no row.
+#[test]
+fn u96_a_change_that_changes_nothing_shows_no_row() {
+    let mem = u96_seeded();
+    let got = direct(mem.clone(), |_| async move {
+        diamond::set_self_device("phone-1");
+        res!(diamond::rename(D, "Fred Hoogland", crate::activity::Writer::User).await);
+        diamond::set_tags(D, &[s("family")], crate::activity::Writer::User).await
+    });
+    if let Err(e) = got {
+        panic!("the writes: {}", e);
+    }
+    assert!(u96_rows(&mem).is_empty(), "a no-op made a row: {:?}", u96_rows(&mem));
+}
+
+/// UNBLOCK-96 (f): a phone that lost `meta.json` rebuilds a guess and says so in its record; the
+/// copy arriving on the laptop, which kept its real record, shows that one row and renames
+/// nothing.  Red on c98c74575: the rebuild left no trace, and the name changed unseen.
+#[test]
+fn u96_a_provisional_rebuild_arriving_shows_one_row_and_renames_nothing() {
+    let phone = u96_seeded();
+    rt().block_on(async {
+        if let Err(e) = phone.delete_entry("diamonds/d/.daimond/meta.json", false).await {
+            panic!("losing the meta: {}", e);
+        }
+    });
+    let listed = direct(phone.clone(), |_| async move {
+        diamond::set_self_device("phone-1");
+        diamond::list().await
+    });
+    if let Err(e) = listed {
+        panic!("the list: {}", e);
+    }
+    let rows = u96_rows(&phone);
+    assert_eq!(1, rows.len(), "the rebuild made no row on the phone: {:?}", rows);
+    assert!(rows[0].contains("\"by\":\"rebuild\"") && rows[0].contains("The Hoogland Family Stories"),
+        "the row does not say what was guessed: {}", rows[0]);
+    // The phone's copy, as an export carries it.
+    let files: Vec<(String, Vec<u8>)> = phone.files().iter()
+        .filter_map(|(k, v)| k.strip_prefix("diamonds/d/").map(|r| (r.to_string(), v.clone())))
+        .collect();
+    let laptop = u96_seeded();
+    let got = direct(laptop.clone(), |_| async move {
+        diamond::set_self_device("laptop-1");
+        let pack = diamond::Pack { id: Some(s(D)), name: None, files: Ok(files) };
+        diamond::import_diamond_pack("{}", pack, false).await
+    });
+    if let Err(e) = got {
+        panic!("the import: {}", e);
+    }
+    let meta = crate::diamond_meta::Meta::from_json(&u96_meta(&laptop));
+    assert_eq!("Fred Hoogland", meta.name, "the guess renamed the laptop's Diamond");
+    let rows = u96_rows(&laptop);
+    assert_eq!(1, rows.len(), "the laptop does not show the one rebuild row: {:?}", rows);
+    assert!(rows[0].contains("\"dev\":\"phone-1\"") && rows[0].contains("\"by\":\"rebuild\""),
+        "the row does not name the phone's rebuild: {}", rows[0]);
+}
+
+/// UNBLOCK-96 (lead ruling U96c): a rebuild while this device's activity file is being joined
+/// keeps both lines.  The phone lost `meta.json`; a pull lands, and the import's own read of the
+/// local record rebuilds it, writing its line, while the import holds the version store with its
+/// join of the phone's file already planned.  Red on 889340d5b: the join was laid over the file
+/// and the rebuild's line was gone.
+#[test]
+fn u96_a_rebuild_during_a_join_of_this_devices_record_keeps_both_lines() {
+    let phone = u96_seeded();
+    let a = r#"{"at":1792000000000,"dev":"phone-1","v":1,"asked":"first","files":[],"more":0,"said":""}"#;
+    let b = r#"{"at":1792000001000,"dev":"phone-1","v":2,"asked":"second","files":[],"more":0,"said":""}"#;
+    rt().block_on(async {
+        if let Err(e) = phone.write_file("diamonds/d/.daimond/activity/phone-1.log",
+            fmt!("{}\n", a).as_bytes()).await {
+            panic!("seeding the phone's record: {}", e);
+        }
+        if let Err(e) = phone.delete_entry("diamonds/d/.daimond/meta.json", false).await {
+            panic!("losing the meta: {}", e);
+        }
+    });
+    let files = vec![
+        (s(".daimond/meta.json"), br#"{"name":"Fred Hoogland","crystal_version":0,"updated":100,"touched":100,"tags":["family"]}"#.to_vec()),
+        (s("crystal.json"), br#"{"title":"The Hoogland Family Stories","sections":[]}"#.to_vec()),
+        (s(".daimond/activity/phone-1.log"), fmt!("{}\n{}\n", a, b).into_bytes()),
+    ];
+    let got = direct(phone.clone(), |_| async move {
+        diamond::set_self_device("phone-1");
+        let pack = diamond::Pack { id: Some(s(D)), name: None, files: Ok(files) };
+        diamond::import_diamond_pack("{}", pack, false).await
+    });
+    if let Err(e) = got {
+        panic!("the import: {}", e);
+    }
+    let log = phone.files().get("diamonds/d/.daimond/activity/phone-1.log")
+        .map(|b| String::from_utf8_lossy(b).into_owned()).unwrap_or_default();
+    assert!(log.contains("second"), "the arriving turn line is missing: {}", log);
+    assert!(log.contains("\"by\":\"rebuild\""), "the rebuild's line was lost: {}", log);
+}
+
+/// UNBLOCK-96 (lead ruling U96d): a change to the record that waits for the version hold outlives
+/// the page.  The phone lost `meta.json` and rebuilds it while the store is held, so the rebuild's
+/// line waits; the page then closes before anything holds the store again.  The next page to take
+/// the hold writes the line.  Red on a393542dd: the line waited in the closed page's memory.
+#[test]
+fn u96_a_record_change_waiting_for_the_hold_survives_the_page_closing() {
+    let phone = u96_seeded();
+    rt().block_on(async {
+        if let Err(e) = phone.delete_entry("diamonds/d/.daimond/meta.json", false).await {
+            panic!("losing the meta: {}", e);
+        }
+    });
+    let log_of = |m: &MemBackend| m.files().get("diamonds/d/.daimond/activity/phone-1.log")
+        .map(|b| String::from_utf8_lossy(b).into_owned()).unwrap_or_default();
+    // The first page: the rebuild under someone's hold, then the page closes.
+    let got = direct(phone.clone(), |_| async move {
+        diamond::set_self_device("phone-1");
+        let hold = match diamond::hold_versions(D).await {
+            Ok(h)  => h,
+            Err(e) => return Err(e),
+        };
+        diamond::heal_lost_meta(D, "diamonds/d/.daimond/meta.json").await;
+        drop(hold);
+        Ok(())
+    });
+    if let Err(e) = got {
+        panic!("the first page: {}", e);
+    }
+    assert!(!log_of(&phone).contains("\"by\":\"rebuild\""),
+        "the line was written beside the hold: {}", log_of(&phone));
+    // The page reopened: its first hold of the Diamond writes the line.
+    let got = direct(phone.clone(), |_| async move {
+        diamond::set_self_device("phone-1");
+        diamond::hold_versions(D).await.map(|_| ())
+    });
+    if let Err(e) = got {
+        panic!("the reopened page: {}", e);
+    }
+    assert!(log_of(&phone).contains("\"by\":\"rebuild\""),
+        "the waiting line was lost with the page: {}", log_of(&phone));
+}
+
+/// UNBLOCK-96 (lead ruling U96e, QA 6d4e F3): a `.part` is the holder's to remove only when the
+/// page that began it has gone.  A crash's goes with the next hold, so crashes never pile up; one
+/// another tab began just before this one took the hold is mid-write and stays, or that tab loses
+/// its rename and its History row.  Red on db452736d: the live tab's earlier `.part` was deleted.
+#[test]
+fn u96_a_part_file_goes_with_the_next_hold_only_when_its_page_has_gone() {
+    let phone = u96_seeded();
+    let crashed = "diamonds/d/versions/metawait/page0-1-0.part";
+    let earlier = "diamonds/d/versions/metawait/page9-2-0.part";
+    let later   = "diamonds/d/versions/metawait/page9-9-1.part";
+    rt().block_on(async {
+        for (f, b) in [(crashed, &b"half a line"[..]), (earlier, &b"another tab's line"[..])] {
+            if let Err(e) = phone.write_file(f, b).await {
+                panic!("seeding {}: {}", f, e);
+            }
+        }
+    });
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let lv = later.to_string();
+    let other = phone.clone();
+    let got = direct(phone.clone(), |_| async move {
+        diamond::set_self_device("phone-1");
+        crate::store::run::mark_live("page9");
+        let hold = match diamond::hold_versions(D).await {
+            Ok(h)  => h,
+            Err(e) => return Err(e),
+        };
+        // The other tab begins a second while this one holds the store.
+        let w = other.write_file(&lv, b"another tab's second line").await;
+        drop(hold);
+        w
+    });
+    if let Err(e) = got {
+        panic!("the hold: {}", e);
+    }
+    let files = phone.files();
+    assert!(!files.contains_key(crashed), "the crash's .part was left to pile up");
+    assert!(files.contains_key(earlier), "a live tab's .part begun before the hold was taken from it");
+    assert!(files.contains_key(later), "a .part begun under the hold was taken from its writer");
+}
+
+/// QA U96 F1: a two-sided merge's tag set, written as sync's, kept the arrival's stamps, so the
+/// winner's next copy -- one-sided, the same `tags_at` -- took the tag he added here away.  The
+/// plan writes as a merge, which stamps.
+#[test]
+fn qa_u96_a_merged_tag_survives_the_winners_next_copy() {
+    let mem = u96_seeded();
+    let got = direct(mem.clone(), |_| async move {
+        diamond::set_tags(D, &[s("family"), s("kin")], crate::activity::Writer::User).await
+    });
+    if let Err(e) = got {
+        panic!("the tagging: {}", e);
+    }
+    // The other device tagged later and is the fresher copy: two-sided.
+    u96_arrive(&mem, br#"{"name":"Fred Hoogland","crystal_version":0,"updated":100,"touched":99999999999990,"tags":["family","work"],"tags_at":99999999999990}"#);
+    // The page's three-way plan (ancestor ["family"]), applied as parcel_apply applies it.
+    let got = direct(mem.clone(), |_| async move {
+        diamond::set_tags(D, &[s("family"), s("work"), s("kin")], crate::activity::Writer::Merge).await
+    });
+    if let Err(e) = got {
+        panic!("the plan's tagging: {}", e);
+    }
+    let merged = crate::diamond_meta::Meta::from_json(&u96_meta(&mem));
+    assert!(merged.tags.contains(&s("kin")), "the plan did not land: {}", u96_meta(&mem));
+    // The other device does a turn and sends again; it never had "kin".
+    u96_arrive(&mem, br#"{"name":"Fred Hoogland","crystal_version":0,"updated":100,"touched":99999999999995,"tags":["family","work"],"tags_at":99999999999990}"#);
+    let meta = crate::diamond_meta::Meta::from_json(&u96_meta(&mem));
+    assert!(meta.tags.contains(&s("kin")), "the tag he added here was lost: {}", u96_meta(&mem));
+}
+
+/// QA U96 F2: an import over a `meta.json` that stands but cannot be read writes the arriving
+/// guess over his real record.
+#[test]
+fn qa_u96_a_guess_never_lands_over_a_record_that_cannot_be_read() {
+    let mem = u96_seeded();
+    mem.unreadable("diamonds/d/.daimond/meta.json");
+    let _ = direct(mem.clone(), |_| async move {
+        let pack = diamond::Pack {
+            id:    Some(s(D)),
+            name:  None,
+            files: Ok(vec![
+                (s(".daimond/meta.json"), br#"{"name":"The Hoogland Family Stories","crystal_version":0,"updated":0,"touched":200,"tags":[],"provisional":true}"#.to_vec()),
+                (s("crystal.json"), br#"{"title":"The Hoogland Family Stories","sections":["new"]}"#.to_vec()),
+            ]),
+        };
+        diamond::import_diamond_pack("{}", pack, false).await
+    });
+    let meta = u96_meta(&mem);
+    assert!(meta.contains("Fred Hoogland") && meta.contains("family"),
+        "the guess replaced the record it could not read: {}", meta);
+}

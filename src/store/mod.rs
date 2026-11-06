@@ -161,6 +161,9 @@ pub trait StoreEnv {
     fn this_page() -> String;
     /// Is the page `page` still live, so a note it left is its own?  In the tab, only this page.
     fn page_is_live(page: &str) -> bool;
+    /// Is the page `page` still running, here or in another tab, so a file it is still writing
+    /// is never taken from it?  In the tab, by the writer lock each page holds for its life.
+    async fn page_is_running(page: &str) -> bool;
     /// Milliseconds since the epoch, on the wall clock.
     fn now_ms() -> f64;
     /// Today, as `YYYY-MM-DD`, on the clock of the person whose record this is.

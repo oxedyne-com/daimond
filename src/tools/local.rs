@@ -197,20 +197,18 @@ impl Tool {
             Ok(p)    => p,
             Err(why) => return Ok(why),
         };
-        if let Some(parent) = abs.parent() {
-            res!(std::fs::create_dir_all(parent)
-                .map_err(|e| err!(e, "file_write: cannot create parent dirs for '{}'.", path; IO, File)));
-        }
         // A path naming an Office document means the content is MARKDOWN and the file is a document.
         // The name decides, not the bytes: `.docx` is what the user will double-click.
         if let Some(media) = office_kind(&path) {
             let (bytes, note) = res!(office_written(&path, media, &content));
-            res!(std::fs::write(&abs, &bytes)
-                .map_err(|e| err!(e, "file_write: cannot write '{}'.", path; IO, File, Write)));
+            if let Err(why) = res!(replaced(ctx, "file_write", &path, &bytes)) {
+                return Ok(why);
+            }
             return Ok(fmt!("Wrote {} bytes to {}.{}", bytes.len(), path, note));
         }
-        res!(std::fs::write(&abs, content.as_bytes())
-            .map_err(|e| err!(e, "file_write: cannot write '{}'.", path; IO, File, Write)));
+        if let Err(why) = res!(replaced(ctx, "file_write", &path, content.as_bytes())) {
+            return Ok(why);
+        }
         Ok(fmt!("Wrote {} bytes to {}.", content.len(), path))
     }
 
@@ -227,8 +225,9 @@ impl Tool {
         let bytes = res!(std::fs::read(&abs)
             .map_err(|e| err!(e, "doc_edit: cannot read '{}'.", path; IO, File, Read)));
         let (out, note) = res!(doc_edited(&path, media, &bytes, args));
-        res!(std::fs::write(&abs, &out)
-            .map_err(|e| err!(e, "doc_edit: cannot write '{}'.", path; IO, File, Write)));
+        if let Err(why) = res!(replaced(ctx, "doc_edit", &path, &out)) {
+            return Ok(why);
+        }
         Ok(fmt!("Edited {}, now {} bytes.{}", path, out.len(), note))
     }
 
@@ -246,8 +245,9 @@ impl Tool {
         let bytes = res!(std::fs::read(&abs)
             .map_err(|e| err!(e, "sheet_write: cannot read '{}'.", path; IO, File, Read)));
         let (out, note) = res!(sheet_written(&path, media, &bytes, args));
-        res!(std::fs::write(&abs, &out)
-            .map_err(|e| err!(e, "sheet_write: cannot write '{}'.", path; IO, File, Write)));
+        if let Err(why) = res!(replaced(ctx, "sheet_write", &path, &out)) {
+            return Ok(why);
+        }
         Ok(fmt!("Wrote to {}, now {} bytes.{}", path, out.len(), note))
     }
 
@@ -262,8 +262,9 @@ impl Tool {
         let data = res!(std::fs::read_to_string(&abs)
             .map_err(|e| err!(e, "file_edit: cannot read '{}'.", path; IO, File, Read)));
         let (updated, relaxed, missed) = res!(file_edited(&path, &data, &hunks));
-        res!(std::fs::write(&abs, updated.as_bytes())
-            .map_err(|e| err!(e, "file_edit: cannot write '{}'.", path; IO, File, Write)));
+        if let Err(why) = res!(replaced(ctx, "file_edit", &path, updated.as_bytes())) {
+            return Ok(why);
+        }
         Ok(fmt!("{}{}{}", Self::edit_said(&path, hunks.len()), relaxed_said(&relaxed), missed))
     }
 
@@ -1580,4 +1581,26 @@ impl Tool {
     // │ verify: evidence, and the refusal to report a bare pass        │
     // └───────────────────────────────────────────────────────────────┘
 
+}
+
+/// Writes `bytes` as `path` by replace (UNBLOCK-82 F5), the one write every native file tool
+/// makes: where it really is, with every link followed as [`followed`] judged it, its parent
+/// held open (missing folders made on the way) and the bytes renamed over the name
+/// ([`Pinned::replace`](crate::workspace::Pinned::replace)), so a hard link in the workspace
+/// cannot carry the write to another name of its inode.  `Err` is the refusal where a link
+/// was swapped in after the check.
+#[cfg(not(target_arch = "wasm32"))]
+fn replaced<H: Host>(ctx: &ToolContext<H>, tool: &str, path: &str, bytes: &[u8])
+    -> Outcome<Result<(), String>>
+{
+    let real = match res!(ctx.workspace.real_followed(path)) {
+        Some(r) => r,
+        None    => return Ok(Err(refusal_line(&link_escape_refusal(tool, path)))),
+    };
+    let pin = match res!(ctx.workspace.pin_real(&real, true)) {
+        Some(p) => p,
+        None    => return Ok(Err(refusal_line(&link_escape_refusal(tool, path)))),
+    };
+    res!(pin.replace(bytes).map_err(|e| err!(e, "{}: cannot write '{}'.", tool, path; IO, File, Write)));
+    Ok(Ok(()))
 }

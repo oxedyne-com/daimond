@@ -88,12 +88,16 @@
 	// with what it put back, removed and skipped. Same seal, same signature, same post door.
 	var T_UNDO    = 'undo-turn';	// a device -> the runner that ran a turn: undo it
 	var T_UNDONE  = 'undone';	// the runner -> the device that asked: what the undo did
+	// A DELETED CHAT'S SPILL GOES WITH IT (BIGRESULT D). A runner keeps the whole of a cut tool
+	// result in the chat's spill folder, so the tab's delete tells each runner, one row addressed
+	// to each: a row for the account is taken off the relay by the first device that acks it.
+	var T_CHAT_GONE = 'chat-gone';	// a device -> each runner: chat `chat` was deleted
 
 	/// Is `t` a peer envelope tag this layer owns? The collector routes exactly these
-	/// eight and hands everything else (a message artefact) to the message path.
+	/// nine and hands everything else (a message artefact) to the message path.
 	function peerType(t) {
 		return t === T_ERRAND || t === T_REPORT || t === T_ASK || t === T_GRANT
-			|| t === T_COMPILE || t === T_BUILT || t === T_UNDO || t === T_UNDONE;
+			|| t === T_COMPILE || t === T_BUILT || t === T_UNDO || t === T_UNDONE || t === T_CHAT_GONE;
 	}
 
 	// ── Bytes and text ─────────────────────────────────────────
@@ -723,6 +727,38 @@
 		};
 	}
 
+	/// Build a chat-gone envelope (not yet sealed): tell runner `to` that chat `chat` was deleted.
+	function makeChatGone(f) {
+		var o = f || {};
+		return {
+			t:    T_CHAT_GONE,
+			v:    ENVELOPE_V,
+			uid:  String(o.uid || ''),
+			to:   String(o.to || ''),
+			chat: String(o.chat || ''),
+			ts:   o.ts || Date.now(),
+		};
+	}
+
+	/// Tell every other device of the account that chat `chatId` was deleted: one sealed, signed
+	/// `chat-gone` each, through `post(body) -> {ok}`. A device that is no runner acks its own and
+	/// does nothing. Answers how many went; with no presence known, none do, and a runner's idle
+	/// sweep is all that removes the spill.
+	async function tellChatGone(chatId, selfId, post) {
+		var chat = String(chatId || ''), self = String(selfId || ''), n = 0;
+		var known = presenceSnapshot();
+		if (!chat || !known || typeof post !== 'function') return 0;
+		for (var id in known) {
+			if (!Object.prototype.hasOwnProperty.call(known, id) || !id || id === self) continue;
+			var uid = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+			try {
+				var r = await post(await sealForSelf(makeChatGone({ uid: uid, to: id, chat: chat })));
+				if (r && r.ok) n++;
+			} catch (e) { /* best effort, as the rest of a delete is */ }
+		}
+		return n;
+	}
+
 	/// A list of device ids, de-duplicated, as strings; [] for anything else.
 	function triedList(v) {
 		var out = [];
@@ -1081,7 +1117,7 @@
 		var secs = function (ms) { return Math.max(30, Math.min(86400, Math.ceil(ms / 1000))); };
 		if (env.t === T_REPORT || env.t === T_BUILT || env.t === T_UNDONE) {
 			if (env.to) { out['for'] = String(env.to); out.ttl = secs(NOTE_HOLD_MS); }
-		} else if (env.t === T_UNDO) {
+		} else if (env.t === T_UNDO || env.t === T_CHAT_GONE) {
 			// Kept for the runner as long as the relay keeps anything: a day, its cap
 			// (gateway/src/schema.rs:3444), short of the runner's 7-day keep. An ask still
 			// unanswered after that goes again when the runner is seen back (versions.js
@@ -1289,8 +1325,8 @@
 		else if (obj.t === T_COMPILE && _onCompile) result = await _onCompile(obj, row);
 		else if (obj.t === T_BUILT   && _onBuilt)   await _onBuilt(obj, row);
 		else if (obj.t === T_UNDONE  && _onUndone)  await _onUndone(obj, row);
-		// An `undo-turn` is the runner's (kimberlite) to act on; a page leaves it, held for
-		// its addressee as every note for another device is (`noteHeldFor`).
+		// An `undo-turn` or a `chat-gone` is the runner's (kimberlite) to act on; a page leaves
+		// it, held for its addressee as every note for another device is (`noteHeldFor`).
 		return { routed: true, verified: true, result: result };
 	}
 
@@ -7697,10 +7733,13 @@
 		T_GRANT:    T_GRANT,
 		T_UNDO:     T_UNDO,
 		T_UNDONE:   T_UNDONE,
+		T_CHAT_GONE: T_CHAT_GONE,
 		makeErrand:  makeErrand,
 		makeReport:  makeReport,
 		/// Ask the runner that ran a turn to undo it (RUN-HIST); its answer is an `undone`.
 		makeUndo:    makeUndo,
+		makeChatGone: makeChatGone,
+		tellChatGone: tellChatGone,
 		/// Is `t` one of this layer's envelope tags (the collector's routing set)?
 		peerType:    peerType,
 		scopeHolds:  scopeHolds,

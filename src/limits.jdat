@@ -1,0 +1,9 @@
+# The engine's own limits, one figure for every place the engine runs: the tab on either net and,
+# from R12o, Kimberlite.  The engine reads this file at build time (include_str!), so a change
+# here is a change to the bundle, and dev/staleguard.mjs hashes it with the engine's Rust.
+# BIGRESULT-PAGE (06 Nov): tool_result_max is the most characters one tool result carries, Claude
+# Code's own figure (https://code.claude.com/docs/en/mcp: a result "longer than 50,000
+# characters" is saved to a file).  The tab keeps no file, so a cut one says the whole was not kept.
+{
+  "run":  { "tool_result_max": 50000 },
+}

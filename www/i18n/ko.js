@@ -472,6 +472,7 @@
 	// `src/tools.rs`'s NO_NET_NOTE says the same thing to the model; this is the
 	// half a person can read. A statement of what happened, not a failure.
 	'chat.tool_no_net':    '이 명령은 네트워크 없이 실행되었습니다. Daimond가 다른 사람이 쓴 것을 읽었기 때문입니다. 그 안에서 내려받기, 설치, 복제를 시도한 것은 아무것도 얻지 못했습니다. 권한 버튼으로 되돌릴 수 있습니다.',
+	'chat.tool_result_cut': '모델에는 이 결과의 {whole}자 중 처음 {shown}자만 보였습니다. 나머지는 보관되지 않았습니다.',
 	'chat.answered': 'Daimond이 답했어요, {n}단어',
 	'chat.answer_failed': 'Daimond이 답하지 못했어요',
 	'chat.collapse': '모든 답변 접기',
@@ -4137,6 +4138,15 @@
 	'versions.pruned_row.one': '{from}\uc758 {list}\uc740(\ub294) \uae30\ub85d\uc744 \ud55c\ub3c4 \uc548\uc5d0 \uc720\uc9c0\ud558\uae30 \uc704\ud574 \uc81c\uac70\ub418\uc5c8\uc2b5\ub2c8\ub2e4.',
 	'versions.pruned_row.other': '{from}\ubd80\ud130 {to}\uae4c\uc9c0\uc758 \ubc84\uc804 {n}\uac1c({list})\uac00 \uae30\ub85d\uc744 \ud55c\ub3c4 \uc548\uc5d0 \uc720\uc9c0\ud558\uae30 \uc704\ud574 \uc81c\uac70\ub418\uc5c8\uc2b5\ub2c8\ub2e4.',
 	'versions.renumbered_kind': '\ubc88\ud638 \ubcc0\uacbd\ub428',
+	'versions.meta_renamed_kind': '이름 변경',
+	'versions.meta_kind': '변경됨',
+	'versions.meta_row': '{field}: {old} → {new} ({device}에서 {by})',
+	'versions.meta_none': '없음',
+	'versions.meta_by_user': '사용자',
+	'versions.meta_by_daimon': '다이몬',
+	'versions.meta_by_sync': '동기화',
+	'versions.meta_by_rebuild': '재구성',
+	'versions.meta_by_app': 'Daimond',
 	'versions.renumbered_row.one': '\ub2e4\ub978 \uae30\uae30\uc5d0\uc11c \uac19\uc740 \ubc88\ud638\uc758 \uc0ac\ubcf8\uc774 \ub3c4\ucc29\ud558\uc5ec {list}\uc740(\ub294) \uc774\uc81c {to}\uc785\ub2c8\ub2e4.',
 	'versions.renumbered_row.other': '\ub2e4\ub978 \uae30\uae30\uc5d0\uc11c \uac19\uc740 \ubc88\ud638\uc758 \uc0ac\ubcf8\uc774 \ub3c4\ucc29\ud558\uc5ec \ubc84\uc804 {n}\uac1c({list})\uac00 \uc774\uc81c {to}\uc785\ub2c8\ub2e4.',
 	'versions.limit_note': '\uae30\ub85d\uc774 \ud55c\ub3c4\ub97c \ub118\uc5c8\uc2b5\ub2c8\ub2e4. \ub2e4\uc74c \uc5c5\ub370\uc774\ud2b8 \uc804\uae4c\uc9c0\ub294 \uc544\ubb34\uac83\ub3c4 \uc81c\uac70\ub418\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4.',

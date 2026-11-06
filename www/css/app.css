@@ -5066,6 +5066,9 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    when the tool step is collapsed. It carries its own horizontal padding there. */
 .ctile > .ctile-nonet { padding: 2px 12px 9px; }
 .ctile-nonet { font-size: var(--fs-xs); color: var(--warn); line-height: 1.45; }
+.ctile-io + .ctile-cut { margin-top: 7px; }
+.ctile > .ctile-cut { padding: 2px 12px 9px; }
+.ctile-cut { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.45; }
 
 /* Steps switch: hide the tool STEP'S DETAIL, NOT the tool itself.
    Removing the whole tile orphaned the reasoning around it — a tool called

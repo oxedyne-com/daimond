@@ -28,7 +28,7 @@ import { appendAssistantText, appendCompacted, appendEnding, appendError, append
 import { appendFilesLog } from './turnfiles.js';
 import { _peerStopping, chatWebWord, noteRecent, runnerDeaf, runnerRoundTagged, runnerTurnOf } from './consent.js';
 import { abortTurn, busySay, chatSpendNode, sayAnswered, syncSendMode, turnHold, updateMeters } from './chats.js';
-import { _appProv, chatDisplayName, ensureWantMinor, foldProd, mailProd, renderSessionList,
+import { _appProv, chatDisplayName, chatName, ensureWantMinor, foldProd, mailProd, renderSessionList,
 	stampProd } from './tilestyle.js';
 import { Instructions, Prompts } from './pending.js';
 import { copyTurnSet, turnModelsOfRun, writeUsageDigest } from './diamonds.js';
@@ -1288,7 +1288,7 @@ export async function runTurn(chat, text, opts) {
 			// page and several turns run at once. Tagged above.
 			Workers.holdTurn(umid, {
 				chatId:   chat.id,
-				chatName: chat.name || '',
+				chatName: chatName(chat),
 				// The depth a gather round left for this chat, read and cleared exactly as
 				// the post-turn path below reads and clears it.
 				depth:    Workers.gatherDepth[chat.id] | 0,
@@ -2481,7 +2481,7 @@ export async function runTurn(chat, text, opts) {
 			var d = Workers.gatherDepth[chat.id] | 0;
 			delete Workers.gatherDepth[chat.id];
 			Workers.dispatch('', '', dispatched, chatTainted,
-				turnSet.workers, d, { chatId: chat.id, chatName: chat.name || '',
+				turnSet.workers, d, { chatId: chat.id, chatName: chatName(chat),
 					web: chatWebWord(app), models: turnSet });
 		}
 	} else if (rejectedSpawns) {

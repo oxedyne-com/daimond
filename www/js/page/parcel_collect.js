@@ -3200,6 +3200,11 @@ function writeDiamondSeen(map) {
 
 /// The tags, links and name a pack carries, in one parse; null for a pack
 /// that cannot be read. As defensive as `packTags`, for the same reason.
+///
+/// Null too for a PROVISIONAL record (UNBLOCK-96): a meta.json rebuilt from the
+/// crystal on the sending device is a guess, its name the crystal's heading and
+/// its tags empty, so it is no copy's name or tags to merge three-way or to keep
+/// as common ground.
 export function packFacets(data) {
 	var strs = function (a) {
 		return Array.isArray(a) ? a.filter(function (x) { return typeof x === 'string' && x; }) : [];
@@ -3207,6 +3212,7 @@ export function packFacets(data) {
 	try {
 		var files = (JSON.parse(data) || {}).files || {};
 		var meta  = JSON.parse(files['.daimond/meta.json'] || files['.red/meta.json'] || '{}') || {};
+		if (meta.provisional === true) return null;
 		var links = files['.daimond/links.jsonl'] || files['.red/links.jsonl'] || '';
 		return {
 			tags:  strs(meta.tags),

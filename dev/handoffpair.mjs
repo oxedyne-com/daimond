@@ -212,8 +212,9 @@ export async function reload(s) {
 /// Open a device that was closed, on its own profile, and sign it back in: a machine
 /// that was asleep coming back, with its store and its identity as it left them.
 export async function reopen(s) {
-	const r = await open({ name: s.name, touch: !!s.touch, signIn: false, connect: false, serviceWorkers: ROUTED_SW });
-	r.name = s.name; r.touch = s.touch; r.account = s.account;
+	// The route it was opened with goes with it: a `--break` reopened unbroken proves nothing (UNBLOCK-96g).
+	const r = await open({ name: s.name, touch: !!s.touch, signIn: false, connect: false, route: s.route || null, serviceWorkers: ROUTED_SW });
+	r.name = s.name; r.touch = s.touch; r.account = s.account; r.route = s.route || null;
 	await gateUp(r);
 	await signInAs(r, r.account);
 	await r.page.waitForFunction(() => !!window.DaimondSync && !!window.DaimondPeer
@@ -226,7 +227,7 @@ export async function reopen(s) {
 /// Pair one more device of `a`'s account, awake, parked and beating, as `pair` pairs B.
 async function joinMate(a, lead, mate, route, extra = {}) {
 	const b = await open({ name: mate, signIn: false, connect: false, route, serviceWorkers: ROUTED_SW, ...extra });
-	b.account = lead; b.name = mate;
+	b.account = lead; b.name = mate; b.route = { route, ...extra }.route || null;
 	await b.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 90000 }).catch(() => {});
 	const code = await a.page.evaluate(() => DaimondPairing.create());
 	await b.page.evaluate((c) => DaimondPairing.redeem(c), code.code);
@@ -345,7 +346,7 @@ export async function nominateRunner(check, a, b, mate) {
 export async function pair(check, lead, mate, opts = {}) {
 	const route = opts.route || null;
 	const a = await open({ name: lead, touch: true, signIn: false, connect: false, route, serviceWorkers: ROUTED_SW, ...(opts.openA || {}) });
-	a.account = lead; a.name = lead; a.touch = true;
+	a.account = lead; a.name = lead; a.touch = true; a.route = { route, ...(opts.openA || {}) }.route || null;
 	await gateUp(a);
 	await signInAs(a, lead);
 	await a.page.waitForFunction(() => !!window.DaimondSync && !!window.DaimondPeer

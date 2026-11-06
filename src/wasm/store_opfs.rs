@@ -20,8 +20,17 @@ thread_local! {
     /// This page's own name for the copies it notes mid-turn, so a note left by an earlier life of
     /// the page -- one that was reloaded, closed or killed before its turn ended -- can be told
     /// from one whose turn is still running.  See `diamond::pend`.
-    static PAGE: String = generate_session_id();
+    static PAGE: String = {
+        let page = generate_session_id();
+        hold_for_life(&writer_lock(&page));
+        page
+    };
 }
+
+/// The web lock a page holds for its life, before its id, so another tab can tell it still runs.
+const WRITER_LOCK: &str = "daimond-writer-";
+
+fn writer_lock(page: &str) -> String { fmt!("{}{}", WRITER_LOCK, page) }
 
 /// The localStorage key of the origin's links mark (U86), shared with `www/js/filelock.js`.
 const LINKS_MARK: &str = "daimond-links-mark"; // fixed: the name the page's writers move
@@ -147,6 +156,11 @@ impl StoreEnv for OpfsBackend {
     fn folder_open() -> bool { false }
     fn this_page() -> String { PAGE.with(|p| p.clone()) }
     fn page_is_live(page: &str) -> bool { PAGE.with(|p| p == page) }
+    /// A browser that cannot say keeps the file: a crash's leftover is small, a live tab's line
+    /// is his History.
+    async fn page_is_running(page: &str) -> bool {
+        Self::page_is_live(page) || web_lock_named(&writer_lock(page)).await != Some(false)
+    }
     fn now_ms() -> f64 { oxedyne_fe2o3_core::wasm::now_ms() }
     fn today() -> String {
         let d = js_sys::Date::new_0();
@@ -388,8 +402,44 @@ async fn web_lock_in(name: &str, how: LockHow) -> Locked<WebLock> {
     }
 }
 
+/// Ask for the web lock `name` and never give it back: the browser lets it go when the page goes,
+/// crashed or closed.  The request is queued at once, so a query from another tab finds it at
+/// least pending before this page writes anything under its name ([`web_lock_named`]).
+fn hold_for_life(name: &str) {
+    use wasm_bindgen::closure::Closure;
+    let locks = js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("navigator"))
+        .and_then(|n| js_sys::Reflect::get(&n, &JsValue::from_str("locks")));
+    let locks = match locks {
+        Ok(l) if !l.is_undefined() && !l.is_null() => l,
+        _                                          => return,
+    };
+    let request = match js_sys::Reflect::get(&locks, &JsValue::from_str("request"))
+        .map(|f| f.dyn_into::<js_sys::Function>())
+    {
+        Ok(Ok(f)) => f,
+        _         => return,
+    };
+    let forever = Closure::once_into_js(|_lock: JsValue| -> JsValue {
+        js_sys::Promise::new(&mut |_, _| {}).into()
+    });
+    if let Err(e) = request.call2(&locks, &JsValue::from_str(name), &forever) {
+        console_log(&fmt!("this page could not take its writer lock '{}': {}", name, js_str(&e)));
+    }
+}
+
+/// Is the web lock `name` held or asked for by any tab of this origin?  `None` where the browser
+/// cannot say.
+async fn web_lock_named(name: &str) -> Option<bool> {
+    web_lock_listed(name, &["held", "pending"]).await
+}
+
 /// Is the web lock `name` held by any tab of this origin?  `None` where the browser cannot say.
 async fn web_lock_held(name: &str) -> Option<bool> {
+    web_lock_listed(name, &["held"]).await
+}
+
+/// Does the lock manager's snapshot name `name` in any of `lists`?  `None` where it cannot say.
+async fn web_lock_listed(name: &str, lists: &[&str]) -> Option<bool> {
     let got = |obj: &JsValue, key: &str| match js_sys::Reflect::get(obj, &JsValue::from_str(key)) {
         Ok(v) if !v.is_undefined() && !v.is_null() => Some(v),
         _                                          => None,
@@ -410,9 +460,6 @@ async fn web_lock_held(name: &str) -> Option<bool> {
         Ok(s)  => s,
         Err(_) => return None,
     };
-    let held = match got(&snapshot, "held") {
-        Some(h) => js_sys::Array::from(&h),
-        None    => return Some(false),
-    };
-    Some(held.iter().any(|l| got(&l, "name").and_then(|n| n.as_string()).as_deref() == Some(name)))
+    Some(lists.iter().filter_map(|k| got(&snapshot, k)).any(|ls| js_sys::Array::from(&ls).iter()
+        .any(|l| got(&l, "name").and_then(|n| n.as_string()).as_deref() == Some(name))))
 }

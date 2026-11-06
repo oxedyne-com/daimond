@@ -33,7 +33,7 @@ function check(name, cond, detail) {
 
 const FNS = ['readJson', 'diamondModels', 'setDiamondModel', 'blankDiamondModel', 'mergeDiamondModel',
 	'adoptDiamondModel', 'diamondModel', 'migrateInherit', 'unmigrateInherit', 'setFoldPick', 'everyDiamondClient',
-	'withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats', 'chatMetaBeats',
+	'withRecent', 'chatOwnsModel', 'chatOwnName', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats', 'chatMetaBeats',
 	'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit', 'mergeFold',
 	'mergeChatRecords', 'touchChatMeta', 'touchChatModel',
 	'chatTaintOf', 'chatTaintJoin',	// the one-way taint (H3)

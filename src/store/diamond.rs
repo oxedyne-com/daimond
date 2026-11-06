@@ -748,9 +748,15 @@ async fn name_from_crystal(id: &str) -> Option<String> {
 async fn read_meta(id: &str) -> Outcome<Meta> {
     let (bytes, total) = match own::read_file_capped(&meta_path(id), META_MAX).await {
         Ok(read) => read,
-        Err(e)   => return match rebuild_meta(id).await {
-            Some(meta)  => Ok(meta),
-            None        => Err(e),
+        // ONLY A FILE THAT IS NOT THERE IS REBUILT (UNBLOCK-96).  A read that failed on a file
+        // that stands -- a busy handle, a tab dying mid-read -- is an error, not a loss: the real
+        // record is still on disk, and a guess written over it would replace it on every device.
+        Err(e)   => return match own::exists(&meta_path(id)).await {
+            Ok(false)   => match rebuild_meta(id).await {
+                Some(meta)  => Ok(meta),
+                None        => Err(e),
+            },
+            _           => Err(e),
         },
     };
     if total > META_MAX as f64 {
@@ -810,7 +816,10 @@ async fn read_meta(id: &str) -> Outcome<Meta> {
         if meta.name.trim().is_empty() {
             own::trail("META NOT HEALED", &fmt!("{} — no name parsed, file left alone", id));
         } else {
-            match write_meta(id, &meta).await {
+            // The damage is the tags it could not read: that loss is said, not hidden.
+            let mut was = meta.clone();
+            was.tags = vec![fmt!("(unreadable, {} KB)", (total / 1024.0) as u64)];
+            match write_meta_noted(id, &was, &meta, crate::activity::Writer::Rebuild).await {
                 Ok(())  => own::trail("META HEALED", id),
                 Err(e)  => console_log(&fmt!("Diamond '{}' could not have its metadata repaired: {}", id, e)),
             }
@@ -819,21 +828,27 @@ async fn read_meta(id: &str) -> Outcome<Meta> {
     Ok(meta)
 }
 
-/// A Diamond's metadata, rebuilt from its own crystal when `meta.json` is missing or unreadable
-/// (UNBLOCK-48).
+/// A Diamond's metadata, rebuilt from its own crystal when `meta.json` is missing (UNBLOCK-48),
+/// as a PROVISIONAL record that never outranks a real one (UNBLOCK-96).
 ///
 /// Every door to a Diamond passes through [`read_meta`] -- the list, the page, `crystal_look`,
 /// `capture`, a rename -- so a Diamond that lost the file while keeping its crystal was one the
 /// panel did not list and nothing could open, though everything that matters was still on disk.
-/// An import lays `meta.json` down LAST, after deleting the old one, so an import cut short
-/// leaves exactly that.
 ///
-/// Rebuilt only from what the folder says: the name is `crystal.json`'s `title`, the version is
-/// the newest data snapshot, and both stamps are the newest write time in the Diamond's own
-/// directory.  `crystal.json` is read directly rather than through [`read_crystal_data`], whose
-/// fallbacks read the metadata again.  `None`, and nothing written, where there is no crystal or
-/// it carries no title: a name invented here could not be told from one the user chose, and a
-/// folder with no crystal is not a Diamond.  Written back, so it happens once, and logged.
+/// The name is `crystal.json`'s `title` and the version the newest data snapshot.  `crystal.json`
+/// is read directly rather than through [`read_crystal_data`], whose fallbacks read the metadata
+/// again.  `None`, and nothing written, where there is no crystal or it carries no title: a name
+/// invented here could not be told from one the user chose, and a folder with no crystal is not a
+/// Diamond.
+///
+/// **A GUESS, DATED OLDER THAN ANY REAL RECORD.**  The first version stamped the rebuild with the
+/// newest write time in the folder, so on 2 Nov 2026 a phone's guess -- the crystal's heading,
+/// "The Hoogland Family Stories", with no tags -- read as the freshest edit anywhere and renamed
+/// "Fred Hoogland" on every device.  Both stamps are now 0 and the record says `provisional`, so
+/// any device's real record wins the merge over it and it is never pushed as the newer copy;
+/// where a later local change stamps it fresher, the receiver keeps its own identity
+/// ([`crate::diamond_meta::keep_real_record`]).  Written back, so it happens once, and recorded
+/// in the Diamond's History.
 async fn rebuild_meta(id: &str) -> Option<Meta> {
     let path = crystal_data_path(id);
     let text = match own::read_file(&path).await {
@@ -852,38 +867,23 @@ async fn rebuild_meta(id: &str) -> Option<Meta> {
     }
     let version = snapshot_chain(id, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await
         .iter().map(|(n, _)| *n).max().unwrap_or(0);
-    let mut when: f64 = 0.0;
-    for dir in [diamond_dir(id), fmt!("{}/{}", diamond_dir(id), STORE_DIR)] {
-        if let Ok(entries) = own::list_dir_stamped(&dir).await {
-            for (_, is_dir, _, ms) in entries {
-                if let (false, Some(ms)) = (is_dir, ms) {
-                    if ms.is_finite() && ms > when {
-                        when = ms;
-                    }
-                }
-            }
-        }
-    }
-    if when <= 0.0 {
-        if let Ok(Some((ms, _))) = own::stamp(&path).await {
-            if ms.is_finite() && ms > 0.0 {
-                when = ms;
-            }
-        }
-    }
-    let at = when as u64;
     let meta = Meta {
         name,
         version,
-        updated:     at,
-        touched:     at,
+        updated:     0,         // fixed: older than every real record, so any of them wins
+        touched:     0,
         tags:        Vec::new(),
         builtin:     String::new(),
         named:       false,
         no_progress: 0,
         extra:       Vec::new(),
+        provisional: true,
+        name_at:     0,
+        tags_at:     0,
     };
-    match write_meta(id, &meta).await {
+    // Who reads this Diamond may hold the version hold (an import's read of the local record),
+    // so the line is written without asking for it.
+    match write_meta_noted(id, &Meta::from_json("{}"), &meta, crate::activity::Writer::Rebuild).await {
         Ok(())  => own::trail("META REBUILT", &fmt!("{} v{} from crystal.json", id, version)),
         Err(e)  => console_log(&fmt!(
             "Diamond '{}' had its metadata rebuilt from its crystal, but it could not be kept: {}",
@@ -923,6 +923,221 @@ pub async fn heal_lost_meta(id: &str, path: &str) {
 /// Write a Diamond's metadata.
 async fn write_meta(id: &str, meta: &Meta) -> Outcome<()> {
     own::write_file(&meta_path(id), meta.to_json().as_bytes()).await
+}
+
+// The id of the device this page runs on
+//
+// A PAGE FACT, set by the page at boot (`set_device_id` in `wasm::entry`), as the label beside it
+// in `tools::run` is.  It names this device's activity file, where a change to a Diamond's record
+// is written by whichever door made it (UNBLOCK-96), so the store's own doors -- a rebuild, an
+// import -- know it without every caller passing it.
+thread_local! {
+    static SELF_DEVICE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// Record the id of the device this page runs on.
+pub fn set_self_device(id: &str) {
+    SELF_DEVICE.with(|c| *c.borrow_mut() = id.trim().to_string());
+}
+
+/// The id of the device this page runs on, empty where the page has not said.
+pub fn self_device() -> String {
+    SELF_DEVICE.with(|c| c.borrow().clone())
+}
+
+/// Write `new` as `id`'s record and say what changed from `old` in this device's activity file,
+/// for the person to see in the Diamond's History (UNBLOCK-96): who (`by`), where, when, and each
+/// field's old and new value.  A write that changed no field adds no line.
+///
+/// For a person's or a merge's act, which holds no version hold: it is taken for the line, so a
+/// turn ending at the same moment cannot lose its own.  The line is best effort against the
+/// record, already written, and a change is not undone for want of its note.
+async fn write_meta_by(id: &str, old: &Meta, new: &Meta, by: crate::activity::Writer)
+    -> Outcome<()>
+{
+    res!(write_meta(id, new).await);
+    if !by.originates() {
+        return Ok(());  // no row of its own to write
+    }
+    match hold_versions(id).await {
+        Ok(hold) => note_meta(id, old, new, by, Some(&hold)).await,
+        // Held past the wait: the line waits for whoever holds it next ([`note_meta`]).
+        Err(_)   => note_meta(id, old, new, by, None).await,
+    }
+    Ok(())
+}
+
+/// As [`write_meta_by`], for the store's own doors -- a rebuild inside a read -- whose caller may
+/// hold the version hold already ([`note_meta`] with none handed in).
+async fn write_meta_noted(id: &str, old: &Meta, new: &Meta, by: crate::activity::Writer)
+    -> Outcome<()>
+{
+    res!(write_meta(id, new).await);
+    note_meta(id, old, new, by, None).await;
+    Ok(())
+}
+
+// Changes to a Diamond's record not yet in this device's activity file
+//
+// THE LINE IS WRITTEN UNDER THE VERSION HOLD, NEVER BESIDE IT (UNBLOCK-96, lead ruling U96c).
+// Every writer of this device's file reads it, adds and writes it back: a turn's end
+// ([`activity_append`]) and an import's join hold the version store across that, and a line
+// written beside them is laid over and lost.  A rebuild inside a read cannot know whether its
+// caller holds the store, and asking would wait on itself, so where the store is held the line
+// waits, and the holder's own writes or the next hold write it ([`flush_meta_notes`]).
+//
+// A waiting line is kept with the Diamond, never in the page (lead ruling U96d): a page closed
+// before the next hold took its lines with it.  Each wait is its own file in [`META_WAIT_DIR`],
+// laid down whole under a passing name and then moved to its own, so no writer reads another's
+// to add to it, and a reader never meets half a file.  A file the holder wrote but could not
+// delete is written again by the next; the join keeps one of each line ([`crate::activity::shed`]).
+
+/// The folder under a store's `versions/` holding changes to the record that wait for its hold.
+///
+/// Device-local, as [`PENDING_DIR`] is: a line is this device's, for this device's own file.
+const META_WAIT_DIR: &str = "metawait";
+
+/// `<store>/versions/metawait`.
+fn meta_wait_dir(id: &str) -> String {
+    fmt!("{}/{}", versions_dir(id), META_WAIT_DIR)
+}
+
+thread_local! {
+    // This page's waits so far, so two in one millisecond take two names.
+    static META_WAITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Keep `lines` with `id` until its version hold is next taken ([`META_WAIT_DIR`]).
+async fn park_meta(id: &str, lines: &[crate::activity::MetaChange]) -> Outcome<()> {
+    let n = META_WAITS.with(|c| { let n = c.get(); c.set(n + 1); n });
+    let dir = meta_wait_dir(id);
+    let name = fmt!("{}-{}-{}", own::this_page(), now_ms() as i64, n);
+    let part = fmt!("{}/{}.part", dir, name);
+    let text: String = lines.iter()
+        .map(|l| fmt!("{}\n", crate::activity::encode(&crate::activity::Entry::Meta(l.clone()))))
+        .collect();
+    res!(own::write_file(&part, text.as_bytes()).await);
+    res!(own::move_entry(&part, &fmt!("{}/{}.log", dir, name)).await);
+    Ok(())
+}
+
+/// The page that laid down the waiting `.part` `name` ([`park_meta`]), if its name says.
+fn part_writer(name: &str) -> Option<&str> {
+    name.trim_end_matches(".part").rsplitn(3, '-').nth(2).filter(|p| !p.is_empty())
+}
+
+/// Say what changed from `old` to `new` in `id`'s record, in this device's activity file, under
+/// the version hold: `held` where the caller holds it, else taken where it is free, else the
+/// line waits with the Diamond for the holder ([`park_meta`]).
+async fn note_meta(id: &str, old: &Meta, new: &Meta, by: crate::activity::Writer,
+    held: Option<&VersionHold>)
+{
+    // A copy applied from sync logs nothing here: its row is the origin's
+    // ([`crate::activity::Writer::originates`]).
+    if !by.originates() {
+        return;
+    }
+    let changed = crate::diamond_meta::changes(old, new);
+    if changed.is_empty() {
+        return;
+    }
+    let now = now_ms() as i64;
+    let dev = self_device();
+    let lines: Vec<crate::activity::MetaChange> = changed.iter()
+        .map(|(f, o, n)| crate::activity::MetaChange::new(now, &dev, by, f, o, n))
+        .collect();
+    own::trail("META CHANGE", &fmt!("{} {} by {}", id,
+        changed.iter().map(|(f, _, _)| f.as_str()).collect::<Vec<_>>().join(","), by.as_str()));
+    // Parked first, so a page that closes before any hold writes it leaves it with the Diamond.
+    let unparked = match park_meta(id, &lines).await {
+        Ok(())  => Vec::new(),
+        Err(e)  => {
+            own::trail("META CHANGE NOT PARKED", &fmt!("{}: {}", id, e));
+            lines
+        },
+    };
+    match held {
+        Some(hold) => flush_meta_notes(hold, id, unparked).await,
+        None       => match try_hold_versions(id).await {
+            Some(hold) => flush_meta_notes(&hold, id, unparked).await,
+            None if unparked.is_empty() =>
+                own::trail("META CHANGE WAITS", &fmt!("{} for the version hold", id)),
+            None       => console_log(&fmt!(
+                "Diamond '{}' changed its record, but the change could not be kept for its \
+                 History while its version store was busy.", id)),
+        },
+    }
+}
+
+/// Write the changes waiting for `id` ([`META_WAIT_DIR`]), and `also`, to this device's activity
+/// file, by the caller holding the version store.  Waiting lines that cannot be written wait for
+/// the next hold, and `also` is parked to join them.
+///
+/// A `.part` whose page is no longer running is a writer that died between laying it down and
+/// moving it (lead ruling U96e), so the holder removes it and crashes never pile up.  One whose
+/// page still runs is mid-write, however long ago it began, since the writer is never under the
+/// hold, and is left ([`own::page_is_running`]).
+async fn flush_meta_notes(_hold: &VersionHold, id: &str, also: Vec<crate::activity::MetaChange>) {
+    let dir = meta_wait_dir(id);
+    let listed = own::list_dir_stamped(&dir).await.unwrap_or_default();   // none: every store at rest
+    for (n, is_dir, _, _) in &listed {
+        if *is_dir || !n.ends_with(".part") {
+            continue;
+        }
+        if let Some(page) = part_writer(n) {
+            if !own::page_is_running(page).await {
+                let _ = own::delete_file(&fmt!("{}/{}", dir, n)).await; // the next hold tries again
+            }
+        }
+    }
+    let names: Vec<String> = listed.into_iter()
+        .filter(|(n, is_dir, _, _)| !is_dir && n.ends_with(".log"))
+        .map(|(n, _, _, _)| n)
+        .collect();
+    let mut lines: Vec<crate::activity::MetaChange> = Vec::new();
+    for name in &names {
+        if let Ok(b) = own::read_file(&fmt!("{}/{}", dir, name)).await {
+            for e in crate::activity::parse(&String::from_utf8_lossy(&b)) {
+                if let crate::activity::Entry::Meta(m) = e {
+                    lines.push(m);
+                }
+            }
+        }
+    }
+    let had_also = !also.is_empty();
+    lines.extend(also.iter().cloned());
+    if lines.is_empty() {
+        return;
+    }
+    let dev = lines[0].dev.clone();
+    let path = fmt!("{}/{}", diamond_dir(id), crate::activity::file_rel(&dev));
+    let now = now_ms() as i64;
+    let done = match read_if_any(&path).await {
+        Ok(had) => {
+            let old_text = had.map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+            own::write_file(&path, crate::activity::append_meta(&old_text, lines, now).as_bytes()).await
+        },
+        Err(e)  => Err(e),
+    };
+    match done {
+        Ok(())  => for name in &names {
+            // One left behind is written again by the next hold, and joined as one.
+            let _ = own::delete_file(&fmt!("{}/{}", dir, name)).await;
+        },
+        Err(e)  => {
+            let kept = !had_also || park_meta(id, &also).await.is_ok();
+            console_log(&fmt!(
+                "Diamond '{}' changed its record, but the change could not yet be noted in its \
+                 History{}: {}", id, if kept { "" } else { ", and is lost" }, e));
+        },
+    }
+}
+
+/// The changes to the Diamond `id`'s name and record, from every device, oldest first, as JSON
+/// ([`crate::activity::meta_json`]) for its History.
+pub async fn meta_changes(id: &str) -> String {
+    let files: Vec<String> = activity_read_all(id).await.into_iter().map(|(_, t)| t).collect();
+    crate::activity::meta_json(&crate::activity::merge(&files, now_ms() as i64))
 }
 
 /// Stamp a Diamond as changed, without saying it was worked on.
@@ -1174,6 +1389,9 @@ async fn create_fresh(name: &str, id: &str) -> Outcome<String> {
         // The app's K until someone sets this Diamond's own (UNBLOCK-27 R4).
         no_progress: 0,
         extra:   Vec::new(),
+        provisional: false,
+        name_at: now,
+        tags_at: 0,
     };
     res!(write_meta(&id, &meta).await);
 
@@ -1192,30 +1410,43 @@ async fn create_fresh(name: &str, id: &str) -> Outcome<String> {
     Ok(id)
 }
 
-/// Rename a Diamond, updating `meta.json`'s name and both its stamps.
-pub async fn rename(id: &str, name: &str) -> Outcome<()> {
+/// Rename a Diamond, updating `meta.json`'s name and, for a change made here, both its stamps
+/// ([`crate::activity::Writer::originates`]).
+pub async fn rename(id: &str, name: &str, by: crate::activity::Writer) -> Outcome<()> {
     let now = now_ms() as u64;
-    let mut meta = res!(read_meta(id).await);
+    let was = res!(read_meta(id).await);
+    let mut meta = was.clone();
     meta.name = name.to_string();
-    meta.updated = now;
-    meta.bump_touched(now);
-    res!(write_meta(id, &meta).await);
-    Ok(())
+    meta.provisional = false;   // a name someone chose
+    if by.stamps() {
+        meta.updated = now;
+        meta.bump_touched(now);
+        if by.stamps_field() {
+            meta.name_at = meta.touched;
+        }
+    }
+    write_meta_by(id, &was, &meta, by).await
 }
 
 /// Give a built-in its current name, once, and record that it was given (R568-FU F2).
 ///
 /// As [`rename`], and the record travels with the marker, so neither this device nor another
 /// renames it again: a built-in he renamed back to its old default name stays as he left it.
-pub async fn name_built_in(id: &str, name: &str) -> Outcome<()> {
+pub async fn name_built_in(id: &str, name: &str, by: crate::activity::Writer) -> Outcome<()> {
     let now = now_ms() as u64;
-    let mut meta = res!(read_meta(id).await);
+    let was = res!(read_meta(id).await);
+    let mut meta = was.clone();
     meta.name = name.to_string();
     meta.named = true;
-    meta.updated = now;
-    meta.bump_touched(now);
-    res!(write_meta(id, &meta).await);
-    Ok(())
+    meta.provisional = false;
+    if by.stamps() {
+        meta.updated = now;
+        meta.bump_touched(now);
+        if by.stamps_field() {
+            meta.name_at = meta.touched;
+        }
+    }
+    write_meta_by(id, &was, &meta, by).await
 }
 
 /// Mark a Diamond as the built-in seeded at `fixed_id` (NAMES N1).
@@ -1223,19 +1454,21 @@ pub async fn name_built_in(id: &str, name: &str) -> Outcome<()> {
 /// The marker is content and has to travel, so `touched` moves; `updated` does not, because
 /// marking is not working on it and must not reorder the rail.  A marker that is not a fixed-id
 /// shape is refused rather than stored, and setting the one already there writes nothing.
-pub async fn mark_built_in(id: &str, fixed_id: &str) -> Outcome<()> {
+pub async fn mark_built_in(id: &str, fixed_id: &str, by: crate::activity::Writer) -> Outcome<()> {
     let mark = crate::diamond_meta::normalise_builtin(fixed_id);
     if mark.is_empty() {
         return Err(err!("'{}' is not a built-in Diamond's id.", fixed_id; Invalid, Input));
     }
-    let mut meta = res!(read_meta(id).await);
-    if meta.builtin == mark {
+    let was = res!(read_meta(id).await);
+    if was.builtin == mark {
         return Ok(());
     }
+    let mut meta = was.clone();
     meta.builtin = mark;
-    meta.bump_touched(now_ms() as u64);
-    res!(write_meta(id, &meta).await);
-    Ok(())
+    if by.stamps() {
+        meta.bump_touched(now_ms() as u64);
+    }
+    write_meta_by(id, &was, &meta, by).await
 }
 
 /// Set a Diamond's tags, replacing whatever it held, and stamp it updated.
@@ -1258,13 +1491,19 @@ pub async fn mark_built_in(id: &str, fixed_id: &str) -> Outcome<()> {
 /// it alone meant the tags never reached the other device AND that the other
 /// device's untagged copy became strictly fresher the moment anything there was
 /// renamed or edited, at which point the merge replaced the tagged copy with it
-/// and the tags were gone.  A user lost real tags that way.
-pub async fn set_tags(id: &str, tags: &[String]) -> Outcome<()> {
-    let mut meta = res!(read_meta(id).await);
+/// and the tags were gone.  A user lost real tags that way.  A copy applied from sync keeps
+/// the stamps it arrived with ([`crate::activity::Writer::originates`]).
+pub async fn set_tags(id: &str, tags: &[String], by: crate::activity::Writer) -> Outcome<()> {
+    let was = res!(read_meta(id).await);
+    let mut meta = was.clone();
     meta.tags = normalise_tags(tags);
-    meta.bump_touched(now_ms() as u64);
-    res!(write_meta(id, &meta).await);
-    Ok(())
+    if by.stamps() {
+        meta.bump_touched(now_ms() as u64);
+        if by.stamps_field() {
+            meta.tags_at = meta.touched;
+        }
+    }
+    write_meta_by(id, &was, &meta, by).await
 }
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -1334,7 +1573,7 @@ pub async fn activity_read(id: &str) -> (Vec<(String, String)>, Vec<String>) {
 /// that fails puts the file back. A file that exists and cannot be read is an error, not an empty
 /// record to write one line over.
 pub async fn activity_append(id: &str, turn: crate::activity::Turn, now: i64) -> Outcome<()> {
-    let _hold = res!(hold_versions(id).await);
+    let hold = res!(hold_versions(id).await);
     let path = fmt!("{}/{}", diamond_dir(id), crate::activity::file_rel(&turn.dev));
     let had = res!(read_if_any(&path).await);
     let old = match &had {
@@ -1343,10 +1582,16 @@ pub async fn activity_append(id: &str, turn: crate::activity::Turn, now: i64) ->
     };
     let text = crate::activity::append(&old, turn, now);
     res!(own::write_file(&path, text.as_bytes()).await);
+    // A change to the record noted while this held the store -- the stamp's own rebuild among
+    // them -- is written now, after the turn's line and never under it (UNBLOCK-96).
     let e = match touch(id).await {
-        Ok(())  => return Ok(()),
+        Ok(())  => {
+            flush_meta_notes(&hold, id, Vec::new()).await;
+            return Ok(());
+        },
         Err(e)  => e,
     };
+    flush_meta_notes(&hold, id, Vec::new()).await;
     match restore(&path, &had).await {
         Ok(())  => Err(err!("The activity line was put back because Diamond '{}' could not be \
             stamped: {}", id, e; IO, File, Write)),
@@ -1453,8 +1698,10 @@ pub async fn list() -> Outcome<String> {
         if meta.name.trim().is_empty() {
             if let Some(from_crystal) = name_from_crystal(&name).await {
                 own::trail("NAME RECOVERED", &name);
+                let was = meta.clone();
                 meta.name = from_crystal;
-                if let Err(e) = write_meta(&name, &meta).await {
+                if let Err(e) = write_meta_noted(&name, &was, &meta,
+                    crate::activity::Writer::Rebuild).await {
                     console_log(&fmt!("Diamond '{}' could not keep its recovered name: {}", name, e));
                 }
             }
@@ -1466,9 +1713,10 @@ pub async fn list() -> Outcome<String> {
     let items: Vec<String> = rows.iter().map(|(id, m)| {
         fmt!(
             "{{\"id\":\"{}\",\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\
-              \"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{}}}",
+              \"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{},\
+              \"provisional\":{}}}",
             json_escape(id), json_escape(&m.name), m.version, m.updated,
-            m.touched, json_escape(&m.builtin), m.named, m.tags_json(),
+            m.touched, json_escape(&m.builtin), m.named, m.tags_json(), m.provisional,
         )
     }).collect();
     Ok(fmt!("[{}]", items.join(",")))
@@ -4892,7 +5140,7 @@ pub(crate) fn device_local(rel: &str) -> bool {
     if rel == fmt!("{}/{}", VERSIONS_SUBDIR, versions::CLAIMS_FILE) {
         return true;
     }
-    [PENDING_DIR, OUTPUTS_DIR].iter().any(|d| {
+    [PENDING_DIR, OUTPUTS_DIR, META_WAIT_DIR].iter().any(|d| {
         let dir = fmt!("{}/{}", VERSIONS_SUBDIR, d);
         rel == dir || rel.starts_with(&fmt!("{}/", dir))
     })
@@ -5546,16 +5794,30 @@ fn version_wait_refusal(named: &str) -> Error<ErrTag> {
 /// manager refuses the request: falling back to this page's own gate while another tab might
 /// hold the lock would break it without a word.
 pub async fn hold_versions(id: &str) -> Outcome<VersionHold> {
-    match own::lock(&fmt!("{}{}", VERSION_LOCK, id), LockHow::Timeout(VERSION_WAIT_MS)).await {
-        Locked::Held(release) => Ok(VersionHold { _release: Some(release), _local: None }),
+    let hold = match own::lock(&fmt!("{}{}", VERSION_LOCK, id), LockHow::Timeout(VERSION_WAIT_MS)).await {
+        Locked::Held(release) => VersionHold { _release: Some(release), _local: None },
         Locked::NoManager     => match mint_turn(id, VERSION_WAIT_MS).await {
-            Some(turn) => Ok(VersionHold { _release: None, _local: Some(turn) }),
-            None       => Err(version_wait_refusal(&diamond_named(id).await)),
+            Some(turn) => VersionHold { _release: None, _local: Some(turn) },
+            None       => return Err(version_wait_refusal(&diamond_named(id).await)),
         },
-        Locked::TimedOut | Locked::Busy => Err(version_wait_refusal(&diamond_named(id).await)),
-        Locked::Refused(why)  => Err(err!(
+        Locked::TimedOut | Locked::Busy => return Err(version_wait_refusal(&diamond_named(id).await)),
+        Locked::Refused(why)  => return Err(err!(
             "Diamond '{}': the browser would not lock Daimond's version store for it ({}), so \
              nothing was changed or recorded.", diamond_named(id).await, why; Lock)),
+    };
+    // A change to the record that waited for the store is written by its next holder (UNBLOCK-96).
+    flush_meta_notes(&hold, id, Vec::new()).await;
+    Ok(hold)
+}
+
+/// The Diamond's version store where nobody holds it now, else `None`: for a door that may run
+/// inside its own caller's hold and so must never wait for it ([`note_meta`]).
+async fn try_hold_versions(id: &str) -> Option<VersionHold> {
+    match own::lock(&fmt!("{}{}", VERSION_LOCK, id), LockHow::IfAvailable).await {
+        Locked::Held(release) => Some(VersionHold { _release: Some(release), _local: None }),
+        Locked::NoManager     => mint_turn(id, 0).await
+            .map(|turn| VersionHold { _release: None, _local: Some(turn) }),
+        Locked::TimedOut | Locked::Busy | Locked::Refused(_) => None,
     }
 }
 
@@ -9504,7 +9766,14 @@ async fn rebase_before_import(_hold: &VersionHold, id: &str, incoming: &[(String
 /// version store, so the file history -- and any conflict snapshot just kept -- survives a
 /// wholesale replace (S-SYNC #4), and its activity record, which is joined in place (item 24).
 /// The export's own `versions/` files are written over what is kept, unioning by content address.
-async fn delete_except_kept(dir: &str) -> Outcome<()> {
+///
+/// **NOTHING THE IMPORT IS ABOUT TO WRITE IS DELETED FIRST, AND NEVER THE METADATA (UNBLOCK-96).**
+/// Every file in `laid` is written over where it stands, so only what the arriving copy does not
+/// carry goes here.  The old order deleted `meta.json` and wrote it back last, and a tab that died
+/// in between left a Diamond with a crystal and no record, which a later read rebuilt as a guess;
+/// on 2 Nov 2026 that guess renamed a Diamond on every device.  Now a cut-short import leaves
+/// each file either as it was or as it arrived, and `meta_rel` stands throughout.
+async fn delete_except_kept(dir: &str, laid: &[&str], meta_rel: &str) -> Outcome<()> {
     let mut subs: Vec<String> = vec![String::new()];
     while let Some(sub) = subs.pop() {
         let at = if sub.is_empty() { dir.to_string() } else { fmt!("{}/{}", dir, sub) };
@@ -9514,9 +9783,14 @@ async fn delete_except_kept(dir: &str) -> Outcome<()> {
         };
         for (name, is_dir, _size) in entries {
             let rel = if sub.is_empty() { name.clone() } else { fmt!("{}/{}", sub, name) };
+            let written = rel == meta_rel || laid.contains(&rel.as_str());
+            let holds_written = is_dir && (meta_rel.starts_with(&fmt!("{}/", rel))
+                || laid.iter().any(|l| l.starts_with(&fmt!("{}/", rel))));
             match diamond_rebase::on_replace(&rel) {
                 diamond_rebase::OnReplace::Keep                 => (),
                 diamond_rebase::OnReplace::Descend if is_dir    => subs.push(rel),
+                _ if holds_written                              => subs.push(rel),
+                _ if written && !is_dir                         => (),
                 _ => res!(own::delete_entry(&fmt!("{}/{}", dir, rel), is_dir).await),
             }
         }
@@ -9550,9 +9824,10 @@ pub struct Pack {
 /// for ever.
 ///
 /// The read and the parse both happen before anything is deleted, so a malformed
-/// export cannot leave the user with neither copy.  The window between the delete
-/// and the last write remains: a failure inside it leaves the Diamond gone from
-/// this device, and the next pull brings it back.
+/// export cannot leave the user with neither copy.  Nothing the export carries is
+/// deleted before it is written, and `meta.json` never is (UNBLOCK-96,
+/// [`delete_except_kept`]): a failure part way leaves each file as it was or as it
+/// arrived, and the next pull lays the rest.
 ///
 /// **`versions/` travels, and that is the whole of what keeps file history across a pull.**  The
 /// file manifests and their bodies are ordinary files under the Diamond's directory, so
@@ -9669,6 +9944,25 @@ pub async fn import_diamond_pack(json: &str, pack: Pack, keep_conflict: bool)
             return Ok(ImportOutcome::Held(paths));
         }
     };
+    // THIS DEVICE'S RECORD, read before anything is written (R568-FU F1, UNBLOCK-96): the arriving
+    // one is settled against it below.  A record that stands but cannot be read holds the import
+    // back, as an unreadable log does: laid over whole, the arrival -- a guess among them -- would
+    // replace the real record on every device.  None stands only where there is none to read.
+    let local_meta = if existed {
+        match read_meta(&id).await {
+            Ok(m)   => Some(m),
+            Err(e)  => match own::exists(&meta_path(&id)).await {
+                Ok(false)   => None,
+                _           => {
+                    own::trail("META HELD", &fmt!("{} {}", id, e));
+                    drop(hold);
+                    return Ok(ImportOutcome::Held(vec![meta_rel]));
+                }
+            },
+        }
+    } else {
+        None
+    };
     // NO VERSION OF THIS DEVICE'S IS WRITTEN OVER OR READ THROUGH THE OTHER'S (2026-09-23, bc4).
     // Two devices that each record between syncs mint the same numbers, and the writes below lay
     // the other's `versions/` over this one's by name: a local keyframe and an incoming patch
@@ -9699,10 +9993,6 @@ pub async fn import_diamond_pack(json: &str, pack: Pack, keep_conflict: bool)
                 id, e));
         }
     }
-    // THIS DEVICE'S BUILT-IN RECORD, read before the delete below takes it (R568-FU F1). An older
-    // build's copy carries no `builtin` key, and laid over this one as it came it unmarked the
-    // built-in here for good. Unreadable is no record: the copy is then written as it came.
-    let local_meta = if existed { read_meta(&id).await.ok() } else { None };
     // The joined logs over the arriving copies, and the ones only this device held besides, so
     // the delete below takes nothing the join kept.  The metadata stays last.
     if let Some(j) = &logs {
@@ -9718,8 +10008,10 @@ pub async fn import_diamond_pack(json: &str, pack: Pack, keep_conflict: bool)
         // PRESERVE `versions/` and the activity record; delete only the rest.  The kept snapshot
         // and the whole file history live under the one, and the export's own `versions/` is
         // written over it below; the other is joined in place.
-        res!(delete_except_kept(&dir).await);
+        let laid: Vec<&str> = writes.iter().map(|(rel, _)| rel.as_str()).collect();
+        res!(delete_except_kept(&dir, &laid, &meta_rel).await);
     }
+    let mut landed_meta: Option<Meta> = None;
     for (rel, body) in writes {
         // THE METADATA IS REBUILT, NOT COPIED. Every other file in an export is
         // the user's content and travels byte for byte; `meta.json` is a record
@@ -9759,22 +10051,46 @@ pub async fn import_diamond_pack(json: &str, pack: Pack, keep_conflict: bool)
         } else if rel == meta_rel {
             // Not a re-stamp: the arrival is not a change of this device's, and the stamps stay
             // the copy's own.
+            //
+            // AND NEVER A GUESS OVER A REAL RECORD (UNBLOCK-96): an arriving record rebuilt from
+            // its crystal on the other device brings its content, not its name or tags.  Nor a
+            // name or tags set earlier than this device's, however fresh the copy's `touched`.
+            // Either case is a change of this device's, stamped, so the kept record travels back.
             let text = String::from_utf8_lossy(&body).to_string();
+            let text = match local_meta.as_ref() {
+                Some(l) => {
+                    let real = crate::diamond_meta::keep_real_record(&text, l, now as u64)
+                        .unwrap_or(text);
+                    crate::diamond_meta::keep_set_fields(&real, l, now as u64).unwrap_or(real)
+                }
+                None    => text,
+            };
             match local_meta.as_ref().and_then(|l| crate::diamond_meta::keep_built_in_marker(&text, l)) {
                 Some(kept)  => kept.into_bytes(),
-                None        => body,
+                None        => text.into_bytes(),
             }
         } else {
             body
         };
         // THE STORE'S OWN LOGS ARE JOINED, NEVER REPLACED (D-26 review A F2, F5; B F2): what this
         // device knows of its page data must not go because the other copy did not know it.
+        if rel == meta_rel {
+            landed_meta = Some(Meta::from_json(&String::from_utf8_lossy(&bytes)));
+        }
         let bytes = res!(joined_log(&id, &rel, bytes).await);
         res!(own::write_file(&fmt!("{}/{}", dir, rel), &bytes).await);
     }
     for (rel, text) in &act.writes {
         res!(own::write_file(&fmt!("{}/{}", dir, rel), text.as_bytes()).await);
     }
+    // WHAT THE ARRIVAL CHANGED IN THE RECORD IS SAID HERE (UNBLOCK-96), as this device's line: a
+    // name that moved because another device's copy was taken shows in History, with the device
+    // that took it.  A Diamond met for the first time changed nothing here.
+    if let (Some(was), Some(landed)) = (&local_meta, &landed_meta) {
+        note_meta(&id, was, landed, crate::activity::Writer::Sync, Some(&hold)).await;
+    }
+    // And whatever waited for the hold this import held -- its own read's rebuild among them.
+    flush_meta_notes(&hold, &id, Vec::new()).await;
     // THE COUNTER STAYS WHERE THE IMPORT SET IT, at the remote's live version, and is not
     // advanced past the kept snapshot as it once was. The next edit already mints past every
     // number on disk; and advancing it made the version the Diamond is at a number whose
@@ -9876,6 +10192,7 @@ pub async fn union_logs_from_pack(id: &str, pack: Pack) -> Outcome<ImportOutcome
                 could not be written ({}).", id, e));
         }
     }
+    flush_meta_notes(&hold, id, Vec::new()).await;     // what waited for this hold (UNBLOCK-96)
     drop(hold);
     counts.here += act.here;
     counts.arriving += act.arriving;

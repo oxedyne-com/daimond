@@ -87,11 +87,138 @@ pub struct Day {
 	pub text: String,
 }
 
+/// Who changed a Diamond's record (UNBLOCK-96).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Writer {
+	User,		// the person, through the page
+	Daimon,		// a turn
+	Sync,		// a copy from another device, applied here
+	Merge,		// a two-sided sync's merge of both copies, settled here
+	Rebuild,	// the store, guessing or healing a lost or damaged record
+	App,		// Daimond's own naming and marking of a built-in Diamond
+}
+
+impl Writer {
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			Writer::User    => "user",
+			Writer::Daimon  => "daimon",
+			Writer::Sync    => "sync",
+			Writer::Merge   => "merge",
+			Writer::Rebuild => "rebuild",
+			Writer::App     => "app",
+		}
+	}
+
+	/// Does a change by this writer start on this device?  Only such a change logs a row here: a
+	/// copy applied from sync has its row on the origin device, which reaches here in that
+	/// device's activity file (lead ruling U96g), and a merge only joins changes each side logged.
+	pub fn originates(&self) -> bool {
+		match self {
+			Writer::Sync    |
+			Writer::Merge   => false,
+			Writer::User    |
+			Writer::Daimon  |
+			Writer::Rebuild |
+			Writer::App     => true,
+		}
+	}
+
+	/// Does a change by this writer move the record's stamps?  All but a copy applied from sync,
+	/// which keeps the stamps it arrived with.  A merge whose result differs from the arrival is
+	/// this device's record now, and unstamped the other device's next copy is taken over it.
+	pub fn stamps(&self) -> bool {
+		match self {
+			Writer::Sync    => false,
+			Writer::Merge   |
+			Writer::User    |
+			Writer::Daimon  |
+			Writer::Rebuild |
+			Writer::App     => true,
+		}
+	}
+
+	/// Does a name or tags set by this writer carry its own stamp (`name_at`, `tags_at`), the one
+	/// that decides the field between devices?  Not Daimond's own naming: his rename, wherever it
+	/// was made, always outranks it.
+	pub fn stamps_field(&self) -> bool {
+		match self {
+			Writer::Sync    |
+			Writer::App     => false,
+			Writer::Merge   |
+			Writer::User    |
+			Writer::Daimon  |
+			Writer::Rebuild => true,
+		}
+	}
+
+	/// The writer a stored or sent word names, the person where it names none this build knows.
+	pub fn from_name(s: &str) -> Self {
+		match Self::known(s) {
+			Some(w) => w,
+			None    => Writer::User,
+		}
+	}
+
+	/// The writer a word names, `None` for a word this build does not know.
+	pub fn known(s: &str) -> Option<Self> {
+		match s.trim() {
+			"user"    => Some(Writer::User),
+			"daimon"  => Some(Writer::Daimon),
+			"sync"    => Some(Writer::Sync),
+			"merge"   => Some(Writer::Merge),
+			"rebuild" => Some(Writer::Rebuild),
+			"app"     => Some(Writer::App),
+			_         => None,
+		}
+	}
+}
+
+/// One change to a field of a Diamond's name or `meta.json` (UNBLOCK-96): the record shows who
+/// renamed or retagged it, where and when, so a name that changes is never a mystery.  Kept a
+/// line each for [`KEEP_DAYS`], never folded into a day line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MetaChange {
+	pub at:		i64,	// ms since the epoch (UTC)
+	pub dev:	String,	// the device that wrote it
+	pub by:		Writer,
+	pub field:	String,	// `name`, `tags`, `builtin`, `no_progress` or an extra field's key
+	pub old:	String,	// clipped, empty for none
+	pub new:	String,
+}
+
+/// What one side of a [`MetaChange`] keeps, in characters.
+const META_SIDE_CAP: usize = 200;
+
+impl MetaChange {
+	pub fn new(at: i64, dev: &str, by: Writer, field: &str, old: &str, new: &str) -> Self {
+		Self {
+			at,
+			dev:   device_leaf(dev),
+			by,
+			field: clip(field, 64),
+			old:   clip(old, META_SIDE_CAP),
+			new:   clip(new, META_SIDE_CAP),
+		}
+	}
+}
+
 /// A line of the record.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Entry {
 	Turn(Turn),
 	Day(Day),
+	Meta(MetaChange),
+	Other(Other),
+}
+
+/// A line of a kind this build does not know, from a later build (UNBLOCK-96): kept as it came
+/// through every join and shed, so a merge here never loses or rewrites what a newer device wrote.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Other {
+	pub at:		i64,
+	pub dev:	String,
+	pub line:	String,	// the line as it came, trimmed
 }
 
 impl Entry {
@@ -100,6 +227,8 @@ impl Entry {
 		match self {
 			Entry::Turn(t) => t.at,
 			Entry::Day(d)  => d.at,
+			Entry::Meta(m) => m.at,
+			Entry::Other(o) => o.at,
 		}
 	}
 
@@ -108,6 +237,8 @@ impl Entry {
 		match self {
 			Entry::Turn(t) => &t.dev,
 			Entry::Day(d)  => &d.dev,
+			Entry::Meta(m) => &m.dev,
+			Entry::Other(o) => &o.dev,
 		}
 	}
 
@@ -116,6 +247,8 @@ impl Entry {
 		match self {
 			Entry::Turn(t) => (0, t.at, t.dev.clone()),
 			Entry::Day(d)  => (1, d.day, d.dev.clone()),
+			Entry::Meta(m) => (2, m.at, fmt!("{}\u{0}{}", m.dev, m.field)),
+			Entry::Other(o) => (3, o.at, o.line.clone()),
 		}
 	}
 }
@@ -213,6 +346,10 @@ pub fn encode(e: &Entry) -> String {
 		},
 		Entry::Day(d) => fmt!("{{\"day\":{},\"at\":{},\"dev\":\"{}\",\"n\":{},\"text\":\"{}\"}}",
 			d.day.max(0), d.at.max(0), json_escape(&d.dev), d.n, json_escape(&d.text)),
+		Entry::Meta(m) => fmt!("{{\"at\":{},\"dev\":\"{}\",\"kind\":\"meta\",\"by\":\"{}\",\"field\":\"{}\",\"old\":\"{}\",\"new\":\"{}\"}}",
+			m.at.max(0), json_escape(&m.dev), m.by.as_str(), json_escape(&m.field),
+			json_escape(&m.old), json_escape(&m.new)),
+		Entry::Other(o) => o.line.clone(),
 	}
 }
 
@@ -227,6 +364,26 @@ pub fn decode(line: &str) -> Option<Entry> {
 		(Some(at), Some(dev)) => (at as i64, dev),
 		_                     => return None,
 	};
+	// A kind, or a writer, this build does not know is a later build's line, kept as it came.
+	let other = |at: i64, dev: String| Some(Entry::Other(Other { at, dev, line: line.to_string() }));
+	match extract_json_string(line, "kind").as_deref() {
+		None         => (),
+		Some("meta") => {
+			let by = match Writer::known(&extract_json_string(line, "by").unwrap_or_default()) {
+				Some(w) => w,
+				None    => return other(at, dev),
+			};
+			return Some(Entry::Meta(MetaChange {
+				at,
+				dev,
+				by,
+				field: extract_json_string(line, "field").unwrap_or_default(),
+				old:   extract_json_string(line, "old").unwrap_or_default(),
+				new:   extract_json_string(line, "new").unwrap_or_default(),
+			}));
+		},
+		Some(_)      => return other(at, dev),
+	}
 	if let Some(day) = extract_json_number(line, "day") {
 		return Some(Entry::Day(Day {
 			day:  day as i64,
@@ -275,8 +432,8 @@ pub fn shed(entries: Vec<Entry>, now: i64) -> Vec<Entry> {
 	let mut turns: Vec<Turn> = Vec::new();
 	let mut seen = BTreeSet::new();
 	for e in entries {
-		// A turn line met twice is one; two day lines of one key are weighed below.
-		if matches!(e, Entry::Turn(_)) && !seen.insert(e.key()) {
+		// A turn or meta line met twice is one; two day lines of one key are weighed below.
+		if !matches!(e, Entry::Day(_)) && !seen.insert(e.key()) {
 			continue;
 		}
 		if age_days(e.at(), now) >= KEEP_DAYS {
@@ -294,6 +451,10 @@ pub fn shed(entries: Vec<Entry>, now: i64) -> Vec<Entry> {
 				}
 			},
 			Entry::Turn(t) => turns.push(t),
+			// A change to the record is kept as its own line for as long as anything is.
+			Entry::Meta(m) => keep.push(Entry::Meta(m)),
+			// A later build's line, unchanged.
+			Entry::Other(o) => keep.push(Entry::Other(o)),
 		}
 	}
 	// A held day line covers every turn of its (day, device) up to its own stamp: those are in
@@ -341,6 +502,31 @@ pub fn append(old: &str, turn: Turn, now: i64) -> String {
 		out.push('\n');
 	}
 	out
+}
+
+/// This device's file after changes to the Diamond's record: the old text, the lines, shed for
+/// `now` (UNBLOCK-96).
+pub fn append_meta(old: &str, changes: Vec<MetaChange>, now: i64) -> String {
+	let mut all = parse(old);
+	all.extend(changes.into_iter().map(Entry::Meta));
+	let mut out = String::new();
+	for e in shed(all, now) {
+		out.push_str(&encode(&e));
+		out.push('\n');
+	}
+	out
+}
+
+/// The record's changes to the Diamond's name and fields, oldest first, as the History shows
+/// them: a JSON array of `{at, dev, by, field, old, new}`.
+pub fn meta_json(entries: &[Entry]) -> String {
+	let rows: Vec<String> = entries.iter().filter_map(|e| match e {
+		Entry::Meta(m) => Some(fmt!("{{\"at\":{},\"dev\":\"{}\",\"by\":\"{}\",\"field\":\"{}\",\"old\":\"{}\",\"new\":\"{}\"}}",
+			m.at.max(0), json_escape(&m.dev), m.by.as_str(), json_escape(&m.field),
+			json_escape(&m.old), json_escape(&m.new))),
+		_              => None,
+	}).collect();
+	fmt!("[{}]", rows.join(","))
 }
 
 /// Two copies of one device's file joined: every line either holds, once, shed for `now`.
@@ -415,6 +601,10 @@ pub fn render(e: &Entry) -> String {
 		},
 		Entry::Day(d) => fmt!("{} ({}, {} turn{}): {}", day_name(d.day), clip(&d.dev, 12), d.n,
 			if d.n == 1 { "" } else { "s" }, d.text),
+		Entry::Meta(m) => fmt!("{} ({}) {} changed by {}: \"{}\" -> \"{}\"", when(m.at),
+			clip(&m.dev, 12), m.field, m.by.as_str(), m.old, m.new),
+		Entry::Other(o) => fmt!("{} ({}) a line a later build of Daimond wrote", when(o.at),
+			clip(&o.dev, 12)),
 	}
 }
 

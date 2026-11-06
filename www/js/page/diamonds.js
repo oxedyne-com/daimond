@@ -1183,7 +1183,7 @@ export function daimonChat(f) {
 		rec = {
 			id: newChatId(),
 			diamondId: f.id,
-			name: f.name || t('rail.unnamed_diamond'),
+			name: '',                  // the Diamond's, read through `chatName`, never a copy
 			app: null,                 // a daimon runs on `diamondApp`, never its own
 			messages: [],
 			status: 'active',
@@ -1195,10 +1195,9 @@ export function daimonChat(f) {
 		pg.chats.push(rec);
 		persistChats();
 	}
-	// The Diamond's name is the conversation's name. Renaming the Diamond has to
-	// carry, or a merged store ends up with two records claiming one Diamond under
-	// two names and no way to tell which is current.
-	if (f.name && rec.name !== f.name) rec.name = f.name;
+	// The Diamond's name is the conversation's name, read through `chatName` and never copied
+	// (UNBLOCK-96): a copy taken from a record rebuilt as a guess outlived the real name and
+	// travelled with the chat.
 	return rec;
 }
 
@@ -2454,7 +2453,7 @@ async function renameLegacyBuiltIns() {
 		if (!now) continue;
 		try { await refreshLegacySeedCrystal(f, now); } catch (e) { /* asked again next boot */ }
 		if (!LEGACY_NAMES[f.name] || f.builtin_named) continue;
-		try { await diamondApp().name_built_in(f.id, now); f.name = now; f.builtin_named = true; moved = true; }
+		try { await diamondApp().name_built_in(f.id, now, 'app'); f.name = now; f.builtin_named = true; moved = true; }
 		catch (e) { /* asked again next boot */ }
 	}
 	if (moved) await loadDiamonds();
@@ -2508,7 +2507,7 @@ async function markBuiltIns() {
 			fixed = DEFAULT_IDS[LEGACY_NAMES[f.name]];
 		}
 		if (!fixed || f.builtin === fixed) continue;
-		try { await app.mark_built_in(f.id, fixed); f.builtin = fixed; marked = true; }
+		try { await app.mark_built_in(f.id, fixed, 'app'); f.builtin = fixed; marked = true; }
 		catch (e) { /* asked again next boot */ }
 	}
 	if (marked) await loadDiamonds();
@@ -2584,7 +2583,7 @@ export async function seedDefaultDiamonds() {
 		// The lasting marker, on the fixed-id copy and above all on a fallback's minted one,
 		// which nothing else could tell from a Diamond of his own (NAMES N1).
 		if (DEFAULT_IDS[d.name] && typeof diamondApp().mark_built_in === 'function') {
-			try { await diamondApp().mark_built_in(id, DEFAULT_IDS[d.name]); }
+			try { await diamondApp().mark_built_in(id, DEFAULT_IDS[d.name], 'app'); }
 			catch (e) { /* the next boot's markBuiltIns asks again for a fixed id */ }
 		}
 		// The seeds are written as markdown above, because that is the readable way to
@@ -3041,6 +3040,10 @@ function buildDiamondClient(a, eff) {
 		app = new DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none',
 			AUTO_MAX, SYSTEM_PROMPT(''), true);
 	}
+	// THIS DEVICE'S ID, for the store: a change to a Diamond's record is written to this device's
+	// activity file, which its History reads (UNBLOCK-96). One value per page, set before any write.
+	try { if (typeof Wasm.set_device_id === 'function') Wasm.set_device_id(selfDeviceId()); }
+	catch (e) { /* the line then goes to the file of no named device */ }
 	// The conductor's and the reducer's system prompts are composed in Rust,
 	// so the house rules are handed across rather than baked into the ctor.
 	try { app.set_instructions(Instructions.md); } catch (e) { /* ignore */ }

@@ -468,6 +468,7 @@
 	// `src/tools.rs`'s NO_NET_NOTE says the same thing to the model; this is the
 	// half a person can read. A statement of what happened, not a failure.
 	'chat.tool_no_net':    '这条命令在没有网络的情况下运行，因为 Daimond 读过别人写的内容。其中任何要下载、安装或克隆的操作都一无所获。权限按钮可以把网络交还回来。',
+	'chat.tool_result_cut': '模型只看到了此结果 {whole} 个字符中的前 {shown} 个。其余部分没有保留。',
 	'chat.answered': 'Daimond 已回答，{n} 个词',
 	'chat.answer_failed': 'Daimond 无法回答',
 	'chat.collapse': '折叠所有回答',
@@ -4127,6 +4128,15 @@
 	'versions.pruned_row.one': '{from} \u7684 {list} \u5df2\u88ab\u79fb\u9664\uff0c\u4ee5\u4f7f\u5386\u53f2\u8bb0\u5f55\u4fdd\u6301\u5728\u9650\u989d\u5185\u3002',
 	'versions.pruned_row.other': '{from} \u81f3 {to} \u7684 {n} \u4e2a\u7248\u672c\uff08{list}\uff09\u5df2\u88ab\u79fb\u9664\uff0c\u4ee5\u4f7f\u5386\u53f2\u8bb0\u5f55\u4fdd\u6301\u5728\u9650\u989d\u5185\u3002',
 	'versions.renumbered_kind': '\u5df2\u91cd\u65b0\u7f16\u53f7',
+	'versions.meta_renamed_kind': '已重命名',
+	'versions.meta_kind': '已更改',
+	'versions.meta_row': '{field}：{old} → {new}（{by}，在 {device}）',
+	'versions.meta_none': '无',
+	'versions.meta_by_user': '你',
+	'versions.meta_by_daimon': 'daimon',
+	'versions.meta_by_sync': '同步',
+	'versions.meta_by_rebuild': '重建',
+	'versions.meta_by_app': 'Daimond',
 	'versions.renumbered_row.one': '\u53e6\u4e00\u53f0\u8bbe\u5907\u7684\u526f\u672c\u4ee5\u76f8\u540c\u7f16\u53f7\u5230\u8fbe\uff0c\u56e0\u6b64 {list} \u73b0\u5728\u662f {to}\u3002',
 	'versions.renumbered_row.other': '\u53e6\u4e00\u53f0\u8bbe\u5907\u7684\u526f\u672c\u4ee5\u76f8\u540c\u7f16\u53f7\u5230\u8fbe\uff0c\u56e0\u6b64 {n} \u4e2a\u7248\u672c\uff08{list}\uff09\u73b0\u5728\u662f {to}\u3002',
 	'versions.limit_note': '\u5386\u53f2\u8bb0\u5f55\u5df2\u8d85\u51fa\u4e0a\u9650\u3002\u5728\u4e0b\u6b21\u66f4\u65b0\u4e4b\u524d\uff0c\u4e0d\u4f1a\u79fb\u9664\u4efb\u4f55\u5185\u5bb9\u3002',

@@ -265,6 +265,9 @@ pub struct ToolRegistry<H: Host = DefaultHost> {
     /// OpenAI-style endpoint calls only what the array declares, and searched for ever instead.
     pub(super) loaded: std::rc::Rc<std::cell::RefCell<Vec<Tool>>>,
     pub(super) typst_here: std::cell::Cell<bool>, // The diamond holds a `.typ`, so its compiler is core?
+    // The cap on one result and the chat's spill (BIGRESULT C, D): set once by Kimberlite, and
+    // shared with a narrowed registry, which is the same turn.
+    pub(super) cap: std::rc::Rc<std::cell::OnceCell<ResultCap>>,
 }
 
 // Concrete until U2c4: these methods hand `self.ctx` to tools that take a `ToolContext` on the
@@ -276,8 +279,16 @@ impl ToolRegistry {
     /// Concrete and not generic, because a host type is not inferred from a default: the callers
     /// that build a [`ToolContext`] with `host: Default::default()` (the native handler, the
     /// examples and the tests) would each have to name one.
+    ///
+    /// Cuts a result at the engine's own `run.tool_result_max` ([`ResultCap::tab`]), keeping no
+    /// spill; Kimberlite builds on [`ToolRegistry::new_on`] and sets its own.
     pub fn new(tools: Vec<Tool>, ctx: ToolContext) -> Self {
-        Self::new_on(tools, ctx)
+        let r = Self::new_on(tools, ctx);
+        // `src/limits.jdat` is compiled in, and the tests read it, so it cannot fail here.
+        if let Ok(cap) = ResultCap::tab() {
+            let _ = r.cap.set(cap);
+        }
+        r
     }
 }
 
@@ -340,7 +351,16 @@ impl<H: Host> ToolRegistry<H> {
             hinted: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             machine: std::cell::Cell::new(None),
             loaded: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
-            typst_here: std::cell::Cell::new(false) }
+            typst_here: std::cell::Cell::new(false),
+            cap: std::rc::Rc::new(std::cell::OnceCell::new()) }
+    }
+
+    /// Sets the cap on one result and the chat's spill folder, once; a second call is refused.
+    pub fn set_result_cap(&self, cap: ResultCap) -> Outcome<()> {
+        match self.cap.set(cap) {
+            Ok(())  => Ok(()),
+            Err(_)  => Err(err!("The registry's result cap is set already."; Exists)),
+        }
     }
 
     /// Record whether a command has anywhere to run, as this turn's briefing found out; `None`
@@ -469,6 +489,7 @@ impl<H: Host> ToolRegistry<H> {
             machine: std::cell::Cell::new(self.machine.get()),
             loaded: self.loaded.clone(),
             typst_here: std::cell::Cell::new(self.typst_here.get()),
+            cap: self.cap.clone(),
         }
     }
 
@@ -821,12 +842,21 @@ impl<H: Host> ToolRegistry<H> {
                 Diamond's links are your parent's to change: say in your report what should \
                 change and why.")));
         }
+        // A read of the chat's own spill is answered from it: the path lies outside the jail.
+        if let (Some(Tool::FileRead), Some(cap)) = (Tool::from_name(name), self.cap.get()) {
+            if let Some(view) = cap.read(args_json, &ctx) {
+                return Ok(self.charge(MessageContent::text(view)));
+            }
+        }
         let out = self.dispatch_in(name, args_json, &ctx).await;
         // Charged only on the answer.  A road failure carried nothing into the conversation --
         // it is about to be retried, and a turn that paid for each attempt would run out of
         // budget for having been on a train.
         match out {
-            Ok(c)  => Ok(self.charge(c)),
+            Ok(c)  => Ok(self.charge(match self.cap.get() {
+                Some(cap)   => cap.cut(name, c),
+                None        => c,
+            })),
             Err(e) => Err(e),
         }
     }

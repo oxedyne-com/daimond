@@ -368,6 +368,7 @@
 	// `src/tools.rs`'s NO_NET_NOTE says the same thing to the model; this is the
 	// half a person can read. A statement of what happened, not a failure.
 	'chat.tool_no_net':  'Das lief ohne Netzwerk, weil Daimond etwas gelesen hatte, das jemand anders geschrieben hat. Alles darin, was abrufen, installieren oder klonen wollte, bekam nichts. Die Berechtigungsschaltfläche gibt es zurück.',
+	'chat.tool_result_cut': 'Das Modell sah die ersten {shown} der {whole} Zeichen dieses Ergebnisses. Der Rest wurde nicht behalten.',
 	'chat.answered': 'Daimond hat geantwortet, {n} Wörter',
 	'chat.answer_failed': 'Daimond konnte nicht antworten',
 	'chat.collapse': 'Alle Antworten einklappen',
@@ -4105,6 +4106,15 @@
 	'versions.pruned_row.one': '{list} vom {from} wurde entfernt, damit der Verlauf in seinem Limit bleibt.',
 	'versions.pruned_row.other': '{n} Versionen ({list}) vom {from} bis {to} wurden entfernt, damit der Verlauf in seinem Limit bleibt.',
 	'versions.renumbered_kind': 'Umnummeriert',
+	'versions.meta_renamed_kind': 'Umbenannt',
+	'versions.meta_kind': 'Geändert',
+	'versions.meta_row': '{field}: {old} → {new}, durch {by} auf {device}.',
+	'versions.meta_none': 'keiner',
+	'versions.meta_by_user': 'dich',
+	'versions.meta_by_daimon': 'den Daimon',
+	'versions.meta_by_sync': 'Synchronisierung',
+	'versions.meta_by_rebuild': 'eine Wiederherstellung',
+	'versions.meta_by_app': 'Daimond',
 	'versions.renumbered_row.one': '{list} hei\u00dft jetzt {to}, weil eine Kopie von einem anderen Ger\u00e4t mit dieser Nummer eingetroffen ist.',
 	'versions.renumbered_row.other': '{n} Versionen ({list}) hei\u00dfen jetzt {to}, weil eine Kopie von einem anderen Ger\u00e4t mit diesen Nummern eingetroffen ist.',
 	'versions.limit_note': 'Der Verlauf hat seine Grenze \u00fcberschritten. Bis zum n\u00e4chsten Update wird nichts entfernt.',

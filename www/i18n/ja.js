@@ -471,6 +471,7 @@
 	// `src/tools.rs`'s NO_NET_NOTE says the same thing to the model; this is the
 	// half a person can read. A statement of what happened, not a failure.
 	'chat.tool_no_net':    'これはネットワークなしで実行されました。Daimond が他人の書いたものを読んでいたためです。取得、インストール、クローンを試みたものはすべて何も得られませんでした。権限ボタンで戻せます。',
+	'chat.tool_result_cut': 'モデルに示されたのは、この結果の {whole} 文字のうち最初の {shown} 文字です。残りは保存されていません。',
 	'chat.answered': 'Daimond が回答しました（{n} 語）',
 	'chat.answer_failed': 'Daimond は回答できませんでした',
 	'chat.collapse': 'すべての回答をたたむ',
@@ -4139,6 +4140,15 @@
 	'versions.pruned_row.one': '{from} \u306e {list} \u306f\u3001\u5c65\u6b74\u3092\u4e0a\u9650\u5185\u306b\u4fdd\u3064\u305f\u3081\u524a\u9664\u3055\u308c\u307e\u3057\u305f\u3002',
 	'versions.pruned_row.other': '{from}\u301c{to} \u306e {n} \u4ef6\u306e\u30d0\u30fc\u30b8\u30e7\u30f3\uff08{list}\uff09\u306f\u3001\u5c65\u6b74\u3092\u4e0a\u9650\u5185\u306b\u4fdd\u3064\u305f\u3081\u524a\u9664\u3055\u308c\u307e\u3057\u305f\u3002',
 	'versions.renumbered_kind': '\u756a\u53f7\u5909\u66f4',
+	'versions.meta_renamed_kind': '名前を変更',
+	'versions.meta_kind': '変更',
+	'versions.meta_row': '{field}: {old} → {new}（{device} で {by}）',
+	'versions.meta_none': 'なし',
+	'versions.meta_by_user': 'あなた',
+	'versions.meta_by_daimon': 'ダイモン',
+	'versions.meta_by_sync': '同期',
+	'versions.meta_by_rebuild': '再構築',
+	'versions.meta_by_app': 'Daimond',
 	'versions.renumbered_row.one': '\u5225\u306e\u30c7\u30d0\u30a4\u30b9\u304b\u3089\u540c\u3058\u756a\u53f7\u306e\u30b3\u30d4\u30fc\u304c\u5c4a\u3044\u305f\u305f\u3081\u3001{list} \u306f {to} \u306b\u306a\u308a\u307e\u3057\u305f\u3002',
 	'versions.renumbered_row.other': '\u5225\u306e\u30c7\u30d0\u30a4\u30b9\u304b\u3089\u540c\u3058\u756a\u53f7\u306e\u30b3\u30d4\u30fc\u304c\u5c4a\u3044\u305f\u305f\u3081\u3001{n} \u4ef6\u306e\u30d0\u30fc\u30b8\u30e7\u30f3\uff08{list}\uff09\u306f {to} \u306b\u306a\u308a\u307e\u3057\u305f\u3002',
 	'versions.limit_note': '\u5c65\u6b74\u304c\u4e0a\u9650\u3092\u8d85\u3048\u3066\u3044\u307e\u3059\u3002\u6b21\u306e\u30a2\u30c3\u30d7\u30c7\u30fc\u30c8\u307e\u3067\u4f55\u3082\u524a\u9664\u3055\u308c\u307e\u305b\u3093\u3002',

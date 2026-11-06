@@ -365,6 +365,7 @@
 	// `src/tools.rs`'s NO_NET_NOTE says the same thing to the model; this is the
 	// half a person can read. A statement of what happened, not a failure.
 	'chat.tool_no_net':  'Esto se ejecutó sin red, porque Daimond había leído algo escrito por otra persona. Todo lo que intentara descargar, instalar o clonar no obtuvo nada. El botón de permisos la devuelve.',
+	'chat.tool_result_cut': 'El modelo vio los primeros {shown} de los {whole} caracteres de este resultado. El resto no se guardó.',
 	'chat.answered': 'Daimond respondió, {n} palabras',
 	'chat.answer_failed': 'Daimond no pudo responder',
 	'chat.collapse': 'Plegar todas las respuestas',
@@ -4098,6 +4099,15 @@
 	'versions.pruned_row.one': '{list}, del {from}, se elimin\u00f3 para mantener el historial dentro de su l\u00edmite.',
 	'versions.pruned_row.other': '{n} versiones ({list}), del {from} al {to}, se eliminaron para mantener el historial dentro de su l\u00edmite.',
 	'versions.renumbered_kind': 'Renumerado',
+	'versions.meta_renamed_kind': 'Renombrado',
+	'versions.meta_kind': 'Cambiado',
+	'versions.meta_row': '{field}: {old} → {new}, por {by} en {device}.',
+	'versions.meta_none': 'ninguno',
+	'versions.meta_by_user': 'ti',
+	'versions.meta_by_daimon': 'el daimon',
+	'versions.meta_by_sync': 'la sincronización',
+	'versions.meta_by_rebuild': 'una reconstrucción',
+	'versions.meta_by_app': 'Daimond',
 	'versions.renumbered_row.one': '{list} ahora es {to}, porque lleg\u00f3 una copia de otro dispositivo con ese n\u00famero.',
 	'versions.renumbered_row.other': '{n} versiones ({list}) ahora son {to}, porque lleg\u00f3 una copia de otro dispositivo con esos n\u00fameros.',
 	'versions.limit_note': 'El historial ha superado su l\u00edmite. No se elimina nada hasta la pr\u00f3xima actualizaci\u00f3n.',

@@ -2147,9 +2147,21 @@ export function chatOpening(s) {
 /// Not chatDisplayName's six-word cut, which leaves "Is it possible to build a…" for a
 /// chat about a solar aircraft: all stop words, so every such chat drew the bubble (av-K).
 export function chatIconName(s) {
-	return (s && (s.name || chatOpening(s))) || chatDisplayName(s);
+	return (s && (chatName(s) || chatOpening(s))) || chatDisplayName(s);
+}
+/// A chat's name: its own, or for a daimon's chat its Diamond's, '' for none. THE ONE READ
+/// (UNBLOCK-96, as C3 is for the model): a daimon's chat holds no name of its own, so a copy
+/// taken from a guessed record can never outlive the Diamond's real name or travel with the chat.
+export function chatName(s) {
+	if (!s) return '';
+	if (s.diamondId) {
+		var d = (pg.diamonds || []).find(function (x) { return x && x.id === s.diamondId; });
+		return (d && d.name) || '';
+	}
+	return s.name || '';
 }
 export function chatDisplayName(s) {
+	if (s && s.diamondId) return chatName(s) || tOr('rail.unnamed_diamond', 'Unnamed diamond');
 	if (s && s.name) return s.name;
 	if (!s) return tOr('rail.a_chat', 'a chat');
 	var opening = chatOpening(s);

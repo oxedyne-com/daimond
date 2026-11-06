@@ -154,7 +154,8 @@ function pack(id, d) {
 	return JSON.stringify({
 		id: id, touched: d.touched,
 		files: Object.assign({
-			'.daimond/meta.json':   JSON.stringify(d.metaAt ? { tags: d.tags || [], touched: d.metaAt } : { tags: d.tags || [] }),
+			'.daimond/meta.json':   JSON.stringify(Object.assign({ tags: d.tags || [] }, d.metaAt ? { touched: d.metaAt } : {},
+				d.name != null ? { name: d.name } : {})),
 			'.daimond/links.jsonl': d.links || '',
 			'crystal.json':         d.memory || '',
 		}, d.notes != null ? { '.daimond/steering.md': d.notes } : {},
@@ -186,7 +187,7 @@ function makeApp() {
 			async list_diamonds() {
 				return JSON.stringify(Object.keys(store).map((id) => ({
 					id: id, updated: store[id].touched, touched: store[id].touched,
-					tags: store[id].tags.slice(),
+					tags: store[id].tags.slice(), name: store[id].name,
 				})));
 			},
 			async export_diamond(id) {
@@ -621,6 +622,46 @@ async function lockCases() {
 	check('6e a two-sided pull with a join finishes and joins', IDS(t.h.store.X.notes).join() === 'n-c:active,n-y:active,n-z:active', JSON.stringify(IDS(t.h.store.X.notes)));
 }
 
+// ══ Case 8 — a merge that differs from the arrival is this device's change (UNBLOCK-96, QA 6d4e (1)) ══
+// The three-way tags and a name renamed only here were written as sync's, keeping the arrival's stamps: the
+// merged record then stood here at the arrival's `touched`, and the winner's next one-sided copy, its tags and
+// name stamped as before, was taken over it (a tag added here lost, a rename here undone). The merge result is
+// stamped as this device's, so it travels back.
+async function mergeStamped() {
+	console.log('\na merged name or tags that differ from the arrival travel back (UNBLOCK-96):');
+	const mk = (seed, entry, records) => {
+		const h = makeApp();
+		h.seed('X', seed);
+		// The engine's writers: one applied as sync's keeps the stamps; any other moves `touched` and the field's own.
+		h.app.set_tags = async (id, json, by) => {
+			const d = h.store[id]; d.tags = JSON.parse(json);
+			if (by !== 'sync') { d.touched += 1; d.tagsAt = d.touched; }
+		};
+		h.app.rename_diamond = async (id, name, by) => {
+			const d = h.store[id]; d.name = name;
+			if (by !== 'sync') { d.touched += 1; d.nameAt = d.touched; }
+		};
+		const apply = build({ app: h.app, baseStore: Object.assign({ map: { X: 10 } }, records || {}) });
+		return { h, run: () => apply({ diamonds: [entry] }, 'desktop') };
+	};
+	let t = mk({ touched: 20, tags: ['a', 'phoneTag'], memory: 'MEM_here' }, incoming('X', 30, ['a', 'deskTag'], '', 'MEM_there'));
+	await t.run();
+	let x = t.h.store.X;
+	check('M1 the tags are both sides\'', ['a', 'deskTag', 'phoneTag'].every((g) => x.tags.includes(g)), JSON.stringify(x.tags));
+	check('M1 and stamped as this device\'s, so they travel back', x.touched > 30 && x.tagsAt === x.touched,
+		'touched ' + x.touched + ' tags_at ' + x.tagsAt);
+	// Renamed here only, since the copy both last shared (stamp 10): the arrival still carries the shared name.
+	const there = { id: 'X', touched: 30, updated: 30, anc: [10],
+		data: pack('X', { touched: 30, tags: ['a'], memory: 'MEM_there', name: 'Fred Hoogland' }) };
+	t = mk({ touched: 20, tags: ['a'], memory: 'MEM_here', name: 'Fred' }, there,
+		{ recv: { X: [10, 10, []] }, seen: { X: [[10, ['a'], [], 'Fred Hoogland']] } });
+	await t.run();
+	x = t.h.store.X;
+	check('M2 the name given here stands', x.name === 'Fred', JSON.stringify(x.name));
+	check('M2 and is stamped as this device\'s, so it travels back', x.touched > 30 && x.nameAt === x.touched,
+		'touched ' + x.touched + ' name_at ' + x.nameAt);
+}
+
 async function main() {
 	if (BREAK) console.log('BREAK = ' + BREAK + ' (the two-sided assertions must FAIL)');
 	await twoSided();
@@ -630,6 +671,7 @@ async function main() {
 	await noteFile();
 	await archiveFile();
 	await lockCases();
+	await mergeStamped();
 
 	console.log('');
 	if (BREAK) {

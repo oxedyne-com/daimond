@@ -701,11 +701,29 @@ pub fn ran_without_net(result: &str) -> bool {
     crate::tools::ran_without_net(result)
 }
 
+/// The characters shown and the whole's, `[shown, whole]`, where the engine cut this tool result
+/// at `run.tool_result_max`; empty where it did not.  Read off the cut line, whose format
+/// `crate::tools::ResultCap` owns, so a stored result says the same after a reload.
+#[wasm_bindgen]
+pub fn tool_result_cut(result: &str) -> Vec<u32> {
+    match crate::tools::ResultCap::cut_of(result) {
+        Some((shown, whole))    => vec![shown as u32, whole as u32],
+        None                    => Vec::new(),
+    }
+}
+
 /// Name the device this page runs on, as the person knows it, so a turn's closing question can
 /// say where it ran; see `tools::device_label`.
 #[wasm_bindgen]
 pub fn set_device_label(name: String) {
     crate::tools::set_device_label(&name);
+}
+
+/// Name the id of the device this page runs on, so a change to a Diamond's record is written to
+/// this device's activity file (UNBLOCK-96); see `store::diamond::set_self_device`.
+#[wasm_bindgen]
+pub fn set_device_id(id: String) {
+    crate::store::diamond::set_self_device(&id);
 }
 
 /// Move to a permission mode, returning the one it replaced.

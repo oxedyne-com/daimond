@@ -109,6 +109,8 @@ pub fn this_page() -> String { Backend::this_page() }
 
 pub fn page_is_live(page: &str) -> bool { Backend::page_is_live(page) }
 
+pub async fn page_is_running(page: &str) -> bool { Backend::page_is_running(page).await }
+
 pub fn now_ms() -> f64 { Backend::now_ms() }
 
 pub fn today() -> String { Backend::today() }

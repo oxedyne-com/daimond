@@ -426,6 +426,50 @@ impl Pinned {
         #[cfg(not(target_os = "linux"))]
         { let _ = &self.leaf; self.real.clone() }
     }
+
+    /// `name` beside the leaf, in the held parent.
+    fn beside(&self, name: &std::ffi::OsStr) -> PathBuf {
+        #[cfg(target_os = "linux")]
+        { through(&self.parent, name) }
+        #[cfg(not(target_os = "linux"))]
+        { self.real.with_file_name(name) }
+    }
+
+    /// Writes `bytes` as the file this names, by replace: a new file in the held parent, renamed
+    /// over the leaf (UNBLOCK-82 F5).  A write in place truncates the inode the name reaches, and
+    /// a hard link in the workspace is a regular file inside the root that the link checks admit,
+    /// so `std::fs::write` through it rewrote the file it shares an inode with, wherever that
+    /// lies (the clean warm cargo target, measured).  The rename gives the name a new inode, so
+    /// no other name of the old one is touched; it also lands in the folder that was checked,
+    /// whatever is swapped into the path after the check.  A file there before keeps its mode.
+    pub fn replace(&self, bytes: &[u8]) -> Outcome<()> {
+        use std::io::Write;
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let act = self.act();
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos()).unwrap_or(0);
+        let name = fmt!(".daimond-write-{}-{}-{}", std::process::id(), nanos,
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        let tmp = self.beside(std::ffi::OsStr::new(&name));
+        let mut f = res!(std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)
+            .map_err(|e| err!(e, "Workspace: cannot make a file beside '{}'.", self.real.display();
+            IO, File, Write)));
+        let kept = match std::fs::symlink_metadata(&act) {
+            Ok(m) if m.is_file()    => Some(m.permissions()),
+            _                       => None,
+        };
+        let done = f.write_all(bytes)
+            .and_then(|_| match kept {
+                Some(p) => f.set_permissions(p),
+                None    => Ok(()),
+            })
+            .and_then(|_| { drop(f); std::fs::rename(&tmp, &act) });
+        if let Err(e) = done {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(err!(e, "Workspace: cannot write '{}'.", self.real.display(); IO, File, Write));
+        }
+        Ok(())
+    }
 }
 
 /// `name` inside the open folder `dir`, as a path the kernel resolves through the descriptor.

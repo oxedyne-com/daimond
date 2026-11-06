@@ -82,7 +82,7 @@ const PAGE = ['readJson', 'diamondModels', 'setDiamondModel', 'blankDiamondModel
 	'adoptDiamondModel', 'modelPicksOf', 'diamondPicks', 'chatPicks', 'summarisingPick', 'setFoldPick', 'everyDiamondClient',
 	'chatDisplayName', 'everyoneTargets', 'clearPick', 'setPick', 'settlePicks',
 	'diamondEffort', 'diamondModel', 'setDiamondEffort',
-	'withRecent', 'chatOwnsModel', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats', 'chatMetaBeats',
+	'withRecent', 'chatOwnsModel', 'chatOwnName', 'slimChat', 'chatFields', 'takeChatMeta', 'chatTurnBeats', 'chatMetaBeats',
 	'chatMetaFields', 'chatModelBeats', 'takeChatModel', 'chatMatOf', 'chatMatSplit', 'mergeFold',
 	'mergeChatRecords', 'touchChatMeta', 'touchChatModel',
 	'chatTaintOf', 'chatTaintJoin',	// the one-way taint (H3)

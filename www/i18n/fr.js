@@ -368,6 +368,7 @@
 	// `src/tools.rs`'s NO_NET_NOTE says the same thing to the model; this is the
 	// half a person can read. A statement of what happened, not a failure.
 	'chat.tool_no_net':  'Cette commande s’est exécutée sans réseau, parce que Daimond avait lu quelque chose écrit par quelqu’un d’autre. Tout ce qui, à l’intérieur, cherchait à télécharger, installer ou cloner n’a rien obtenu. Le bouton des autorisations le rend.',
+	'chat.tool_result_cut': 'Le modèle n’a vu que les {shown} premiers des {whole} caractères de ce résultat. Le reste n’a pas été conservé.',
 	'chat.answered': 'Daimond a répondu, {n} mots',
 	'chat.answer_failed': 'Daimond n’a pas pu répondre',
 	'chat.collapse': 'Replier toutes les réponses',
@@ -4113,6 +4114,15 @@
 	'versions.pruned_row.one': '{list}, du {from}, a \u00e9t\u00e9 supprim\u00e9e pour garder l\u2019historique dans sa limite.',
 	'versions.pruned_row.other': '{n} versions ({list}), du {from} au {to}, ont \u00e9t\u00e9 supprim\u00e9es pour garder l\u2019historique dans sa limite.',
 	'versions.renumbered_kind': 'Renum\u00e9rot\u00e9',
+	'versions.meta_renamed_kind': 'Renommé',
+	'versions.meta_kind': 'Modifié',
+	'versions.meta_row': '{field} : {old} → {new}, par {by} sur {device}.',
+	'versions.meta_none': 'aucun',
+	'versions.meta_by_user': 'vous',
+	'versions.meta_by_daimon': 'le daimon',
+	'versions.meta_by_sync': 'la synchronisation',
+	'versions.meta_by_rebuild': 'une reconstruction',
+	'versions.meta_by_app': 'Daimond',
 	'versions.renumbered_row.one': '{list} est d\u00e9sormais {to}, car une copie venue d\u2019un autre appareil portait ce num\u00e9ro.',
 	'versions.renumbered_row.other': '{n} versions ({list}) sont d\u00e9sormais {to}, car une copie venue d\u2019un autre appareil portait ces num\u00e9ros.',
 	'versions.limit_note': 'L\u2019historique a d\u00e9pass\u00e9 sa limite. Rien n\u2019est supprim\u00e9 avant la prochaine mise \u00e0 jour.',
