@@ -136,12 +136,14 @@ try {
 		};
 		const res = await M.applySync(parcelA);
 		const r = M.resolve('or-a', MODEL);
-		return { secret, before, res, apiKey: r ? r.apiKey : null,
+		// The key is not in a resolve (KEY-RESOLVE): the request path says which one goes on.
+		const sends = !!r && r.usable && await window.__sendsKey('or-a', secret);
+		return { before, res, sends,
 			baseUrl: r ? r.baseUrl : null, model: r ? r.model : null };
 	}, { MODEL, URL });
 	check('(a) B holds no key for the provider before the sync (test is not trivial)', a.before === false);
 	check('(a) after applying A\'s parcel, resolve() on B succeeds with A\'s key — no re-entry',
-		a.apiKey === a.secret && a.model === MODEL, `apiKey=${a.apiKey} model=${a.model}`);
+		a.sends === true && a.model === MODEL, `sends=${a.sends} model=${a.model}`);
 
 	// The export side: a device with a key publishes the SEALED key and NO plaintext.
 	const sec = await p.evaluate(async ({ MODEL, URL }) => {
@@ -157,7 +159,7 @@ try {
 			hasKeyEnc:      !!row.keyEnc,
 			carriesPlain:   whole.includes(secret),
 			rowKeys:        Object.keys(row).sort().join(','),
-			readsBack:      (M.resolve('or-sec', MODEL) || {}).apiKey === secret,
+			readsBack:      ((M.resolve('or-sec', MODEL) || {}).usable && await window.__sendsKey('or-sec', secret)),
 		};
 	}, { MODEL, URL });
 	check('(a) exportSync carries the SEALED key (keyEnc present)', sec.hasKeyEnc, sec.rowKeys);
@@ -181,8 +183,8 @@ try {
 			tombs: {},
 		};
 		await M.applySync(parcelDiff);
-		const bothSurvive = (M.resolve('p-a', MODEL) || {}).apiKey === 'key-A-only'
-			&& (M.resolve('p-b', MODEL) || {}).apiKey === 'key-B-only';
+		const bothSurvive = ((M.resolve('p-a', MODEL) || {}).usable && await window.__sendsKey('p-a', 'key-A-only'))
+			&& ((M.resolve('p-b', MODEL) || {}).usable && await window.__sendsKey('p-b', 'key-B-only'));
 
 		// Same provider edited on both. B set 'p-same' recently (touched ~= now). The
 		// adopted key is read at the next unlock (the merge keeps the SESSION key in
@@ -199,7 +201,7 @@ try {
 			tombs: {},
 		});
 		M.lock(); await M.unseal();
-		const olderLost = (M.resolve('p-same', MODEL) || {}).apiKey === 'B-current';
+		const olderLost = ((M.resolve('p-same', MODEL) || {}).usable && await window.__sendsKey('p-same', 'B-current'));
 		// A's NEWER edit must win.
 		await M.applySync({
 			v: 2, def: { provider: '', model: '' }, defAt: 0, draft: { provider: '', model: '' }, draftAt: 0,
@@ -208,7 +210,7 @@ try {
 			tombs: {},
 		});
 		M.lock(); await M.unseal();
-		const newerWon = (M.resolve('p-same', MODEL) || {}).apiKey === 'A-fresher';
+		const newerWon = ((M.resolve('p-same', MODEL) || {}).usable && await window.__sendsKey('p-same', 'A-fresher'));
 		return { bothSurvive, olderLost, newerWon };
 	}, { MODEL, URL });
 	check('(b) two devices editing DIFFERENT providers keep both', b.bothSurvive);
@@ -248,7 +250,7 @@ try {
 		M.addProvider('p-div', { name: 'Div', url: URL });
 		await M.setKey('p-div', 'LOCAL-good-key');      // readable, sealed under THIS identity
 		M.setDefault('p-div', MODEL);
-		const localOk = (M.resolve('p-div', MODEL) || {}).apiKey === 'LOCAL-good-key';
+		const localOk = ((M.resolve('p-div', MODEL) || {}).usable && await window.__sendsKey('p-div', 'LOCAL-good-key'));
 		const foreign = 'Zm9yZWlnbi1zZWFsZWQtdW5yZWFkYWJsZS1jaXBoZXJ0ZXh0';   // will not unwrap here
 		const later = Date.now() + 90000;
 		await M.applySync({
@@ -257,18 +259,18 @@ try {
 				fetched: later, touched: later, keyEnc: foreign } },
 			tombs: {},
 		});
-		const sessionOk = (M.resolve('p-div', MODEL) || {}).apiKey === 'LOCAL-good-key';
+		const sessionOk = ((M.resolve('p-div', MODEL) || {}).usable && await window.__sendsKey('p-div', 'LOCAL-good-key'));
 		// Simulate a reload: plain is dropped and re-derived from the STORE's keyEnc.
 		M.lock();
 		await M.unseal();
 		const afterReload = M.resolve('p-div', MODEL);
 		return { localOk, sessionOk,
-			afterReloadKey: afterReload ? afterReload.apiKey : null };
+			afterReloadKey: !!afterReload && afterReload.usable && await window.__sendsKey('p-div', 'LOCAL-good-key') };
 	}, { MODEL, URL });
 	check('(d) a locally-readable key resolves before the divergent sync (not trivial)', d2.localOk);
 	check('(d) a fresher UNREADABLE synced key does not disturb the readable key in-session', d2.sessionOk);
 	check('(d) and the readable key SURVIVES a reload — the unreadable one never clobbers it',
-		d2.afterReloadKey === 'LOCAL-good-key', `afterReload=${d2.afterReloadKey}`);
+		d2.afterReloadKey === true, `afterReload=${d2.afterReloadKey}`);
 
 	// (d1) a divergent device with NO local key: a synced unreadable keyEnc must land
 	// in the compose-resilience path (provider present but sealed → resolve null),

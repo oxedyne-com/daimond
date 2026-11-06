@@ -2,7 +2,7 @@
 import { Wasm, kindIcon, kindName, markName, readBytes } from './wasm.js';
 import { crystalBody, diamondTurning, pg } from './state.js';
 import { friendlyError, starterTags, t, tn } from './util.js';
-import { bumpDiamonds, persistChats, threadStarted, touchChat, touchChatMeta, trashed,
+import { bumpDiamonds, loadChatMessages, persistChats, threadStarted, touchChat, touchChatMeta, trashed,
 	underTrashedDiamond } from './chatstore.js';
 import { deviceId } from './parcel_collect.js';
 import { chatHoldingTurn, deviceLabelFor, deviceNameFor, ownsChat, selfDeviceId } from './handoff.js';
@@ -176,6 +176,215 @@ export async function undoneFromRunner(env) {
 	if (got.recorded && histOpenFor(env.keeper)) {
 		try { showCrystalHistory(); } catch (e) { /* the panel's next open shows the undo's entry */ }
 	}
+	// UNDO-HISTORY: the undo enters the model's history, as a note at the end of the turn's chat.
+	if (env.status === 'done') {
+		try { await noteRunnerUndo(env); } catch (e) { /* History still shows what the undo did */ }
+	}
+}
+
+// ── An undo enters the model's history (UNDO-HISTORY, 06 Nov) ──────
+//
+// The model's history is the chat's transcript (`sessionPlan`, `errandSession`, `daimonPrior`):
+// an undo that changed the files a turn wrote, and said nothing in the chat, left the daimon
+// believing in files no longer there. Each completed undo adds one note row at the chat's end,
+// `{role:'user', app:true, undone, mid:'<key>-undone'}`, naming every file it put back, removed,
+// or left alone; the chat draws it as a note, and every route to the model carries it as is.
+
+/// Is `m` an undo's note row (or a seed's copy of one, which lost the `undone` field)?
+export function isUndoNote(m) {
+	return !!m && m.role === 'user' && (!!m.undone || /^\[Daimond: the user (undid|restored) /.test(String(m.content || '')));
+}
+
+/// The note's words for the model, from its `undone` record.
+export function undoNoteText(u) {
+	var join = function (a) { return a.map(String).join(', '); };
+	var ask = u.ask ? 'the turn "' + String(u.ask) + '"' : 'an earlier turn';
+	var head = u.how === 'redo' ? '[Daimond: the user undid the undo of ' + ask + '. '
+		: u.how === 'restore' ? '[Daimond: the user restored from History, taking back what ' + ask + ' changed. '
+		: '[Daimond: the user undid ' + ask + '. ';
+	var parts = [];
+	if (u.restored.length) parts.push((u.how === 'redo' ? 'Came back as that turn left them: ' : 'Put back as they were before it: ') + join(u.restored));
+	if (u.removed.length) parts.push((u.how === 'redo' ? 'Removed again: ' : 'Removed (the turn had made them): ') + join(u.removed));
+	if (u.skipped.length) parts.push('Left alone, as they had changed since: ' + u.skipped.map(function (x) {
+		return String(x.path) + (x.why ? ' (' + String(x.why) + ')' : '');
+	}).join(', '));
+	return head + parts.join('. ') + '. Read a file again before relying on what that turn said about it.]';
+}
+
+/// Add the note of undo `u` to `chat`, once by `key` (`<key>-undone`): at the END, so it lies
+/// after the stored session's marker and reaches the model's next turn. Answers the row, or null.
+/// `u`: `{how: undo|redo|restore, turn, ask, restored[], removed[], skipped[{path,why}], keeper, recorded}`.
+export function noteUndone(chat, key, u) {
+	if (!chat || !key || !u) return null;
+	var str = function (a) { return Array.isArray(a) ? a.map(function (x) { return String((x && x.path) || x || ''); }).filter(Boolean) : []; };
+	var undone = { how: String(u.how || 'undo'), turn: String(u.turn || ''), ask: '',
+		restored: str(u.restored), removed: str(u.removed),
+		skipped: (Array.isArray(u.skipped) ? u.skipped : []).map(function (x) {
+			return { path: String((x && x.path) || x || ''), why: String((x && x.why) || '') };
+		}).filter(function (x) { return x.path; }),
+		keeper: String(u.keeper || ''), recorded: Number(u.recorded) || 0 };
+	if (!(undone.restored.length + undone.removed.length + undone.skipped.length)) return null;
+	var ms = chat.messages || (chat.messages = []), mid = String(key) + '-undone';
+	if (ms.some(function (m) { return m && m.mid === mid; })) return null;
+	var ask = u.ask;
+	if (!ask && undone.turn) {
+		var q = ms.find(function (m) { return m && m.role === 'user' && m.mid === undone.turn; });
+		ask = q ? q.content : '';
+	}
+	undone.ask = String(ask || '').slice(0, 200);
+	var last = 0;
+	ms.forEach(function (m) { if (m && +m.ts > last) last = +m.ts; });
+	var row = { role: 'user', app: true, undone: undone, content: undoNoteText(undone), mid: mid,
+		ts: Math.max(Date.now(), last + 1) };
+	ms.push(row);
+	touchChat(chat);
+	persistChats();
+	if (ownsChat(chat)) renderHistory(chat.messages);
+	if (window.DaimondSync && DaimondSync.flush) DaimondSync.flush().catch(function () {});
+	return row;
+}
+
+/// The turn id of runner run `run` under `keeper`, from the History version that carries it
+/// (a turn's own, or an undo's, whose manifest names the turn it undid). '' where none does.
+async function turnOfRun(keeper, run) {
+	if (!window.DaimondVersions || !DaimondVersions.rows) return '';
+	var rows = await DaimondVersions.rows(String(keeper || ''));
+	var r = (rows || []).find(function (x) { return x && x.away && String(x.away.run) === String(run); });
+	return r ? String(r.turn || '') : '';
+}
+
+/// The chat holding turn `turn` of `keeper` (or the Files row of `run`), loading the keeper's
+/// chats where needed. `{chat}`, or `{gone: true}` where it is in Trash or no longer held.
+export async function chatOfTurn(keeper, turn, run) {
+	keeper = String(keeper || ''); turn = String(turn || ''); run = String(run || '');
+	var chats = pg.chats || [], c = null;
+	var holds = function (x) {
+		return (x.messages || []).some(function (m) {
+			return m && ((turn && m.role === 'user' && m.mid === turn) || (run && m.mid === run + '-files'));
+		});
+	};
+	if (keeper.indexOf('chat:') === 0) {
+		var cid = keeper.slice(5);
+		c = chats.find(function (x) { return x && x.id === cid; }) || null;
+		if (c) { try { await loadChatMessages(c); } catch (e) { /* as it is held */ } }
+	} else if (turn || run) {
+		c = chats.find(function (x) { return x && x._loaded && holds(x); }) || null;
+		for (var i = 0; !c && i < chats.length; i++) {
+			var x = chats[i];
+			if (!x || x._loaded || String(x.diamondId || '') !== keeper) continue;
+			try { await loadChatMessages(x); } catch (e) { continue; }
+			if (holds(x)) c = x;
+		}
+	}
+	if (!c || trashed(c.id) || (c.diamondId && trashed(c.diamondId))) return { gone: true };
+	return { chat: c };
+}
+
+/// A runner's done undo (or undo of an undo, run `u-<uid>`): its note in the turn's chat.
+async function noteRunnerUndo(env) {
+	var run = String(env.run || ''), redo = run.indexOf('u-') === 0, keeper = String(env.keeper || '');
+	var turn = '';
+	try { turn = await turnOfRun(keeper, run); } catch (e) { turn = ''; }
+	var got = await chatOfTurn(keeper, turn, redo ? '' : run);
+	if (!got.chat) return null;
+	return noteUndone(got.chat, run, { how: redo ? 'redo' : 'undo', turn: turn, keeper: keeper,
+		restored: env.restored, removed: env.removed, skipped: env.skipped });
+}
+
+/// The chat whose note records restore `v` of `keeper` (a Here undo's or a History restore's),
+/// and that note; null where no held chat has one.
+async function chatOfRestore(keeper, v) {
+	var chats = pg.chats || [];
+	var find = function (x) {
+		return (x.messages || []).find(function (m) {
+			return m && m.undone && m.undone.keeper === String(keeper) && +m.undone.recorded === +v;
+		});
+	};
+	for (var i = 0; i < chats.length; i++) {
+		var x = chats[i];
+		if (!x || trashed(x.id)) continue;
+		if (!x._loaded) {
+			if (String(x.diamondId || '') !== String(keeper) && 'chat:' + x.id !== String(keeper)) continue;
+			try { await loadChatMessages(x); } catch (e) { continue; }
+		}
+		var m = find(x);
+		if (m) return { chat: x, note: m };
+	}
+	return null;
+}
+
+/// "Undo this restore" of a local restore `v` was done (`res` from `undoVersion`): what came
+/// back is noted in the chat that was told of the restore.
+export async function noteRestoreUndone(keeper, v, res) {
+	if (!res) return null;
+	var got = await chatOfRestore(keeper, v);
+	if (!got) return null;
+	return noteUndone(got.chat, 'redo-' + keeper + '-v' + v, { how: 'redo', turn: got.note.undone.turn,
+		ask: got.note.undone.ask, keeper: keeper, recorded: res.recorded, restored: res.restored,
+		skipped: res.refused });
+}
+
+/// The restore toast's Undo (versions.js `offerUndo`) was done, said by `daimond:restore-undone`
+/// (`{id, v, res}`): noted as "Undo this restore" is.
+export function restoreUndoneHeard(d) {
+	if (!d || !d.id || !d.res) return Promise.resolve(null);
+	return noteRestoreUndone(String(d.id), Number(d.v), d.res);
+}
+
+/// The History rows whose chat was gone when a restore took back their change,
+/// `{<keeper>:<v>: [paths]}`: read, or with `m` written.
+function untoldStore(m) {
+	var key = 'daimond.undo_untold';	// fixed: this page's own store key
+	if (m) {
+		try {
+			if (window.DaimondStore) DaimondStore.put(key, m);
+			else localStorage.setItem(key, JSON.stringify(m));
+		} catch (e) { /* the row says nothing; the chat is gone either way */ }
+		return m;
+	}
+	var got = null;
+	try { got = window.DaimondStore ? DaimondStore.get(key, null) : JSON.parse(localStorage.getItem(key) || 'null'); }
+	catch (e) { got = null; }
+	return (got && typeof got === 'object') ? got : {};
+}
+
+/// The paths restored over version `v` of `keeper` whose chat could not be told.
+export function untoldOf(keeper, v) { return untoldStore()[String(keeper) + ':' + v] || []; }
+
+function untoldAdd(keeper, v, path) {
+	var m = untoldStore(), k = String(keeper) + ':' + v, l = m[k] || (m[k] = []);
+	if (l.indexOf(path) < 0) l.push(path);
+	untoldStore(m);
+}
+
+/// A file of `keeper` was restored from History (`res` the restore's answer): the chat of each
+/// turn whose change it took back is told. `undoOf` is the version a put-back undid (its own
+/// change); else the restore set `path` to its state at `v`, taking back every later turn's.
+/// `path` null is a whole-version restore: every later turn's change it took back.
+/// A turn whose chat is gone is recorded on its History row only.
+export async function noteHistRestore(keeper, v, path, res, undoOf) {
+	if (!res || !window.DaimondVersions || !DaimondVersions.rows) return;
+	var rows = await DaimondVersions.rows(String(keeper));
+	var rec = Number(res.recorded) || 0;
+	var hit = (rows || []).filter(function (x) {
+		if (!x || !x.turn || x.cause !== 'turn') return false;
+		if (undoOf) return +x.v === +v;
+		return +x.v > +v && +x.v !== rec && (path === null
+			|| (x.files || []).some(function (f) { return f && f.path === path; }));
+	});
+	var said = (res.restored || []).map(function (x) { return String((x && x.path) || x || ''); });
+	for (var i = 0; i < hit.length; i++) {
+		var restored = [path];
+		if (path === null) {
+			var mine = (hit[i].files || []).map(function (f) { return String((f && f.path) || ''); }).filter(Boolean);
+			restored = said.length ? mine.filter(function (p) { return said.indexOf(p) >= 0; }) : mine;
+			if (!restored.length) continue;
+		} else if (said.length) restored = said;
+		var got = await chatOfTurn(keeper, hit[i].turn, '');
+		if (!got.chat) { restored.forEach(function (p) { untoldAdd(keeper, hit[i].v, p); }); continue; }
+		noteUndone(got.chat, 'hist-' + keeper + '-v' + (rec || Date.now()) + '-' + hit[i].v,
+			{ how: 'restore', turn: hit[i].turn, keeper: keeper, recorded: rec, restored: restored, skipped: res.refused });
+	}
 }
 
 /// How an undo-turn is sent: sealed to the account and put in the post box.
@@ -341,6 +550,15 @@ export function histRow(id, r, files, newer) {
 		note.textContent = r.note;             // escaped via textContent (H5)
 		row.appendChild(note);
 	}
+	// A restore took back this turn's change while its chat was gone (UNDO-HISTORY): said here,
+	// as no chat could be told.
+	var untold = untoldOf(id, v);
+	if (untold.length) {
+		var un = document.createElement('div');
+		un.className = 'hist-note hist-untold';
+		un.textContent = t('versions.undo_untold', { list: untold.map(function (p) { return shownPath(id, p); }).join(', ') });
+		row.appendChild(un);
+	}
 
 	// ── What this version did to the FILES ───────────────────────
 	//
@@ -407,7 +625,8 @@ export function histRow(id, r, files, newer) {
 				noticeDialog(t('fold.busy_title'), t('fold.busy_body', { diamond: f.name || '' }));
 				return;
 			}
-			await DaimondVersions.undoVersion(id, v, (r.files || []).map(function (e) { return e.path; }));
+			var back = await DaimondVersions.undoVersion(id, v, (r.files || []).map(function (e) { return e.path; }));
+			try { await noteRestoreUndone(id, v, back); } catch (e) { /* the restore's undo stands */ }
 			await refreshDiamondAfterChange();
 			showCrystalHistory();
 		});
@@ -562,6 +781,9 @@ function histFile(id, v, e) {
 			return;
 		}
 		why.textContent = '';
+		if (res && res.outcome === 'restored') {
+			try { await noteHistRestore(id, v, e.path, res, false); } catch (x) { /* the restore stands */ }
+		}
 		await refreshDiamondAfterChange();
 	});
 
@@ -581,6 +803,9 @@ function histFile(id, v, e) {
 			return;
 		}
 		why.textContent = '';
+		if (res) {
+			try { await noteHistRestore(id, v, e.path, res, true); } catch (x) { /* the put-back stands */ }
+		}
 		await refreshDiamondAfterChange();
 	}
 	if (before) before.addEventListener('click', putBack);
@@ -649,7 +874,10 @@ async function restoreWholeVersion(id, v) {
 		noticeDialog(t('crystal.restore_failed'), done.why ? friendlyError(done.why) : '');
 		return;
 	}
-	if (done.outcome === 'restored') await refreshDiamondAfterChange();
+	if (done.outcome === 'restored') {
+		try { await noteHistRestore(id, v, null, done, false); } catch (e) { /* the restore stands */ }
+		await refreshDiamondAfterChange();
+	}
 }
 
 /// The Diamond's tags: the user's own filing system, edited here.
@@ -2507,4 +2735,8 @@ export function install() { // page-split: install
 		render:  renderArtefacts,
 		of:      artefactsIn,        // pure: messages -> [{ref, rel}]
 	};
+	// The restore toast's Undo, from versions.js: its note in the chat told of the restore.
+	window.addEventListener('daimond:restore-undone', function (ev) {
+		restoreUndoneHeard(ev && ev.detail).catch(function () { /* the undo stands */ });
+	});
 } // page-split: end install

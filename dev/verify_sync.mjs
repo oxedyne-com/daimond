@@ -1564,7 +1564,7 @@ try {
 
 		// The live session keeps the key it is running on: a merge must not lock
 		// a working device out mid-turn. The rotated key is read at the next unlock.
-		r.sessionKeyKept = S.keyFor('groq') === PLAIN;
+		r.sessionKeyKept = await window.__sendsKey('groq', PLAIN);	// as the request takes it (KEY-RESOLVE)
 
 		// A DIVERGENT identity's key must NOT clobber a readable one. A fresher row
 		// whose sealed key does NOT open on this device (a re-minted device's orphaned
@@ -1577,7 +1577,7 @@ try {
 			models: ['fresh-1'], fetched: now + 60000, touched: stamp + 120000,
 			keyEnc: 'FOREIGN-UNREADABLE-SEALED',
 		} } });
-		r.divergentKept = S.keyFor('groq') === PLAIN
+		r.divergentKept = await window.__sendsKey('groq', PLAIN)
 			&& S.exportSync().providers.groq.keyEnc === freshEnc;
 
 		// The default follows the freshest side, and only to somewhere real.

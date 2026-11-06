@@ -1,5 +1,5 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
-import { Sbj, qr_matrix } from './wasm.js';
+import { DaimondApp, Sbj, qr_matrix } from './wasm.js';
 import { TAG_MODE_KEY, TAG_POOL_KEY, pg } from './state.js';
 // page-split: end imports
 export let esc; // page-split: hoisted
@@ -270,7 +270,10 @@ export function saveCfg(c) {
 	catch (e) { /* quota: config holds for this session, not across a reload */ }
 }
 
+/// Can the default model run? DaimondModels answers once it is here: `cfg` holds no key since
+/// KEY-RESOLVE, so only a config from before it is judged on its own fields.
 export function cfgReady(cfg) {
+	if (window.DaimondModels && DaimondModels.ready) return DaimondModels.ready();
 	return !!(cfg.baseUrl && cfg.model && cfg.apiKey);
 }
 // page-split: install 11
@@ -504,11 +507,14 @@ export function syncCfgFromModels() {
 	if (!window.DaimondModels) return;
 	var r = DaimondModels.resolve('', '');
 	pg.cfg.baseUrl = r ? r.baseUrl : '';
-	pg.cfg.apiKey  = r ? r.apiKey  : '';
+	// No key in the view (KEY-RESOLVE): it stays in DaimondModels, and an engine is built
+	// on it there. What was here is cleared, so no copy outlives the move.
+	pg.cfg.apiKey  = '';
 	pg.cfg.model   = r ? r.model   : '';
 }
 
-/// What a chat should actually run: the model it was started on, or the default.
+/// What a chat should actually run: `{ provider, model, baseUrl }`, the model it was started
+/// on, or the default provider's. No key: `engineFor` builds on it inside DaimondModels.
 ///
 /// A chat records its provider as well as its model, so starring a different default later
 /// does not silently move a conversation in progress onto another provider's model. A chat
@@ -517,7 +523,18 @@ export function appCfgFor(holder) {
 	var r = window.DaimondModels
 		&& DaimondModels.resolve(holder && holder.provider, holder && holder.model);
 	if (r) return r;
-	return { baseUrl: pg.cfg.baseUrl, apiKey: pg.cfg.apiKey, model: (holder && holder.model) || pg.cfg.model };
+	var d = window.DaimondModels ? DaimondModels.resolve('', '') : null;
+	return { provider: d ? d.provider : '', baseUrl: pg.cfg.baseUrl,
+		model: (holder && holder.model) || pg.cfg.model };
+}
+
+/// An engine on `a`, an `appCfgFor` answer, built inside DaimondModels on the stored key; a
+/// keyless one when that cannot run here, so a turn meets the provider's refusal as before.
+export function engineFor(a, maxOut, system, tools) {
+	var app = (window.DaimondModels && a && a.provider)
+		? DaimondModels.engine(a.provider, a.model, maxOut, system, tools) : null;
+	return app || new DaimondApp(a.baseUrl || 'http://127.0.0.1/v1/chat/completions', '',
+		(a && a.model) || '', maxOut, system, tools);
 }
 // page-split: install 12
 // WHICH CHAT WAS ON SCREEN, so a reload comes back to it.

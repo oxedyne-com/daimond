@@ -68,12 +68,12 @@ await chat(s, 'hello');
 check('while unlocked, the chat reaches the provider with its key',
 	seen.length === 1 && seen[0].includes('SUPERSECRET-KEY'), seen[0] || '(nothing sent)');
 
-const unlocked = await p.evaluate(() => ({
-	key:  window.DaimondModels.keyFor('secret'),
+const unlocked = await p.evaluate(async () => ({
+	key:  await window.__sendsKey('secret', 'SUPERSECRET-KEY'),	// as the request takes it (KEY-RESOLVE)
 	apps: (window.__daimondChats || []).length,   // not exposed; only the key matters here
 }));
 check('and the key is readable, as it must be to work',
-	unlocked.key === 'SUPERSECRET-KEY');
+	unlocked.key === true);
 
 // ── Lock ───────────────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ const locked = await p.evaluate(async () => {
 	await new Promise(r => setTimeout(r, 900));
 	return {
 		drove:  true,
-		key:    window.DaimondModels.keyFor('secret'),
+		key:    await window.__sendsKey('secret', null),
 		sealed: window.DaimondModels.isSealed('secret'),
 		hasKey: window.DaimondModels.hasKey('secret'),
 		gateUp: getComputedStyle(document.getElementById('identity-modal')).display !== 'none',
@@ -99,7 +99,7 @@ const locked = await p.evaluate(async () => {
 });
 check('the lock is reachable from the user menu', locked.drove === true);
 check('after locking, no plaintext key can be named',
-	locked.key === '', locked.key ? 'STILL READABLE: ' + locked.key : '(gone)');
+	locked.key === false, locked.key ? 'STILL SENT' : '(gone)');
 check('the key is still THERE, just sealed — locking is not deleting',
 	locked.hasKey === true && locked.sealed === true,
 	'hasKey=' + locked.hasKey + ' sealed=' + locked.sealed);

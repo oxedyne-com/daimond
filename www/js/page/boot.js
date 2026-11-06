@@ -19,6 +19,7 @@ import { completeUnlock, idGenMode, idPrimary, identityAvailable, orphanIdentity
 	updateUserRow, watchHeap } from './passkey_phrase.js';
 import { SearchRow } from './termpanel.js';
 import { appendError, runLive } from './turns.js';
+import { noteUndone } from './marks.js';
 import { applyPermissionMode, confirmDialog, noticeDialog } from './consent.js';
 import { initPauseUi } from './chats.js';
 import { openBodyDialog } from './tilestyle.js';
@@ -615,7 +616,10 @@ async function handleCheckoutReturn() {
 /// chat was showing raised the toast over that chat, and Undo there reverted the first
 /// chat's files. So `shown` (the turn's own `owns`) gates the offer, and the window is
 /// withdrawn the moment the chat leaves the screen (`DaimondUndo.check`).
-export function offerTurnUndo(ev, shown) {
+///
+/// `turn` (`{chat, mid, ask}`, the turn's chat and prompt): a done undo is noted at the chat's
+/// end, so the model's next turn knows the files went back (UNDO-HISTORY).
+export function offerTurnUndo(ev, shown, turn) {
 	var files = Array.isArray(ev.files) ? ev.files.slice() : [];
 	if (!files.length || !window.DaimondUndo || !window.DaimondVersions) return;
 	var keeper = String(ev.keeper || ''), v = Number(ev.version);
@@ -625,7 +629,13 @@ export function offerTurnUndo(ev, shown) {
 		text:   tOr('versions.turn_kept', 'Copies kept of the files this turn changed: {n}',
 			{ n: files.length }),
 		ms:     15000,
-		revert: function () { DaimondVersions.undoVersion(keeper, v, files); },
+		revert: async function () {
+			var r = await DaimondVersions.undoVersion(keeper, v, files);
+			if (r && turn && turn.chat) {
+				noteUndone(turn.chat, turn.mid, { how: 'undo', turn: turn.mid, ask: turn.ask, keeper: keeper,
+					recorded: r.recorded, restored: r.restored, skipped: r.refused });
+			}
+		},
 	});
 }
 

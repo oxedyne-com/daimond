@@ -145,10 +145,10 @@ export function fillSettings() {
 	var prov = providerForUrl(pg.cfg.baseUrl || '');
 	document.getElementById('cfg-provider').value = prov;
 	document.getElementById('cfg-base-url').value = pg.cfg.baseUrl || '';
-	setSecret(document.getElementById('cfg-api-key'), pg.cfg.apiKey || '');
+	// Never the stored key read back (KEY-RESOLVE): a new key is typed, the old one stays put.
+	setSecret(document.getElementById('cfg-api-key'), '');
 	applyProviderChoice(prov, true);
-	// Seed the model dropdown with the saved model, then refresh from the
-	// provider if we have a key.
+	// Seed the model dropdown with the saved model; the list is asked for once a key is typed.
 	if (pg.cfg.model) {
 		setModelOptions([{ value: pg.cfg.model, label: pg.cfg.model },
 			{ value: MODEL_OTHER, label: t('models.other') }], pg.cfg.model);
@@ -156,7 +156,6 @@ export function fillSettings() {
 		setModelOptions([{ value: '',
 			label: t(prov ? 'models.enter_key_first' : 'models.choose_provider_first') }]);
 	}
-	if (prov && pg.cfg.apiKey) fetchModels();
 }
 
 /// Draw every row of Settings > Limits, to what is stored.

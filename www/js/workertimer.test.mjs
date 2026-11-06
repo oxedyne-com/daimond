@@ -132,6 +132,9 @@ function harness(rounds, after) {
 		chats:          [],
 		DaimondModels:  { held: () => false, CREDITS: 'credits' },
 		DaimondApp:     fakeEngine(rounds, after),
+		// util.js `engineFor`: the engine is built inside DaimondModels on the key (KEY-RESOLVE);
+		// here, the fake class on none.
+		engineFor:      (a, maxOut, sys, tools) => new S.DaimondApp(a.baseUrl || '', '', a.model || '', maxOut, sys, tools),
 		Sbj:            { worker_wall_clock_ms: () => 540000 },	// the old page reads it
 		setTimeout:     clock.setTimeout,
 		clearTimeout:   () => {},

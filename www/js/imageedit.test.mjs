@@ -38,6 +38,10 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + name + (detail !== undefined ? '  (' + String(detail).slice(0, 300) + ')' : '')); failures++; }
 }
 
+// models.js sends a provider's request from its own realm (`providerFetch`, KEY-RESOLVE), so
+// the realm's `fetch` is routed to the window's ocr.js runs in: `REALM.get(M).route`.
+const REALM = new WeakMap();
+
 async function models() {
 	const ls = new Map();
 	const localStorage = {
@@ -51,10 +55,12 @@ async function models() {
 	ctx.DaimondCore = { tombs: () => ({}), tombstone: () => {}, mergeTombs: () => {} };
 	ctx.DaimondIdentity = { isUnlocked: () => true, wrap: async (k) => 'SEALED(' + k + ')',
 		unwrap: async (e) => String(e).replace(/^SEALED\(|\)$/g, '') };
-	ctx.fetch = async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'm1' }] }) });
+	ctx.fetch = async (u, o) => (ctx.route ? ctx.route(u, o)
+		: { ok: true, status: 200, json: async () => ({ data: [{ id: 'm1' }] }) });
 	vm.runInContext(source('stamp.js'), ctx);
 	vm.runInContext(source('models.js'), ctx);
 	const M = ctx.DaimondModels;
+	REALM.set(M, ctx);
 	M.init({ onChange: () => {} });
 	return M;
 }
@@ -63,6 +69,7 @@ async function models() {
 function ocr(M, answer) {
 	const win = { DaimondModels: M, URL, btoa: (s) => Buffer.from(s, 'binary').toString('base64'), posts: [] };
 	win.fetch = async (u, o) => { win.posts.push({ url: String(u), opts: o || {} }); return answer(String(u), o || {}); };
+	REALM.get(M).route = win.fetch;
 	new Function('window', 'with (window) {\n' + readFileSync(join(HERE, 'ocr.js'), 'utf8') + '\n}')(win);
 	return win;
 }
@@ -175,6 +182,7 @@ async function mockChecks() {
 		M.addProvider('openrouter', { url: 'http://127.0.0.1:' + port + '/api/v1/chat/completions', name: 'OpenRouter' });
 		await M.setKey('openrouter', 'or-key');
 		const win = { DaimondModels: M, URL, btoa: (s) => Buffer.from(s, 'binary').toString('base64'), fetch };
+		REALM.get(M).route = fetch;
 		new Function('window', 'with (window) {\n' + readFileSync(join(HERE, 'ocr.js'), 'utf8') + '\n}')(win);
 		const pick = JSON.parse(await win.DaimondOcr.imageModel());
 		check('U5 the default is the mock catalogue\'s priced picture-taker', pick.id === 'mock/image-edit'

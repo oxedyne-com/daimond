@@ -411,6 +411,29 @@ export { displayFault, cleanDisplayEnv, WAYLAND_VARS, INHERITED_ENV,
 	UNATTENDED_VAR, OWNED_VAR, SEAT_DISPLAY } from './display.mjs';
 import { displayFault, cleanDisplayEnv, INHERITED_ENV } from './display.mjs';
 
+/// Does `provider`'s request carry the key `want`? Since KEY-RESOLVE no `DaimondModels` export
+/// hands a key out, so a verifier asks the one path that puts it on: `providerFetch` to the
+/// row's own endpoint, with the page's `fetch` swapped for a recorder for exactly that call
+/// (providerFetch calls `fetch` before its first await). Answers a boolean, never the key;
+/// `want` null asks only whether any key goes on. False when the row has no usable key.
+const SENDS_KEY = () => {
+	window.__sendsKey = async (provider, want) => {
+		const M = window.DaimondModels;
+		if (!M || typeof M.providerFetch !== 'function') return false;
+		const real = window.fetch;
+		let sent = null;
+		window.fetch = async (u, o) => { sent = (o && o.headers) || {}; return new Response('{}'); };
+		let call;
+		try { call = M.providerFetch(provider, M.providerUrl(provider), { method: 'POST' }); }
+		finally { window.fetch = real; }
+		try { await call; } catch (e) { return false; }
+		if (!sent) return false;
+		const vals = [sent.authorization, sent['x-api-key']].filter((v) => typeof v === 'string' && v);
+		if (want == null) return vals.length > 0;
+		return vals.some((v) => v === want || v === 'Bearer ' + want);
+	};
+};
+
 /// A Diamond's holding written as the page writes one, for a verifier. Since GRANT-G2
 /// (D-20261031-11) a mark is a link in focus and nothing more: there is no press on a
 /// device and no record of one, so `root` is accepted and unused. Answers whether the row
@@ -469,6 +492,8 @@ function LOG_CHANGE_ASKS(tag) {
 /// in place of the Pending tile. Every payload asked is kept in `window.__changeAsks`; the
 /// answer is `window.__changeAnswer`, so a later arm may change it in the page. Set it again
 /// after a reload.
+export { SENDS_KEY };
+
 export const answerChanges = (page, word) => page.evaluate((w) => {
 	window.__changeAsks = window.__changeAsks || [];
 	if (w !== undefined) window.__changeAnswer = w;
@@ -893,6 +918,7 @@ export async function open(opts = {}) {
 	if (clock != null) await page.clock.install({ time: clock });
 	if (route) await route(page);
 	await page.addInitScript(PRESS_MARK);
+	await page.addInitScript(SENDS_KEY);
 	await page.addInitScript(PRESS_SQUARES);
 	await page.addInitScript(LOG_CHANGE_ASKS, CHANGE_ASK);
 	await page.goto(app, { waitUntil: 'domcontentloaded' });

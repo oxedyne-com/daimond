@@ -520,7 +520,7 @@ function mountChatFoldKeep(card, chat, close) {
 	// internal verb "Fold" (CHAT-15): the row's own tooltip already said
 	// this, and now it is the word itself.
 	fold.textContent = chat.foldedInto ? t('tile.folded')
-		: tOr('tile.turn_into_diamond', 'Turn into a Diamond…');
+		: tOr('tile.turn_into_diamond', 'Turn into a diamond…');
 	fold.title = chat.foldedInto
 		? t('tile.folded_help', { name: chat.foldedInto.name })
 		: t('tile.fold_all_help');

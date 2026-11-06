@@ -1,7 +1,7 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
 import { DaimondApp, Sbj, Wasm, grow_on_purpose, heap_bytes, readBytes } from './wasm.js';
 import { anyCrystalBusy, chatInput, diamondBusy, pg } from './state.js';
-import { appCfgFor, cfgReady, friendlyError, maxOutFor, t } from './util.js';
+import { appCfgFor, cfgReady, engineFor, friendlyError, maxOutFor, t } from './util.js';
 import { ChatStore, applyChatTaint, chatDueAt, chatMsgCount, keepChatTaint, loadChatMessages,
 	loadMsgTombs, markChatTainted, msgTombstone, noteCloudIndexStuck, persistChats, storageAlarm,
 	storageAlarmClear, storedChats, threadStarted, touchChat, touchMsg, trashList, trashPurge,
@@ -76,8 +76,7 @@ export function ensureApp(chat, exceptMid, pair) {
 	// chat has no Diamond, so no Diamond's). Remembered so a change of notes rebuilds it.
 	chat._steer = (typeof Notes === 'object' && Notes) ? Notes.steerFor(a.model, chat.diamondId || '') : '';
 	var chatSys = Instructions.compose(SYSTEM_PROMPT(a.model, chat._steer), '');
-	chat.app = new DaimondApp(a.baseUrl, a.apiKey, a.model,
-		chat._capTry || maxOutFor(a.model, a.provider),
+	chat.app = engineFor(a, chat._capTry || maxOutFor(a.model, a.provider),
 		chatSys, pg.cfg.tools !== false);
 	// The user's own chat may send workers out; a worker may not. `Tool::browser`
 	// in src/tools.rs is the list BOTH are built from, so the dispatch tool is not

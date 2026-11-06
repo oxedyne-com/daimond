@@ -38,6 +38,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { loadStore } from './storefixture.mjs';
 
+// KEY-RESOLVE: no export hands a key out, so the key a request would carry is read the way the
+// request path takes it, from an engine built on it with this probe class bound.
+class KeyProbe { constructor(base, key) { this.k = key; } }
+function slotKey(M, n) { M.bindEngine(KeyProbe); const e = M.slotEngine(n, 'probe', 1, '', false); return e ? e.k : undefined; }
+
 const HERE        = dirname(fileURLToPath(import.meta.url));
 const MODELS_SRC  = join(HERE, 'models.js');
 const DAIMOND_SRC = join(HERE, 'daimond.js');
@@ -181,7 +186,7 @@ async function main() {
 		const b = gw.calls[0] || {};
 		check('the ask is a fresh ensure at the turn\'s want', b.slot === 2 && b.ensure === true
 			&& b.fresh === true && b.want_minor === 1500, JSON.stringify(b));
-		const s = M.slotConfig(2);
+		const s = M.slotConfig(2) && { key: slotKey(M, 2) };
 		check('the worker holds the key the gateway minted, not the old one',
 			!!s && s.key === (gw.live[2] && gw.live[2].key) && s.key !== 'sk-old', 'key=' + (s && s.key));
 		check('the key is capped at the want (clamped to 500), not the float',
@@ -194,7 +199,7 @@ async function main() {
 		const r = await runWorker(M, 3, 500);
 		check('one ask', gw.calls.length === 1, 'calls=' + gw.calls.length);
 		check('a key at the want', r.went && gw.live[3] && gw.live[3].cap === 500
-			&& M.slotConfig(3) && M.slotConfig(3).key === gw.live[3].key,
+			&& M.slotConfig(3) && slotKey(M, 3) === gw.live[3].key,
 			'cap=' + (gw.live[3] && gw.live[3].cap));
 	}
 
@@ -227,7 +232,7 @@ async function main() {
 	{
 		const { M, gw } = loadModels();
 		await M.keySlot(6, 1500, '');
-		const first = M.slotConfig(6) && M.slotConfig(6).key;
+		const first = M.slotConfig(6) && slotKey(M, 6);
 		gw.now = 60_000;				// the turn ran a minute: well past the floor
 		gw.calls.length = 0;
 		const state = {};
@@ -246,8 +251,8 @@ async function main() {
 			&& b.fresh === true && b.want_minor === 1500, JSON.stringify(b));
 		check('the reminted key is capped at the want, not the float', gw.live[6] && gw.live[6].cap === 500,
 			'cap=' + (gw.live[6] && gw.live[6].cap));
-		check('the worker holds the new key', M.slotConfig(6) && M.slotConfig(6).key !== first
-			&& M.slotConfig(6).key === gw.live[6].key, 'key=' + (M.slotConfig(6) && M.slotConfig(6).key));
+		check('the worker holds the new key', M.slotConfig(6) && slotKey(M, 6) !== first
+			&& slotKey(M, 6) === gw.live[6].key, 'key=' + slotKey(M, 6));
 	}
 
 	console.log('(7) a refused remint shows its own reason; only a noCredits refusal says the credits ran out');

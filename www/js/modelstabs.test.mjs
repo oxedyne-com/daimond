@@ -33,6 +33,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { loadStore } from './storefixture.mjs';
 
+// KEY-RESOLVE: no export hands a key out, so the key a request would carry is read the way the
+// request path takes it, from an engine built on it with this probe class bound.
+class KeyProbe { constructor(base, key) { this.k = key; } }
+function keyOf(M, id) { M.bindEngine(KeyProbe); const e = M.engine(id, 'probe', 1, '', false); return e ? e.k : ''; }
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC  = readFileSync(process.env.MODELS_JS || join(HERE, 'models.js'), 'utf8');
 let failures = 0, checks = 0;
@@ -97,11 +102,11 @@ check('tab 2\'s save keeps tab 1\'s provider on the disk (ab92fb0e: erased)', on
 console.log('\nKEY: the opened key follows the stored one\n');
 await B.M.setKey('openai', 'key-one');
 A.win.fire('storage', { key: 'daimond-models-v2' });
-check('tab 1 reads the key tab 2 set (ab92fb0e: none)', A.M.keyFor('openai') === 'key-one', A.M.keyFor('openai'));
+check('tab 1 reads the key tab 2 set (ab92fb0e: none)', keyOf(A.M, 'openai') === 'key-one', keyOf(A.M, 'openai'));
 await A.M.setKey('openai', 'key-two');
 B.win.fire('storage', { key: 'daimond-models-v2' });
 check('tab 2 reads the key tab 1 set since, not the one it opened itself (ab92fb0e: key-one)',
-	B.M.keyFor('openai') === 'key-two', B.M.keyFor('openai'));
+	keyOf(B.M, 'openai') === 'key-two', keyOf(B.M, 'openai'));
 
 console.log('\n[ctl] another key\'s event\n');
 const n0 = B.changes.n;
@@ -161,7 +166,7 @@ console.log('\nAWAIT setKey: tab 1 pastes a key; tab 2 saves inside the seal\'s 
 	await pr; await sleep(6 * D);
 	const d = w.disk();
 	check('the disk holds the key tab 1 pasted (7ca624dd: enc1:k-old)', d.providers.openai.keyEnc === 'enc1:k-new', d.providers.openai.keyEnc);
-	check('both tabs use it', X.M.keyFor('openai') === 'k-new' && Y.M.keyFor('openai') === 'k-new', [X.M.keyFor('openai'), Y.M.keyFor('openai')]);
+	check('both tabs use it', keyOf(X.M, 'openai') === 'k-new' && keyOf(Y.M, 'openai') === 'k-new', [keyOf(X.M, 'openai'), keyOf(Y.M, 'openai')]);
 	check('and tab 2\'s provider is kept', !!d.providers.anthropic, Object.keys(d.providers));
 }
 
@@ -183,8 +188,8 @@ console.log('\nAWAIT applySync: tab 1 adopts a parcel\'s key and provider; tab 2
 	check('the disk holds the parcel\'s provider and its newer key (7ca624dd: neither)',
 		!!d.providers.mistral && d.providers.openai.keyEnc === 'enc1:k-remote', d.providers);
 	check('and tab 2\'s provider', !!d.providers.groq, Object.keys(d.providers));
-	check('tab 1 can use the parcel\'s provider; tab 2 opened it too', X.M.keyFor('mistral') === 'k-mistral' && Y.M.keyFor('mistral') === 'k-mistral',
-		[X.M.keyFor('mistral'), Y.M.keyFor('mistral')]);
+	check('tab 1 can use the parcel\'s provider; tab 2 opened it too', keyOf(X.M, 'mistral') === 'k-mistral' && keyOf(Y.M, 'mistral') === 'k-mistral',
+		[keyOf(X.M, 'mistral'), keyOf(Y.M, 'mistral')]);
 }
 
 console.log('\nAWAIT resealAfterRekey: tab 2 saves inside the re-seal\n');
@@ -203,8 +208,8 @@ console.log('\nAWAIT resealAfterRekey: tab 2 saves inside the re-seal\n');
 	check('resealAfterRekey said ok', r.ok, r);
 	check('every stored key opens under the new passphrase (7ca624dd: enc1:k-o)',
 		/^enc2:/.test(d.providers.openai.keyEnc) && /^enc2:/.test(d.providers.anthropic.keyEnc), [d.providers.openai.keyEnc, d.providers.anthropic.keyEnc]);
-	check('tab 1 still has its keys, tab 2 opened the new seals', X.M.keyFor('openai') === 'k-o' && Y.M.keyFor('anthropic') === 'k-a',
-		[X.M.keyFor('openai'), Y.M.keyFor('anthropic')]);
+	check('tab 1 still has its keys, tab 2 opened the new seals', keyOf(X.M, 'openai') === 'k-o' && keyOf(Y.M, 'anthropic') === 'k-a',
+		[keyOf(X.M, 'openai'), keyOf(Y.M, 'anthropic')]);
 	check('and tab 2\'s provider is kept', !!d.providers.groq, Object.keys(d.providers));
 	gen = 1;
 }
@@ -240,7 +245,7 @@ console.log('\nERASE: tab 2 forgets the box; tab 1 follows\n');
 	await w.as(X, () => X.M.setKey('openai', 'k-x'));
 	w.erase();
 	await sleep(2 * D);
-	check('tab 1 holds no provider and no key', !has(X, 'openai') && X.M.keyFor('openai') === '', [Object.keys(X.M.exportSync().providers), X.M.keyFor('openai')]);
+	check('tab 1 holds no provider and no key', !has(X, 'openai') && keyOf(X.M, 'openai') === '', [Object.keys(X.M.exportSync().providers), keyOf(X.M, 'openai')]);
 }
 
 console.log('\nCONVERGE: two tabs, random writes, events in any order: one store\n');

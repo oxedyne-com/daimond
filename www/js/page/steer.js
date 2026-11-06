@@ -1629,7 +1629,7 @@ export async function runTurn(chat, text, opts) {
 		} else if (ev.type === 'versions') {
 			// The chat's own store kept what this turn replaced or removed. Offered
 			// back at once, and `file_revert` does the same whenever the user asks.
-			offerTurnUndo(ev, owns);
+			offerTurnUndo(ev, owns, { chat: chat, mid: umid, ask: text });
 			if (String(ev.keeper || '').indexOf('chat:') === 0) filesEv = ev;
 		} else if (ev.type === 'interjected') {
 			// It has landed: the agent put it into the conversation at the seam,
@@ -1967,7 +1967,7 @@ export async function runTurn(chat, text, opts) {
 			if (wantMinor && canRemint(chat)) {
 				try {
 					var er = await DaimondModels.ensure(0, wantMinor, chatSpendNode(chat));
-					if (er && er.key) {
+					if (er && er.minted) {
 						app = await rebuildAppWithout(chat, umid);
 					}
 				} catch (e0) { /* best-effort; run on the key already held */ }

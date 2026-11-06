@@ -170,9 +170,9 @@ check('the frontier models a credits user is buying are in it',
 
 // ── The key must have no at-rest story at all ─────────────────────────
 // First prove it is really there, or the grep below passes for the wrong reason.
-const live = await page.evaluate(() => window.DaimondModels.keyFor('credits'));
-check('the minted key IS live in memory (so the storage check cannot pass vacuously)',
-	live === keyN(1), live ? live.slice(0, 18) + '…' : '(empty)');
+// Read the way the request path takes it (KEY-RESOLVE): no export hands the key out.
+const live = await page.evaluate((k) => window.__sendsKey('credits', k), keyN(1));
+check('the minted key IS live in memory (so the storage check cannot pass vacuously)', live === true);
 
 const dump = await page.evaluate(() => {
 	let all = '';
@@ -510,12 +510,12 @@ await shot(s, 'credits-dry');
 gw.refuse = false; gw.bal = 840; gw.spent = [];
 await page.evaluate(() => window.DaimondModels.lock());
 await page.waitForTimeout(300);
-const afterLock = await page.evaluate(() => ({
-	key:  window.DaimondModels.keyFor('credits'),
+const afterLock = await page.evaluate(async () => ({
+	key:  await window.__sendsKey('credits', null),
 	row:  (window.DaimondModels.providers() || []).find(p => p.id === 'credits'),
 	st:   window.DaimondModels.creditsState(),
 }));
-check('locking forgets the minted key outright', !afterLock.key, JSON.stringify(afterLock.key));
+check('locking forgets the minted key outright', afterLock.key === false);
 check('a locked credits row cannot run', afterLock.row.ready === false && afterLock.row.hasKey === false);
 check('a locked row shows no balance', afterLock.st.credits === 0 && afterLock.row.balance === '');
 
@@ -556,9 +556,9 @@ await page.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'credits');
 await page.waitForTimeout(2500);
 
-const liveKey = await page.evaluate(() => window.DaimondModels.keyFor('credits'));
+const liveKey = await page.evaluate((k) => window.__sendsKey('credits', k), keyN(gw.mints));
 const genBefore = await page.evaluate(() => window.DaimondModels.creditsGen());
-check('the session is back on a live minted key', !!liveKey && liveKey === keyN(gw.mints));
+check('the session is back on a live minted key', liveKey === true);
 
 // Star a credits model as the default: a worker runs on whatever the default is.
 await page.evaluate(() => window.DaimondModels.setDefault('credits', 'anthropic/claude-opus-4.5'));
@@ -575,7 +575,7 @@ await page.waitForTimeout(600);
 
 // The key is spent for WORKERS only: the conductor's own turn runs on the same key, and if it
 // cannot finish it never dispatches anything and the case under test never happens.
-gw.spent = [liveKey];
+gw.spent = [keyN(gw.mints)];	// the live key the check above proved
 gw.onlyFor = WORKER_SAYS;
 const mintsBefore4 = gw.mints;
 clearMockLog();
@@ -662,13 +662,12 @@ const mintsBefore3 = gw.mints;
 await page.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'credits');
 await page.waitForTimeout(2500);
-const after = await page.evaluate(() => ({
-	key: window.DaimondModels.keyFor('credits'),
+const after = await page.evaluate(async (ks) => ({
+	key: await window.__sendsKey('credits', ks[0]) && !(await window.__sendsKey('credits', ks[1])),
 	row: (window.DaimondModels.providers() || []).find(p => p.id === 'credits'),
-}));
+}), [keyN(gw.mints), keyN(1)]);
 check('a reload re-mints rather than reloading a key from disk', gw.mints === mintsBefore3 + 1, `${gw.mints - mintsBefore3}`);
-check('the key after a reload is a NEW one, not the old one back', after.key === keyN(gw.mints) && after.key !== keyN(1),
-	after.key ? after.key.slice(0, 18) + '…' : '(empty)');
+check('the key after a reload is a NEW one, not the old one back', after.key === true);
 check('the models survive the reload (the row is stored; only the key is not)', after.row.count === CATALOGUE.length);
 
 // The 502s are the gateway this test deliberately does not run. The 401, 402 and 426 are this

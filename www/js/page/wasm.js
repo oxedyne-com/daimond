@@ -107,6 +107,8 @@ export function bindWasm(w) { // page-split: bind
 	Wasm = w.Wasm;
 	init = w.init;
 	DaimondApp = w.DaimondApp;
+	// The key goes only into an engine models.js builds, so it is handed the class here, once.
+	if (window.DaimondModels && DaimondModels.bindEngine) DaimondModels.bindEngine(w.DaimondApp);
 	builtin_tools = w.builtin_tools;
 	qr_matrix = w.qr_matrix;
 	set_account_ns = w.set_account_ns;

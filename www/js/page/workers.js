@@ -1,7 +1,7 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
 import { DaimondApp } from './wasm.js';
 import { TAG_CHIPS_SHOWN, agentsCount, agentsGrid, agentsList, diamondBusy, pg } from './state.js';
-import { appCfgFor, dsEvent, fmtCtx, friendlyError, maxOutFor, readJson, t, tn } from './util.js';
+import { appCfgFor, dsEvent, engineFor, fmtCtx, friendlyError, maxOutFor, readJson, t, tn } from './util.js';
 import { RESUMABLE_ENDINGS, isFailedEnding, jsonBytes, newMid, persistChats, priorSessionRun,
 	reportBody, reportHasSubstance, touchChat, touchedCount, withCommas, workerEndStatus,
 	workerEndingNote, workerFoldable, workerProse, workerWrites } from './chatstore.js';
@@ -1657,10 +1657,11 @@ export var Workers = {
 		var build = function () {
 			if (onCredits) {
 				var s = DaimondModels.slotConfig(run.slot);
-				if (!s || !s.key) throw new Error('This worker has no key to run on.');
+				var sa = s && s.keyed ? DaimondModels.slotEngine(run.slot, run.model, maxOutFor(run.model, DaimondModels.CREDITS),
+					Instructions.compose(Prompts.role('worker', run.model), crystal), true) : null;
+				if (!sa) throw new Error('This worker has no key to run on.');
 				run._gen = s.gen;
-				run.app = new DaimondApp(s.url, s.key, run.model, maxOutFor(run.model, DaimondModels.CREDITS),
-					Instructions.compose(Prompts.role('worker', run.model), crystal), true);
+				run.app = sa;
 				noteWorkerProv(run, DaimondModels.CREDITS);
 				window_(run.model, DaimondModels.CREDITS);
 				try { DaimondModels.noteUse(DaimondModels.CREDITS, run.model); } catch (e) { /* never block a run */ }
@@ -1669,7 +1670,8 @@ export var Workers = {
 			} else {
 				var a = appCfgFor(run);
 				run._gen = creditsGen();
-				run.app = new DaimondApp(a.baseUrl, a.apiKey, run.model, maxOutFor(run.model, a.provider || run.provider),
+				run.app = engineFor({ provider: a.provider || '', baseUrl: a.baseUrl, model: run.model },
+					maxOutFor(run.model, a.provider || run.provider),
 					Instructions.compose(Prompts.role('worker', run.model), crystal), true);
 				noteWorkerProv(run, a.provider || run.provider);
 				window_(run.model, a.provider || run.provider);
@@ -3104,7 +3106,7 @@ var toolsApp = null;
 export function tools() {
 	if (toolsApp) return toolsApp;
 	var base = pg.cfg.baseUrl || 'http://127.0.0.1/v1/chat/completions';
-	try { toolsApp = new DaimondApp(base, pg.cfg.apiKey || '', pg.cfg.model || 'none', 256, SYSTEM_PROMPT(pg.cfg.model), true); }
+	try { toolsApp = new DaimondApp(base, '', pg.cfg.model || 'none', 256, SYSTEM_PROMPT(pg.cfg.model), true); }	// lists tools, sends nothing
 	catch (e) { toolsApp = new DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, SYSTEM_PROMPT(''), true); }
 	return toolsApp;
 }

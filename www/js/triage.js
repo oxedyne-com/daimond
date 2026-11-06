@@ -449,7 +449,10 @@
 	/// is the brief.
 	async function client(got) {
 		var mod = await import(PKG);
-		return new mod.DaimondApp(got.baseUrl, got.apiKey, got.model, OUT_MAX, triageSystem(), false);
+		DaimondModels.bindEngine(mod.DaimondApp);
+		var app = DaimondModels.engine(got.provider, got.model, OUT_MAX, triageSystem(), false);
+		if (!app) throw new Error('The drafting model cannot run here.');
+		return app;
 	}
 
 	/// Draft a plan from every kept note and the public proposal list.
@@ -516,7 +519,9 @@
 		if (!one) return null;
 		try {
 			var mod = await import(PKG);
-			var app = new mod.DaimondApp(got.baseUrl, got.apiKey, got.model, OUT_MAX, polishSystem(), false);
+			DaimondModels.bindEngine(mod.DaimondApp);
+			var app = DaimondModels.engine(got.provider, got.model, OUT_MAX, polishSystem(), false);
+			if (!app) return null;
 			var out = '';
 			await app.run_turn('The note:\n\n' + one + '\n\nWrite the proposal now.', function (ev) {
 				if (ev && ev.type === 'text' && typeof ev.content === 'string') out += ev.content;

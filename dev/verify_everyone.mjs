@@ -305,7 +305,7 @@ try {
 		M.setJob('images', P, EYES);
 		M.setDraft(P, DEF_M);
 		const r = M.resolve(FW, FW_M) || {};
-		return { P, fwUrl: r.baseUrl || '', fwKey: !!r.apiKey, def: M.getDefault() };
+		return { P, fwUrl: r.baseUrl || '', fwKey: !!r.usable, def: M.getDefault() };
 	}, { DEF_M, FW_M, EYES, FW, MOCK });
 	const P = setup.P;
 	check(!!P && !!MOCK && setup.fwUrl === MOCK && setup.fwKey && setup.def.model === DEF_M,

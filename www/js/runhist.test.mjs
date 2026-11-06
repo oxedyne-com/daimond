@@ -106,7 +106,7 @@ function page(ls, o) {
 	if (win.DaimondPeer) win.DaimondPeer.sealForSelf = async (env) => ({ env });
 	win.DaimondPresence = presence;		// after peer.js, which publishes its own
 	const names = ['recordCarriedTurn', 'histOpenFor', 'undoneFromRunner', 'undoTurnDeps', 'undoTurnProbe',
-		'histAwayUndo', 'histAwayNet', 'fmtBytes', 'histRow', 'isRestoreRow', 'shownPath'];
+		'histAwayUndo', 'histAwayNet', 'fmtBytes', 'histRow', 'isRestoreRow', 'shownPath', 'untoldOf', 'untoldStore'];
 	const body = names.map(fn).join('\n');
 	const make = new Function('window', 'document', 't', 'tn', 'stubs',
 		'with (window) { with (stubs) {\n'

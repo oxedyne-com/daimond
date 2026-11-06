@@ -419,7 +419,7 @@ if (typeof L.say === 'function') {
 await (async () => {
 	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const { liftSource } = await import('../../dev/syncprobe.mjs');
-	const FNS = ['touchMsg', 'sayToRunner', 'requeueUnheard', 'resendUnheard', 'pushUserRecord', 'tsPast', 'markTurnDispatched',
+	const FNS = ['touchMsg', 'isUndoNote', 'sayToRunner', 'requeueUnheard', 'resendUnheard', 'pushUserRecord', 'tsPast', 'markTurnDispatched',
 		'refreshHandoffWatch', 'dispatchedPlaceholderIn', 'dispatchedTurnFinished', 'dispatchedTurnSettled',
 		'handoffLeaseSettled', 'turnLogState', 'dispatchedAnswerPresent', 'updateExpedite', 'readWatchedLogs',
 		'onLogEnd', 'dropOtherRunRows', 'isNotRunRow',
@@ -595,7 +595,7 @@ await (async () => {
 await (async () => {
 	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
 	const { liftSource } = await import('../../dev/syncprobe.mjs');
-	const FNS = ['rebuildDispatchedIndex', 'refreshHandoffWatch', 'dispatchedPlaceholderIn', 'dispatchedTurnFinished',
+	const FNS = ['rebuildDispatchedIndex', 'isUndoNote', 'refreshHandoffWatch', 'dispatchedPlaceholderIn', 'dispatchedTurnFinished',
 		'dispatchedTurnSettled', 'handoffLeaseSettled', 'turnLogState', 'dispatchedAnswerPresent', 'updateExpedite',
 		'readWatchedLogs', 'dropOtherRunRows', 'isNotRunRow', 'isLostRow', 'dropDispatchedPlaceholder', 'dispatchedChat', 'chatHoldingTurn',
 		'chatHoldsTurn'];

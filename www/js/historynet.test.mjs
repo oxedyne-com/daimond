@@ -57,7 +57,7 @@ const tn = (k, n, v) => t(k + (n === 1 ? '.one' : '.other'), v);
 
 /// histRow as daimond.js has it, with the runner Undo stubbed to an empty box.
 function histRow() {
-	const names = ['histRow', 'histAwayNet', 'fmtBytes', 'isRestoreRow', 'shownPath'];
+	const names = ['histRow', 'untoldOf', 'untoldStore', 'histAwayNet', 'fmtBytes', 'isRestoreRow', 'shownPath'];
 	const body = names.map(fn).join('\n');
 	const make = new Function('document', 't', 'tn', body + `
 		function histAwayUndo() { return document.createElement('div'); }

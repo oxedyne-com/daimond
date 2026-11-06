@@ -71,6 +71,11 @@ win.fetch = async (url) => {
 	return { ok: true, json: async () => ({ data: [] }) };
 };
 
+// KEY-RESOLVE: no export hands a key out, so the key a request would carry is read the way the
+// request path takes it, from an engine built on it with this probe class bound.
+class KeyProbe { constructor(base, key) { this.k = key; } }
+function keyOf(r) { M.bindEngine(KeyProbe); const e = M.engine(r.provider, r.model, 1, '', false); return e ? e.k : ''; }
+
 async function main() {
 	if (typeof M.sendOnKey !== 'function') { check('DaimondModels.sendOnKey exists', false); return done(); }
 	M.init({});
@@ -79,7 +84,7 @@ async function main() {
 
 	console.log('(a) a refused credits key: mint once, send again');
 	const seen = [];
-	const refuseFirst = async (r) => { seen.push(r.apiKey); return seen.length === 1 ? { ok: false, status: 401, raw: 'User not found' } : { ok: true, status: 200 }; };
+	const refuseFirst = async (r) => { seen.push(keyOf(r)); return seen.length === 1 ? { ok: false, status: 401, raw: 'User not found' } : { ok: true, status: 200 }; };
 	const a = await M.sendOnKey(M.CREDITS, 'x/eyes', '', refuseFirst);
 	check('sent twice, the second on the fresh key', seen.join(',') === 'k1,k2', seen.join(','));
 	check('the answer is the retry, marked', !!a && a.ok === true && a.reminted === true, JSON.stringify(a));
@@ -104,7 +109,7 @@ async function main() {
 	const before = mints, gen = M.creditsGen();
 	const keys = [];
 	const d = await M.sendOnKey(M.CREDITS, 'x/eyes', '', async (r) => {
-		keys.push(r.apiKey);
+		keys.push(keyOf(r));
 		// Another agent's mint lands while this request is out.
 		if (keys.length === 1) { await M.remint(gen, ''); return { ok: false, status: 401 }; }
 		return { ok: true, status: 200 };

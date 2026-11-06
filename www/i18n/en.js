@@ -12,8 +12,10 @@
  *     language with more forms adds them and overrides the chooser.
  *   - Keys ending `_help` are tooltips, `_ph` are placeholders inside a field.
  *   - British spelling throughout the English.
- *   - Product nouns are NOT translated: Daimond, Diamond, Daimond Pro, Hands.
- *     A "Diamond" is a named object in this app, not the gemstone.
+ *   - Product nouns are NOT translated: Daimond, Daimond Pro, Hands, Kimberlite.
+ *     A "diamond" is the container a daimon works in, not the gemstone: left
+ *     in English, but lower case mid-sentence, capital only at the start of a
+ *     sentence or in a title-case label.
  *
  * DECLARATIONS THE CHECKER READS. `dev/i18ncheck.mjs` reads every `t`, `tOr`,
  * `tf` and `tr` call site in the app and asks whether the key it names is in
@@ -429,7 +431,7 @@
 	'devices.runner_mint_lapsed': 'That token has expired. Pair again for a new one.',
 	'devices.runner_mint_failed': 'Could not make a pairing token. Try again.',
 	'devices.runner_mint_signin': 'Sign in again to pair a computer.',
-	'devices.runner_off': 'Runners are off for this account.',
+	'devices.runner_off': 'Kimberlite is off for this account.',
 	'devices.prune_many':       'Remove {n} replaced devices',
 	// The build each device is running, and the flag when it is behind this one.
 	'devices.build':            'build {id}',
@@ -612,10 +614,10 @@
 	// restated the label (CHAT-10, then D-13).
 	'tile.dlg_name': 'Name',
 	'tile.dlg_folder': 'Folder',
-	'tile.dlg_folder_ph': 'An absolute path on its runner, e.g. /home/you/project',
-	'tile.dlg_folder_help': 'Where this Diamond’s turns start on its runner. The workspace stays as it is.',
+	'tile.dlg_folder_ph': 'An absolute path on its Kimberlite, e.g. /home/you/project',
+	'tile.dlg_folder_help': 'Where this diamond’s turns start on its Kimberlite. The workspace stays as it is.',
 	'tile.dlg_folder_abs': 'A folder is an absolute path, starting with /.',
-	'tile.dlg_folder_reach': '{path} lies outside every folder its runner may reach.',
+	'tile.dlg_folder_reach': '{path} lies outside every folder its Kimberlite may reach.',
 	'tile.dlg_running': 'Running',
 	'tile.dlg_advanced': 'Advanced',
 	'tile.dlg_detail': 'Detail',
@@ -663,7 +665,7 @@
 	'composer.source_help': '{scope}. New chats use the default in Models.',
 	'composer.source_add': 'Add a provider…',
 	'composer.source_this_chat': 'This chat only',
-	'composer.source_this_diamond': 'This Diamond',
+	'composer.source_this_diamond': 'This diamond',
 	'tile.effort_default_named': 'Model default ({level})',
 	'tile.effort_cleared': 'Effort is back to the default: {model} does not offer that level.',
 	// i18n-family: tile.effort_ = one-way none minimal low medium high xhigh max -- the reasoning rungs (models.js EFFORT_LADDER); help, default and cleared share the prefix
@@ -700,7 +702,7 @@
 	'tile.fold_all_help':  'Turn into a diamond',
 	// The cog dialog's own button (CHAT-15): the internal verb "Fold" moved off
 	// the row, and the word it left with is what the button already does.
-	'tile.turn_into_diamond': 'Turn into a Diamond…',
+	'tile.turn_into_diamond': 'Turn into a diamond…',
 	'tile.dlg_colour':  'Colour',
 	'tile.colour_bg':   'Background',
 	'tile.colour_fg':   'Text',
@@ -1406,9 +1408,9 @@
 	'pending.alert.needs': 'Needs you',
 	'pending.alert.quiet': 'For your eye',
 	'pending.alert.open': 'Open {name}',
-	'pending.alert.diamond': 'the Diamond',
+	'pending.alert.diamond': 'the diamond',
 	'pending.alert.dismiss': 'Dismiss',
-	'pending.alert.gone': 'That Diamond is no longer here.',
+	'pending.alert.gone': 'That diamond is no longer here.',
 	'pending.noted':        'Noted, and taken off the list.',
 	'pending.opened':       'Opened for sending. It stays here until it is sent.',
 	'pending.diamond_gone': 'The diamond that raised this is gone, so there is nobody to discuss it with.',
@@ -2734,7 +2736,7 @@
 	'fold.stage_done':       'Folded',
 	'fold.stage_unchanged':  'Nothing changed',
 	'fold.unchanged_body':   'The fold found nothing to add to “{diamond}”, so nothing was written.',
-	'fold.undo_files_failed': 'The fold’s changes to the Diamond’s files could not be undone, so nothing was changed. History still holds the version.',
+	'fold.undo_files_failed': 'The fold’s changes to the diamond’s files could not be undone, so nothing was changed. History still holds the version.',
 	'fold.proposing':        'Folding into {diamond}…',
 	'fold.busy_title':       'That diamond is working',
 	'fold.busy_body':        '“{diamond}” has a turn in flight, and a fold rewrites the same crystal. Wait for it to finish, then fold.',
@@ -3113,8 +3115,8 @@
 	'files.rename_move':     'Rename or move',
 	'files.add_to': 'Add to {name}',
 	'files.remove_from': 'Remove from {name}',
-	'files.add_to_diamond': 'Add to this Diamond',
-	'files.remove_from_diamond': 'Remove from this Diamond',
+	'files.add_to_diamond': 'Add to this diamond',
+	'files.remove_from_diamond': 'Remove from this diamond',
 	'files.add_to_chat': 'Add to this chat',
 	'files.remove_from_chat': 'Remove from this chat',
 	'files.rename_hint':     'A name, or a path, to move it somewhere else.',
@@ -5264,10 +5266,15 @@
 	'versions.before_restore': 'Before restore ({when})',
 	'versions.undo_restore': 'Undo this restore',
 	'versions.undo_turn': 'Undo this turn',
+	'versions.undo_untold': 'Its chat is gone, so its daimon was not told you put back: {list}',
+	'chat.undo_note': 'You undid the turn “{ask}”: {list} put back. The daimon is told.',
+	'chat.redo_note': 'You undid the undo of “{ask}”: {list} came back. The daimon is told.',
+	'chat.restore_note': 'You restored {list} from History, taking back what “{ask}” changed. The daimon is told.',
+	'chat.undo_note_left': 'Left alone, as changed since: {list}.',
 	'versions.undo_asked': 'Asked {runner} to undo this turn…',
 	'versions.undo_offline': '{runner} is offline. This turn will be undone when it is back.',
 	'versions.undo_past': '{runner} keeps a turn’s earlier files for 7 days; these are gone.',
-	'versions.undo_unpaired': '{runner} is no longer one of your runners, so this turn can’t be undone from here.',
+	'versions.undo_unpaired': '{runner} is no longer one of your Kimberlite computers, so this turn can’t be undone from here.',
 	'versions.undo_done': 'Undone on {runner}: {n} put back, {m} removed',
 	'versions.undo_skipped': 'Left as they are, changed since that turn: {list}',
 	'versions.net_registry': 'Downloaded from {host} · {size}',
@@ -5283,15 +5290,15 @@
 	'versions.undo_not_sent': 'The request didn’t send. Nothing was asked of {runner}.',
 	'versions.restore_before': 'Restore before',
 	'versions.own_item': '{path} ({when}, in History as v{v})',
-	'versions.own_title': 'Delete this Diamond’s newer files?',
-	'versions.own_ask': 'This version is older than {n} of this Diamond’s files: {paths}. Restoring it would delete them. Each stays in History under the version named. Delete them?',
-	'versions.undo_own_ask': 'Undoing this would delete {n} of this Diamond’s files: {paths}. Each stays in History under the version named. Delete them?',
+	'versions.own_title': 'Delete this diamond’s newer files?',
+	'versions.own_ask': 'This version is older than {n} of this diamond’s files: {paths}. Restoring it would delete them. Each stays in History under the version named. Delete them?',
+	'versions.undo_own_ask': 'Undoing this would delete {n} of this diamond’s files: {paths}. Each stays in History under the version named. Delete them?',
 	'versions.theirs_ask': 'Restoring this version would replace {n} of your files with its contents: {paths}. Their current contents are kept in History. Replace them?',
 	'versions.undo_theirs_ask': 'Undoing this would replace {n} of your files with earlier contents: {paths}. Their current contents are kept in History. Replace them?',
 	'versions.gone_allow':     'Delete them',
 	'versions.gone_keep':      'Keep them',
 	'versions.over_keep':      'Leave my files',
-	'versions.own_keep':       'Keep the Diamond’s files',
+	'versions.own_keep':       'Keep the diamond’s files',
 	'versions.gone_title':     'Delete files from your folder?',
 	'versions.gone_kept':      'Left in your folder',
 	'versions.unread_now':     'Could not be read now; left as it is',
@@ -5311,7 +5318,7 @@
 	'versions.close_title':            'The restore has not finished',
 	'versions.close_retry':            'Try again',
 	'versions.close_leave':            'Leave it',
-	'versions.restore_busy':   'A restore of this Diamond is waiting for your answer. Answer it first; nothing was changed.',
+	'versions.restore_busy':   'A restore of this diamond is waiting for your answer. Answer it first; nothing was changed.',
 	'versions.save':           'Save a Version',
 	'versions.save_name':      'Name it',
 	'versions.gauge':          'Versions {used} / {cap}',
@@ -5359,7 +5366,7 @@
 	'settings.group_models':          'Models and spending',
 	'settings.group_models_what':     'Pro, paid spend, limits',
 	'settings.group_tools':           'Tools and machines',
-	'settings.group_tools_what':      'Tools, permissions, runners, search, git push',
+	'settings.group_tools_what':      'Tools, permissions, Kimberlite, search, git push',
 	'settings.group_you':             'You and devices',
 	'settings.group_you_what':        'Name, passphrase, devices, accounts',
 	'settings.group_prompts':         'Agent instructions',

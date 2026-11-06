@@ -377,14 +377,14 @@ await p.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'models');
 await p.waitForTimeout(2000);
 
-const migrated = await p.evaluate(() => {
+const migrated = await p.evaluate(async () => {
 	const M = window.DaimondModels;
 	const provs = M.providers();
 	const d = M.getDefault();
 	return {
 		provs: provs.map(x => ({ id: x.id, hasKey: x.hasKey, count: x.count })),
 		def:   d,
-		key:   M.keyFor('fireworks'),
+		key:   await window.__sendsKey('fireworks', 'old-single-key'),	// as the request takes it (KEY-RESOLVE)
 		ready: M.ready(),
 		count: M.count(),
 	};
@@ -392,7 +392,7 @@ const migrated = await p.evaluate(() => {
 check('the single provider is carried into the store that holds many',
 	migrated.provs.length === 1 && migrated.provs[0].id === 'fireworks' && migrated.provs[0].hasKey,
 	JSON.stringify(migrated.provs));
-check('its key survives the change of shape', migrated.key === 'old-single-key');
+check('its key survives the change of shape', migrated.key === true);
 check('and the model they chose is still the default',
 	migrated.def.provider === 'fireworks' && /glm-5p2$/.test(migrated.def.model),
 	`${migrated.def.provider} / ${migrated.def.model}`);
@@ -424,15 +424,15 @@ const second = await p.evaluate(async () => {
 	return {
 		provs: M.providers().map(x => ({ id: x.id, count: x.count, hasKey: x.hasKey })),
 		count: M.count(),
-		fireworksKey: M.keyFor('fireworks'),
-		groqKey: M.keyFor('groq'),
+		fireworksKey: await window.__sendsKey('fireworks', 'old-single-key'),
+		groqKey: await window.__sendsKey('groq', 'the-groq-key'),
 		def: M.getDefault(),
 	};
 });
 check('a second provider is added alongside the first',
 	second.provs.length === 2, JSON.stringify(second.provs));
 check('and does not evict the first provider’s key',
-	second.fireworksKey === 'old-single-key' && second.groqKey === 'the-groq-key');
+	second.fireworksKey === true && second.groqKey === true);
 check('the model count is the sum across providers',
 	second.count === 4, second.count + ' models');
 check('and adding a provider does not silently move the default',
@@ -440,21 +440,24 @@ check('and adding a provider does not silently move the default',
 
 // ── Starring a different default ────────────────────────────────────────
 
-const starred = await p.evaluate(() => {
+const starred = await p.evaluate(async () => {
 	const M = window.DaimondModels;
 	M.setDefault('groq', 'llama-3.3-70b');
 	const r = M.resolve('', '');            // what a NEW chat would run on
 	const keep = M.resolve('fireworks', 'accounts/fireworks/models/glm-5p2');
-	return { def: M.getDefault(), resolved: r, kept: keep };
+	// The key itself is not in a resolve (KEY-RESOLVE): ask the request path which goes on.
+	return { def: M.getDefault(), resolved: r, kept: keep,
+		rKey: !!r && r.usable && await window.__sendsKey(r.provider, 'the-groq-key'),
+		kKey: !!keep && keep.usable && await window.__sendsKey(keep.provider, 'old-single-key') };
 });
 check('starring a model makes it what a new chat runs on',
 	starred.resolved && starred.resolved.provider === 'groq'
 	&& starred.resolved.model === 'llama-3.3-70b'
-	&& starred.resolved.apiKey === 'the-groq-key',
+	&& starred.rKey === true,
 	JSON.stringify(starred.resolved && { p: starred.resolved.provider, m: starred.resolved.model }));
 check('a chat already running on another provider still resolves to it',
 	starred.kept && starred.kept.provider === 'fireworks'
-	&& starred.kept.apiKey === 'old-single-key',
+	&& starred.kKey === true,
 	'an existing chat is not dragged onto the new default');
 
 // ── The panel ───────────────────────────────────────────────────────────
@@ -1148,23 +1151,23 @@ if (pick.altId) {
 		await new Promise(r => setTimeout(r, 150));
 		const o = document.getElementById('u5a-sel').selectedOptions[0];
 		const r = o ? window.DaimondModels.resolve(o.dataset.provider, o.value) : null;
-		return r ? { provider: r.provider, model: r.model, key: r.apiKey } : null;
+		return r ? { provider: r.provider, model: r.model, key: r.usable && await window.__sendsKey(r.provider, 'fw-key') } : null;
 	}, pick.altId);
 }
 check('P2 the picker names the twin, and under it its other payer, “' + through + '”',
 	pick.alt === through && pick.altName === TWIN_NM, `“${pick.altName}” / “${pick.alt}”`);
 check('P2 and picking it bills the Fireworks key',
-	!!billed && billed.provider === 'fireworks' && billed.key === 'fw-key' && billed.model === TWIN_FW,
+	!!billed && billed.provider === 'fireworks' && billed.key === true && billed.model === TWIN_FW,
 	JSON.stringify(billed));
-const panelBill = await p.evaluate(() => {
+const panelBill = await p.evaluate(async () => {
 	const alt = [...document.querySelectorAll('.models-model.alt')].find(r => r.dataset.provider === 'fireworks');
 	if (!alt) return null;
 	alt.click();
 	const r = window.DaimondModels.resolve('', '');
-	return r ? { provider: r.provider, model: r.model, key: r.apiKey } : null;
+	return r ? { provider: r.provider, model: r.model, key: r.usable && await window.__sendsKey(r.provider, 'fw-key') } : null;
 });
 check('P2 and in the list, its “Through” line makes Fireworks the payer of a new chat',
-	lists.alt === through && !!panelBill && panelBill.provider === 'fireworks' && panelBill.key === 'fw-key',
+	lists.alt === through && !!panelBill && panelBill.provider === 'fireworks' && panelBill.key === true,
 	`“${lists.alt}” → ${JSON.stringify(panelBill)}`);
 await p.evaluate(() => {
 	window.DaimondModels.setDefault('openrouter', 'qwen/qwen3-max');

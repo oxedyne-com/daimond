@@ -58,6 +58,10 @@ const ENGINE = 'ab'.repeat(32), OTHER = 'cd'.repeat(32);
 const now = Date.now();
 
 // ── models.js, with an identity that seals ────────────────────────
+// models.js sends a provider's request from its own realm (`providerFetch`, KEY-RESOLVE), so
+// the realm's `fetch` is routed to the page's ocr.js runs in: `REALM.get(M).route`.
+const REALM = new WeakMap();
+
 async function models(unlocked) {
 	const ls = new Map();
 	const localStorage = {
@@ -74,10 +78,12 @@ async function models(unlocked) {
 		wrap:       async (k) => 'SEALED(' + k + ')',
 		unwrap:     async (e) => String(e).replace(/^SEALED\(|\)$/g, ''),
 	};
-	ctx.fetch = async () => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'm1' }] }) });
+	ctx.fetch = async (u, o) => (ctx.route ? ctx.route(u, o)
+		: { ok: true, status: 200, json: async () => ({ data: [{ id: 'm1' }] }) });
 	vm.runInContext(source('stamp.js'), ctx);
 	vm.runInContext(source('models.js'), ctx);
 	const M = ctx.DaimondModels;
+	REALM.set(M, ctx);
 	M.init({ onChange: () => {} });
 	return M;
 }
@@ -229,6 +235,7 @@ async function ocrRouteChecks() {
 		for (const [id, url, key] of rows) { M.addProvider(id, { url, name: id.toUpperCase() }); await M.setKey(id, key); }
 		if (dflt) M.setDefault(dflt, 'm1');
 		const W = page(M, null, ['ocr.js']);
+		REALM.get(M).route = (u, o) => W.fetch(u, o);	// the page's own fetch, as a test sets it
 		W.DaimondPeer.setEngineAbi(1, 1);
 		return W;
 	};

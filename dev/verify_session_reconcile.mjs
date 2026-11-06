@@ -83,8 +83,8 @@ const on = (s) => ONLY.has(s);
 const INSTR = [
 	{ from: 'window.DaimondCore = {\n',
 	  to: 'window.DaimondCore = {\n\t\t_builds: function () { return window.__builds || []; },\n' },
-	{ from: '\t\tchat.app = new DaimondApp(a.baseUrl, a.apiKey, a.model,',
-	  to: '\t\t(window.__builds = window.__builds || []).push({ id: chat.id, nm: (chat.messages || []).length, ld: chat._loaded !== false });\n\t\tchat.app = new DaimondApp(a.baseUrl, a.apiKey, a.model,' },
+	{ from: '\t\tchat.app = engineFor(a, ',
+	  to: '\t\t(window.__builds = window.__builds || []).push({ id: chat.id, nm: (chat.messages || []).length, ld: chat._loaded !== false });\n\t\tchat.app = engineFor(a, ' },
 ];
 const ROUTE = async (page) => {
 	let body = readPage(arg('--base') || path.join(WWW, 'js/daimond.js'), 'utf8');

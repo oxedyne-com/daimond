@@ -1157,7 +1157,8 @@
 	/// to one float, so a mint on another device revokes this tab's key by design. The chat
 	/// heals that in its turn loop (`canRemint`); this is the same heal for everyone else.
 	///
-	/// `send(r)` gets `resolve(provider, model)` and answers `{ ok, status, ... }`. A 401, 402
+	/// `send(r)` gets `resolve(provider, model)`, which holds no key, and sends through
+	/// `providerFetch(r.provider, ...)`; it answers `{ ok, status, ... }`. A 401, 402
 	/// or 403 on the credits row takes the live key (or mints one, coalesced, under `node`'s
 	/// pause) and sends again, once. Answers what `send` last answered, with `reminted` set when
 	/// it retried and `remintError` when the fresh key could not be had; null when there is no
@@ -1301,8 +1302,22 @@
 		return await keySlot(slot, wantMinor, node);
 	}
 
-	/// A slot's live `{ key, url, gen }`, or null if it holds none yet.
-	function slotConfig(slot) { return slots[slot] || null; }
+	/// A slot's live `{ url, gen, keyed }`, or null if it holds none yet.
+	function slotConfig(slot) { return slotView(slots[slot]); }
+
+	/// A slot as a caller sees it: `{ url, gen, keyed }`, never its key (KEY-RESOLVE).
+	function slotView(s) {
+		return s ? { url: s.url, gen: s.gen, keyed: !!s.key } : null;
+	}
+
+	/// A mint or ensure reply as a caller sees it: every field but the key, and `minted`.
+	function keyless(j) {
+		if (!j || typeof j !== 'object') return j;
+		var out = {};
+		for (var k in j) { if (k !== 'key' && Object.prototype.hasOwnProperty.call(j, k)) out[k] = j[k]; }
+		out.minted = !!j.key;
+		return out;
+	}
 
 	/// Forget one slot's key (its worker has finished with it). The key at the
 	/// host is left for the next mint on that slot to rotate out, or the sweep.
@@ -2799,7 +2814,10 @@
 		return { pick: pick, here: here, using: using, missing: here ? '' : providerName(pick.provider) };
 	}
 
-	/// What a chat needs to actually run: the endpoint, the key and the model.
+	/// What a chat would run on: `{ provider, model, baseUrl, usable }`, or null when it cannot
+	/// run here (no such provider, no readable key, no model). NEVER the key (KEY-RESOLVE,
+	/// 06 Nov 2026): a probe that printed `resolve()` put his key in a transcript. The key
+	/// leaves this file only inside `engine`, `slotEngine` and `providerFetch`.
 	///
 	/// A chat records the provider it was started on, so switching the default later does not
 	/// silently move a running conversation to another model. A chat from before providers
@@ -2809,9 +2827,68 @@
 		var id = provider || d.provider;
 		var m  = model || (provider ? '' : d.model);
 		if (!id || !store.providers[id]) return null;
-		var key = keyFor(id);
-		if (!key || !m) return null;
-		return { provider: id, baseUrl: providerUrl(id), apiKey: key, model: m };
+		if (!keyFor(id) || !m) return null;
+		return { provider: id, model: m, baseUrl: providerUrl(id), usable: true };
+	}
+
+	// ── The request path: the only doors the key goes out of ────────
+	// A page script, or a daimon's page change, gets descriptors; the key goes straight from
+	// here into an engine or a fetch it never sees. The engine class is bound once, by the page
+	// that loaded the wasm, so a caller cannot hand in a constructor that keeps what it is given.
+
+	var Engine = null;	// the wasm `DaimondApp` class, from `bindEngine`
+
+	/// Bind the engine class the key is handed to. The first class bound stays; is `ctor` it?
+	function bindEngine(ctor) {
+		if (typeof ctor !== 'function') return false;
+		if (!Engine) Engine = ctor;
+		return Engine === ctor;
+	}
+
+	/// A `DaimondApp` for `provider`/`model` on the stored key, or null when `resolve` says it
+	/// cannot run here or no engine is bound. The other arguments are the engine's own.
+	function engine(provider, model, maxOut, system, tools) {
+		var r = resolve(provider, model);
+		if (!r || !Engine) return null;
+		return new Engine(r.baseUrl, keyFor(r.provider), r.model, maxOut, system, tools);
+	}
+
+	/// A `DaimondApp` on worker slot `slot`'s minted key, or null when the slot has none.
+	function slotEngine(slot, model, maxOut, system, tools) {
+		var s = slots[slot];
+		if (!s || !s.key || !Engine) return null;
+		return new Engine(s.url, s.key, model, maxOut, system, tools);
+	}
+
+	/// The origin a provider's requests may go to: its row's endpoint, else the known one.
+	function providerOrigin(id) {
+		var want = [providerUrl(id), KNOWN[id] && KNOWN[id].url];
+		for (var i = 0; i < want.length; i++) {
+			try { if (want[i]) return new URL(String(want[i])).origin; } catch (e) { /* try the next */ }
+		}
+		return '';
+	}
+
+	/// `fetch(url, init)` with `provider`'s key in the auth headers its endpoint wants. Refuses
+	/// a provider with no readable key, and a `url` off the provider's own origin, so the key
+	/// can only ever be sent where it was meant to go.
+	async function providerFetch(provider, url, init) {
+		var key = store.providers[provider] ? keyFor(provider) : '';
+		if (!key) throw new Error('No usable key for ' + providerName(provider) + '.');
+		var to = '';
+		try { to = new URL(String(url)).origin; } catch (e) { to = ''; }
+		if (!to || to !== providerOrigin(provider)) {
+			throw new Error('Refused: ' + providerName(provider) + "'s key goes only to its own endpoint.");
+		}
+		var opt = {};
+		for (var k in (init || {})) { if (Object.prototype.hasOwnProperty.call(init, k)) opt[k] = init[k]; }
+		var headers = {};
+		var given = (init && init.headers) || {};
+		for (var h in given) { if (Object.prototype.hasOwnProperty.call(given, h)) headers[h] = given[h]; }
+		var auth = authHeaders(String(url), key);
+		for (var a in auth) { if (Object.prototype.hasOwnProperty.call(auth, a)) headers[a] = auth[a]; }
+		opt.headers = headers;
+		return await fetch(String(url), opt);
 	}
 
 	/// Whether anything can run at all: one provider, with a readable key, and a default model.
@@ -5187,7 +5264,7 @@
 		addProvider:    addProvider,
 		removeProvider: removeProvider,
 		setKey:         setKey,
-		keyFor:         keyFor,
+		// No `keyFor`: a key never leaves this file except into a request (KEY-RESOLVE).
 		hasKey:         hasKey,
 		isSealed:       isSealed,
 		// What a runner can use on the page's behalf, and the sealed row an errand carries.
@@ -5244,6 +5321,12 @@
 		// The stored, synced choice, for the one-off copies-to-follows migration in daimond.js.
 		storedChoice:   storedChoice,
 		resolve:        resolve,
+		// The only doors the key goes out of: an engine built on it, or a fetch to its own
+		// provider. `bindEngine` takes the wasm class once, from the page that loaded it.
+		bindEngine:     bindEngine,
+		engine:         engine,
+		slotEngine:     slotEngine,
+		providerFetch:  providerFetch,
 		// The drafting model: the note→proposal task's own model, defaulting to chat.
 		getDraft:       getDraft,
 		setDraft:       setDraft,
@@ -5273,17 +5356,20 @@
 		// Credits: the provider Daimond mints the key for.
 		CREDITS:        CREDITS,
 		syncCredits:    syncCredits,
-		remint:         remint,
+		// Answers nothing: the fresh key stays here, and a rebuilt engine picks it up.
+		remint:         function (gen, node) { return remint(gen, node).then(function () { return undefined; }); },
 		sendOnKey:      sendOnKey,
 		// Raise a live key's cap in place, sized to the turn — the F1 charge-for-nothing fix.
-		ensure:         ensure,
+		// The gateway reply with its key taken out; `minted` says a dead key forced a mint.
+		ensure:         function (slot, want, node) { return ensure(slot, want, node).then(keyless); },
 		ensureActive:   ensureActive,
 		creditsGen:     creditsGen,
 		creditsState:   creditsState,
 		// Per-slot worker keys, so parallel workers never share one.
-		mintSlot:       mintSlot,
-		keySlot:        keySlot,
-		remintSlot:     remintSlot,
+		// A slot as `{ url, gen, keyed }`; `slotEngine` builds on its key.
+		mintSlot:       function (slot, node) { return mintSlot(slot, node).then(slotView); },
+		keySlot:        function (slot, want, node) { return keySlot(slot, want, node).then(slotView); },
+		remintSlot:     function (slot, gen, node, want) { return remintSlot(slot, gen, node, want).then(slotView); },
 		slotConfig:     slotConfig,
 		forgetSlot:     forgetSlot,
 		// The pause check every dispatch must pass, and the refusal it throws when the

@@ -665,7 +665,10 @@ function providerState() {
 		}
 		out.ready = !!DaimondModels.ready();
 		const r = DaimondModels.resolve('', '');
-		out.resolved = r ? String(r.apiKey || '') : null;
+		// No resolve hands the key out (KEY-RESOLVE): `resolved` is the stored key of the row it
+		// names when the request path puts exactly that key on, else ''.
+		const opened = r && out.providers[r.provider] ? out.providers[r.provider].opens : '';
+		out.resolved = r ? ((r.usable && opened && await window.__sendsKey(r.provider, opened)) ? opened : '') : null;
 		return out;
 	});
 }
@@ -1155,7 +1158,7 @@ try {
 			if (String(v) === a.key) throw new Error('the API key cannot be re-wrapped (probe)');
 			return await real(v);
 		};
-		return !!(r && r.apiKey === a.key);
+		return !!(r && r.usable && await window.__sendsKey(r.provider, a.key));
 	}, { boxes: BOXES, voice: VOICE, key: P1_KEY });
 	check('control: the API key is readable, so the block that will fail really runs',
 		armed === true, armed ? '' : 'no provider key resolved; the checks below prove nothing');

@@ -38,7 +38,7 @@ function check(name, ok, detail) {
 }
 
 const FNS = ['appendDispatchedTile', 'renderDispatchedFooter', 'seatTileNote', 'handoffLive', 'turnLive',
-	'turnSuperseded', 'opensTurn', 'handoffEnded', 'drawOldNotRun'];
+	'turnSuperseded', 'opensTurn', 'isUndoNote', 'handoffEnded', 'drawOldNotRun'];
 // The fix's predicate is absent on the live record, and the record's "Not run · <date>" words in the fix.
 const OPTIONAL = ['handoffEnded', 'drawOldNotRun'];
 

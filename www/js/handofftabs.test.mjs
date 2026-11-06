@@ -192,6 +192,9 @@ function makeTab(name, locks, w) {
 		SYSTEM_PROMPT: () => '',
 		cfg: { tools: false },
 		DaimondModels: { noteUse() {} },
+		// util.js `engineFor`: the engine is built inside DaimondModels on the key (KEY-RESOLVE);
+		// here, the recording class on none.
+		engineFor: (a, maxOut, sys, tools) => new scope.DaimondApp(a.baseUrl || '', '', a.model || '', maxOut, sys, tools),
 		// Rating U1: ensureApp tells the app who it is by, which nothing here reads.
 		noteAppProv() {}, promptPrint: () => '',
 		// UNBLOCK-1: recoverOneLocally redraws the tiles and switch, which nothing here draws.

@@ -1,7 +1,8 @@
 /* i18n/de.js — German. Machine-drafted from `en.js`; pending native review.
  *
  * The keys are the baseline's, unchanged. Product nouns are not translated:
- * Daimond, Diamond, Daimond Pro, Hands, Stripe. Register is "du" throughout —
+ * Daimond, Daimond Pro, Hands, Kimberlite, Stripe. "Diamond" stays English and,
+ * as a German noun, capitalised. Register is "du" throughout —
  * Daimond is a personal tool, not an office system. A Diamond is treated as
  * neuter ("das Diamond") wherever it takes an article.
  */
@@ -1632,10 +1633,10 @@
 	'tile.delete_named': '„{name}“ löschen',
 	'tile.dlg_name': 'Name',
 	'tile.dlg_folder': 'Ordner',
-	'tile.dlg_folder_ph': 'Ein absoluter Pfad auf seinem Runner, z. B. /home/du/projekt',
-	'tile.dlg_folder_help': 'Wo die Züge dieses Diamond auf seinem Runner beginnen. Der Arbeitsbereich bleibt, wie er ist.',
+	'tile.dlg_folder_ph': 'Ein absoluter Pfad auf seinem Kimberlite, z. B. /home/du/projekt',
+	'tile.dlg_folder_help': 'Wo die Züge dieses Diamond auf seinem Kimberlite beginnen. Der Arbeitsbereich bleibt, wie er ist.',
 	'tile.dlg_folder_abs': 'Ein Ordner ist ein absoluter Pfad, der mit / beginnt.',
-	'tile.dlg_folder_reach': '{path} liegt außerhalb aller Ordner, die sein Runner erreichen darf.',
+	'tile.dlg_folder_reach': '{path} liegt außerhalb aller Ordner, die sein Kimberlite erreichen darf.',
 	'tile.dlg_running': 'Läuft',
 	'tile.dlg_advanced': 'Erweitert',
 	'tile.dlg_detail': 'Detailgrad',
@@ -3801,7 +3802,7 @@
 	'support.sending': 'Bericht wird gesendet…',
 	'support.sent': 'Gesendet — danke.',
 	// The testnet's report box and its sheet (support.js, testnet.js; design §R11.3).
-	'devices.runner_off': 'Runner sind für dieses Konto aus.',
+	'devices.runner_off': 'Kimberlite ist für dieses Konto aus.',
 	'support.box_title': 'Ein Problem melden',
 	'support.box_hint': 'Was ist schiefgelaufen?',
 	'support.box_send': 'Senden',
@@ -4043,10 +4044,15 @@
 	'versions.before_restore': 'Vor der Wiederherstellung ({when})',
 	'versions.undo_restore': 'Diese Wiederherstellung r\u00fcckg\u00e4ngig machen',
 	'versions.undo_turn': 'Diesen Zug r\u00fcckg\u00e4ngig machen',
+	'versions.undo_untold': 'Sein Chat ist gel\u00f6scht, daher wurde sein Daimon nicht informiert, dass du zur\u00fcckgesetzt hast: {list}',
+	'chat.undo_note': 'Du hast den Zug \u201e{ask}\u201c r\u00fcckg\u00e4ngig gemacht: {list} zur\u00fcckgesetzt. Der Daimon ist informiert.',
+	'chat.redo_note': 'Du hast das R\u00fcckg\u00e4ngigmachen von \u201e{ask}\u201c r\u00fcckg\u00e4ngig gemacht: {list} ist zur\u00fcck. Der Daimon ist informiert.',
+	'chat.restore_note': 'Du hast {list} aus dem Verlauf wiederhergestellt und zur\u00fcckgenommen, was \u201e{ask}\u201c ge\u00e4ndert hat. Der Daimon ist informiert.',
+	'chat.undo_note_left': 'Unver\u00e4ndert gelassen, da seitdem ge\u00e4ndert: {list}.',
 	'versions.undo_asked': '{runner} wurde gebeten, diesen Zug r\u00fcckg\u00e4ngig zu machen \u2026',
 	'versions.undo_offline': '{runner} ist offline. Der Zug wird r\u00fcckg\u00e4ngig gemacht, sobald es wieder da ist.',
 	'versions.undo_past': '{runner} bewahrt die fr\u00fcheren Dateien eines Zugs 7 Tage auf; diese sind weg.',
-	'versions.undo_unpaired': '{runner} geh\u00f6rt nicht mehr zu deinen Runnern, daher l\u00e4sst sich dieser Zug hier nicht r\u00fcckg\u00e4ngig machen.',
+	'versions.undo_unpaired': '{runner} gehört nicht mehr zu deinen Kimberlite-Computern, daher lässt sich dieser Zug hier nicht rückgängig machen.',
 	'versions.undo_done': 'Auf {runner} r\u00fcckg\u00e4ngig gemacht: {n} wiederhergestellt, {m} entfernt',
 	'versions.undo_skipped': 'Unver\u00e4ndert gelassen, seit dem Zug ge\u00e4ndert: {list}',
 	'versions.net_registry': 'Heruntergeladen von {host} · {size}',
@@ -4139,7 +4145,7 @@
 	'settings.group_models': 'Modelle und Ausgaben',
 	'settings.group_models_what': 'Pro, bezahlte Nutzung, Limits',
 	'settings.group_tools': 'Werkzeuge und Rechner',
-	'settings.group_tools_what': 'Werkzeuge, Berechtigungen, Runner, Suche, Git-Push',
+	'settings.group_tools_what': 'Werkzeuge, Berechtigungen, Kimberlite, Suche, Git-Push',
 	'settings.group_you': 'Du und deine Ger\u00e4te',
 	'settings.group_you_what': 'Name, Passphrase, Ger\u00e4te, Konten',
 	'settings.group_prompts': 'Anweisungen f\u00fcr Agenten',

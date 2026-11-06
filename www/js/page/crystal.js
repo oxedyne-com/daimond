@@ -1497,10 +1497,9 @@ async function lookAt(reqJson) {
 				: { model: r.model, max_tokens: 400, stream: false, messages: [{ role: 'user', content: [
 					{ type: 'text', text: String(req.prompt || '') },
 					{ type: 'image_url', image_url: { url: 'data:image/png;base64,' + png } }] }] };
-			var headers = { 'content-type': 'application/json' };
-			var auth = DaimondModels.authHeaders ? DaimondModels.authHeaders(url, r.apiKey) : { authorization: 'Bearer ' + r.apiKey };
-			for (var k in auth) { if (auth.hasOwnProperty(k)) headers[k] = auth[k]; }
-			var hr = await fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(body) });
+			// The key is put on inside DaimondModels; this side never holds it (KEY-RESOLVE).
+			var hr = await DaimondModels.providerFetch(r.provider, url, { method: 'POST',
+				headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 			var raw = await hr.text(), j = {};
 			try { j = JSON.parse(raw); } catch (e) { j = {}; }
 			return { ok: hr.ok, status: hr.status, raw: raw, j: j };

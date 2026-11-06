@@ -177,6 +177,9 @@
 					note: '', files: [], truncated: 0, delta_ref: '', crystal: false };
 			}
 			row.cause = m.cause || '';
+			// The turn the version is of (a turn's own; an undo's, the turn it undid): its chat is
+			// told when a restore takes the change back (UNDO-HISTORY).
+			row.turn = m.turn || '';
 			// A TURN THAT RAN ON A RUNNER (RUN-HIST): its files are there, not here, and
 			// `away` is where and how long its Undo can reach them. null on every other row.
 			row.away = (m.away && typeof m.away === 'object') ? m.away : null;
@@ -691,14 +694,14 @@
 			var yes = await DaimondCore.confirm(
 				isUndo
 					? tOr('versions.undo_own_ask',
-						'Undoing this would delete {n} of this Diamond’s files: {paths}. Each stays in History under the version named. Delete them?',
+						'Undoing this would delete {n} of this diamond’s files: {paths}. Each stays in History under the version named. Delete them?',
 						{ n: named.length, paths: shown })
 					: tOr('versions.own_ask',
-						'This version is older than {n} of this Diamond’s files: {paths}. Restoring it would delete them. Each stays in History under the version named. Delete them?',
+						'This version is older than {n} of this diamond’s files: {paths}. Restoring it would delete them. Each stays in History under the version named. Delete them?',
 						{ n: named.length, paths: shown }),
 				tOr('versions.gone_allow', 'Delete them'),
-				{ title: tOr('versions.own_title', 'Delete this Diamond’s newer files?'), danger: true,
-					cancelLabel: tOr('versions.own_keep', 'Keep the Diamond’s files'),
+				{ title: tOr('versions.own_title', 'Delete this diamond’s newer files?'), danger: true,
+					cancelLabel: tOr('versions.own_keep', 'Keep the diamond’s files'),
 					ask: 'restore-own', guard: true });
 			return yes === true;
 		} catch (e) { return false; }
@@ -720,7 +723,12 @@
 			text: text,
 			revert: function () {
 				if (!ready()) return;
-				undoVersion(id, back, paths);
+				// The page notes what came back in the chat told of the restore (UNDO-HISTORY):
+				// this script cannot reach the chats, so it says so by an event.
+				return undoVersion(id, back, paths).then(function (r) {
+					if (!r || typeof window.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+					window.dispatchEvent(new CustomEvent('daimond:restore-undone', { detail: { id: id, v: back, res: r } }));
+				}).catch(function () { /* the undo stands or failed; nothing to note */ });
 			},
 		});
 	}
@@ -752,7 +760,7 @@
 			if (BUSY.test(String(e && e.message || e))) {
 				if (core() && DaimondCore.toast) {
 					DaimondCore.toast(tOr('versions.restore_busy',
-						'A restore of this Diamond is waiting for your answer. Answer it first; nothing was changed.'), true);
+						'A restore of this diamond is waiting for your answer. Answer it first; nothing was changed.'), true);
 				}
 				return { outcome: 'busy' };
 			}

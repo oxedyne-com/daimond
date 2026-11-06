@@ -22,7 +22,7 @@ import { changeDiff } from './pending.js';
 import { diamondModel } from './diamonds.js';
 import { paintHeadAvatar, renderDiamondList } from './agentspanel.js';
 import { crystalShown, renderCrystal } from './crystal.js';
-import { _turnUndoRows, histAwayUndo } from './marks.js';
+import { _turnUndoRows, histAwayUndo, isUndoNote } from './marks.js';
 import { endBtn, jumpBtn, logRowText, renderWire, tOr } from './settingsui.js';
 import { _fillFilesTile, _tailNoteTable, appendFilesLog, appendYoursTile } from './turnfiles.js';
 // page-split: end imports
@@ -3231,6 +3231,8 @@ export function drawHistoryMessage(m, i, arr) {
 	// not a turn of its own here, so it is drawn where it landed rather than
 	// as the question that started something.
 	if (m.role === 'user' && m.interject) appendInterjected(m.content);
+	// An undo's note (UNDO-HISTORY): for the model, a user row; on screen, a note, never "You".
+	else if (isUndoNote(m)) appendNote(undoNoteShown(m));
 	else if (m.role === 'user') {
 		// A question already answered is drawn as answered (`askMarkAnswered`, inside).
 		var ut = appendUserMessage(m.content, m.ts, m.prod, m.files, m.app === true);
@@ -3606,7 +3608,18 @@ export function renderHistory(messages) {
 
 /// Does `m` open a turn when drawn (`appendUserMessage`'s `_turn += 1`)?
 function opensTurn(m) {
-	return !!m && m.role === 'user' && !m.interject && !/^\[Daimond: this turn changed /.test(String(m.content || ''));
+	return !!m && m.role === 'user' && !m.interject && !isUndoNote(m) && !/^\[Daimond: this turn changed /.test(String(m.content || ''));
+}
+
+/// An undo note's words for him, from its `undone` record (its model text where a copy lost it).
+function undoNoteShown(m) {
+	var u = m.undone;
+	if (!u) return String(m.content || '');
+	var list = (u.restored || []).concat(u.removed || []).join(', ');
+	var key = u.how === 'redo' ? 'chat.redo_note' : u.how === 'restore' ? 'chat.restore_note' : 'chat.undo_note';
+	var said = t(key, { ask: u.ask || '', list: list });
+	if ((u.skipped || []).length) said += ' ' + t('chat.undo_note_left', { list: u.skipped.map(function (x) { return x.path; }).join(', ') });
+	return said;
 }
 
 /// Redraw from the question opening the turn the first change in `messages` is in (or the
@@ -4207,7 +4220,7 @@ export function dispatchedAnswerPresent(chat, m) {
 	var echoes = (window.DaimondPeer && window.DaimondPeer.steerEchoes ? window.DaimondPeer.steerEchoes(msgs) : null);		// words said into the turn open none (UNBLOCK-59)
 	for (var j = i + 1; j < msgs.length; j++) {
 		var mm = msgs[j];
-		if ((mm.role === 'user' && !mm.interject && !(echoes && echoes[String(mm.mid)]))) break;		// the next turn began
+		if ((mm.role === 'user' && !mm.interject && !isUndoNote(mm) && !(echoes && echoes[String(mm.mid)]))) break;		// the next turn began
 		if (mm.iturn && String(mm.iturn) !== String(m.iturn)) continue;	// another turn's row
 		if (mm.role === 'assistant' && !mm.interrupted && !mm.provisional && mm.content && mm.content.trim()) return true;
 		// The turn's end record says it answered (its answer row folded or elided away).

@@ -247,7 +247,7 @@ async function main() {
 		check('the chat calls ensure at BOTH turn start and mid-turn (round_meta)',
 			chatCalls === 2, 'occurrences=' + chatCalls);
 		check('a fresh key from ensure rebuilds the app around it',
-			/if \(er && er\.key\) \{[\s\S]{0,120}?rebuildAppWithout\(chat, umid\)/.test(src));
+			/if \(er && er\.minted\) \{[\s\S]{0,120}?rebuildAppWithout\(chat, umid\)/.test(src));
 		// WKEY-FRESH: the worker keys its slot at the turn's want in ONE fresh ask, and does
 		// not ask again at turn start (a second ask inside the floor is the 429 it swallowed).
 		check('the worker keys its own slot at the turn\'s want before its turn',

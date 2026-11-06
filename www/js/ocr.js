@@ -56,13 +56,13 @@
 			return typeof m.runnerReach === 'function' && !!m.runnerReach(pid).ok;
 		};
 		var own = function (pid) {
-			return !!(m.hasKey && m.hasKey(pid) && m.keyFor(pid)) && usable(pid);
+			return !!(m.hasKey && m.hasKey(pid) && m.canRun && m.canRun(pid)) && usable(pid);
 		};
 		if (own('openrouter')) {
 			out.pdf = 'openrouter';
 		} else {
 			var d = m.resolve ? m.resolve('', '') : null;
-			if (d && d.apiKey && d.baseUrl && d.provider && usable(String(d.provider))) {
+			if (d && d.usable && d.baseUrl && d.provider && usable(String(d.provider))) {
 				var host = '';
 				try { host = new URL(d.baseUrl).host; } catch (e) { host = ''; }
 				if (/(^|\.)openrouter\.ai$/.test(host)) out.pdf = String(d.provider);
@@ -72,7 +72,8 @@
 		return out;
 	}
 
-	/// The OpenRouter endpoint and key `route()` names for a PDF, or null when it names none.
+	/// The OpenRouter endpoint and the provider whose key pays, `{ url, pid }`, as `route()`
+	/// names them for a PDF, or null when it names none. The key itself stays in models.js.
 	function openrouter() {
 		var m = M(), pid = route().pdf;
 		if (!m || !pid) return null;
@@ -80,13 +81,13 @@
 		// two exactly as the runner's `LlmClient::from_url` does.
 		if (pid === 'openrouter') {
 			var base = (m.providerUrl && m.providerUrl('openrouter')) || OPENROUTER_CHAT;
-			return { url: m.chatUrl(String(base)), key: m.keyFor('openrouter') };
+			return { url: m.chatUrl(String(base)), pid: 'openrouter' };
 		}
 		var d = m.resolve('', '');
-		return (d && d.provider === pid) ? { url: m.chatUrl(String(d.baseUrl)), key: d.apiKey } : null;
+		return (d && d.provider === pid) ? { url: m.chatUrl(String(d.baseUrl)), pid: pid } : null;
 	}
 
-	/// The Mistral OCR endpoint and key, or null when `route()` does not send pictures there. The
+	/// The Mistral OCR endpoint and its provider, `{ url, pid }`, or null when `route()` does not send pictures there. The
 	/// endpoint is his row's `/ocr` sibling (models.js `siblingUrl`), the address the runner's
 	/// `sibling` derives from the same row, so tab and runner follow his row alike.
 	function mistral() {
@@ -94,17 +95,13 @@
 		if (!m || route().image !== 'mistral') return null;
 		var base = m.providerUrl ? m.providerUrl('mistral') : '';
 		var url = (base && m.siblingUrl) ? m.siblingUrl(String(base), 'ocr') : MISTRAL_OCR;
-		return { url: url, key: m.keyFor('mistral') };
+		return { url: url, pid: 'mistral' };
 	}
 
-	/// POST a JSON body with the right auth for the endpoint. Returns {ok, status, body}.
-	async function post(url, key, body) {
-		var headers = { 'content-type': 'application/json' };
-		var auth = (M() && M().authHeaders)
-			? M().authHeaders(url, key)
-			: { authorization: 'Bearer ' + key };
-		for (var k in auth) { if (auth.hasOwnProperty(k)) headers[k] = auth[k]; }
-		var r = await fetch(url, { method: 'POST', headers: headers, body: body });
+	/// POST a JSON body on `pid`'s key, which models.js puts on. Returns {ok, status, body}.
+	async function post(url, pid, body) {
+		var r = await M().providerFetch(pid, url, { method: 'POST',
+			headers: { 'content-type': 'application/json' }, body: body });
 		var text = '';
 		try { text = await r.text(); } catch (e) { text = ''; }
 		return { ok: r.ok, status: r.status, body: text };
@@ -118,7 +115,7 @@
 				'Reading a PDF needs an OpenRouter key: its file parser does the work. '
 				+ 'Add one in the models panel, or run your models through OpenRouter.');
 		}
-		var res = await post(o.url, o.key, body);
+		var res = await post(o.url, o.pid, body);
 		if (!res.ok && !res.body) {
 			throw new Error('OpenRouter returned HTTP ' + res.status + ' with no body.');
 		}
@@ -130,13 +127,13 @@
 	async function image(mistralBody, visionBody) {
 		var ms = mistral();
 		if (ms) {
-			var r = await post(ms.url, ms.key, mistralBody);
+			var r = await post(ms.url, ms.pid, mistralBody);
 			// A Mistral hiccup falls through to the vision model rather than failing the call.
 			if (r.ok && r.body) return JSON.stringify({ route: 'mistral', body: r.body });
 		}
 		var o = openrouter();
 		if (o) {
-			var v = await post(o.url, o.key, visionBody);
+			var v = await post(o.url, o.pid, visionBody);
 			if (!v.ok && !v.body) {
 				throw new Error('OpenRouter returned HTTP ' + v.status + ' with no body.');
 			}
@@ -182,7 +179,7 @@
 		}
 		// The sibling of his chat endpoint, as the runner's `LlmClient::sibling` derives it.
 		var url = M().siblingUrl(o.url, 'images'); // fixed: OpenRouter Image API path
-		var res = await post(url, o.key, body);
+		var res = await post(url, o.pid, body);
 		if (!res.ok && !res.body) {
 			throw new Error('OpenRouter returned HTTP ' + res.status + ' with no body.');
 		}
@@ -192,8 +189,7 @@
 	/// GET a JSON document on the OpenRouter route, or null where it did not answer with one.
 	async function getJson(o, url) {
 		try {
-			var auth = (M() && M().authHeaders) ? M().authHeaders(url, o.key) : { authorization: 'Bearer ' + o.key };
-			var r = await fetch(url, { headers: auth });
+			var r = await M().providerFetch(o.pid, url, {});
 			return r.ok ? await r.json() : null;
 		} catch (e) { return null; }
 	}

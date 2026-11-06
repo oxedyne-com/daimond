@@ -1,7 +1,7 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
 import { DaimondApp, Wasm } from './wasm.js';
 import { TAG_MODE_KEY, crystalRunning, diamondBusy, pg } from './state.js';
-import { AUTO_MAX, appCfgFor, dsEvent, maxOutFor, readJson, t, tabViewSet } from './util.js';
+import { AUTO_MAX, appCfgFor, dsEvent, engineFor, maxOutFor, readJson, t, tabViewSet } from './util.js';
 import { SWEEP_WAIT_MS, bumpDiamonds, chatMsgCount, chatTaintOf, expireChats, loadChatMessages,
 	markChatTainted, msgTombsOwed, msgTombsShipped, newMid, persistChats, touchChat, touchChatModel,
 	touchMsg, trashSweep, trashed } from './chatstore.js';
@@ -3033,7 +3033,7 @@ function buildDiamondClient(a, eff) {
 	var app;
 	var base = a.baseUrl || 'http://127.0.0.1/v1/chat/completions';
 	try {
-		app = new DaimondApp(base, a.apiKey || '', a.model || 'none',
+		app = engineFor({ provider: a.provider || '', baseUrl: base, model: a.model || 'none' },
 			maxOutFor(a.model, a.provider), SYSTEM_PROMPT(a.model), true);
 		// A Diamond's daimon, likewise.
 		try { DaimondModels.noteUse(a.provider, a.model); } catch (e) { /* never block a turn */ }
