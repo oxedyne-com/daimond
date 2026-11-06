@@ -3290,6 +3290,13 @@ export function errandLimits(chat) {
 	// the engines this tab would; none served carries none, and the runner keeps the engine's.
 	var ocr = (window.DaimondPolicy && DaimondPolicy.ocr) ? DaimondPolicy.ocr() : null;
 	if (ocr) out.ocr = ocr;
+	// And what the catalogue says of the chat's and the fold's reasoning (`TurnLimits.reasoning`),
+	// only where it says something, so an errand without it is the one it always was.
+	var rl = '';
+	try {
+		rl = window.DaimondModels ? DaimondModels.reasoningLines(m.provider || '', [m.model || '', out.foldModel]) : '';
+	} catch (e) { rl = ''; }
+	if (rl) out.reasoning = rl;
 	return out;
 }
 

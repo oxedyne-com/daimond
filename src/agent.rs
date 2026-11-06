@@ -1117,6 +1117,17 @@ impl Agent {
             if let Some(n) = crate::llm::extract_json_number(text, "stream_idle_ms") {
                 if n > 0 { l.stream_idle_ms = n; }
             }
+            // WHAT THE FOLD'S SUMMARY MAY WRITE, and the room its reasoning gets where it
+            // cannot be turned off (U89).  Nought is "absent", as above.
+            if let Some(n) = crate::llm::extract_json_number(text, "fold_max_tokens") {
+                if n > 0 { l.fold_max_tokens = n as u32; }
+            }
+            if let Some(n) = crate::llm::extract_json_number(text, "fold_max_tokens_structured") {
+                if n > 0 { l.fold_max_tokens_structured = n as u32; }
+            }
+            if let Some(n) = crate::llm::extract_json_number(text, "fold_reasoning_reserve") {
+                if n > 0 { l.fold_reasoning_reserve = n as u32; }
+            }
         }
         self.hold_worker();
         // The client builds the wire, so the setting has to reach it; `Limits` alone would be
@@ -1182,6 +1193,12 @@ impl Agent {
     /// * `only` - Refuse every provider but `order` rather than falling back past it.
     pub fn set_provider_routing(&self, order: &str, ignore: &str, only: bool) {
         self.llm.set_provider_routing(order, ignore, only);
+    }
+
+    /// Hold what the catalogue says of each model's reasoning (the chat's and the fold's), so the
+    /// fold can turn its own off where the model allows it.  See `LlmClient::set_reasoning_facts`.
+    pub fn set_reasoning_facts(&self, lines: &str) {
+        self.llm.set_reasoning_facts(lines);
     }
 
     /// Set the chat's own reasoning level from its wire spelling; an empty string clears
@@ -2495,6 +2512,7 @@ impl Agent {
         // counted separately -- a budget blind to it is short by however many tools are
         // registered, which for the browser set is several thousand tokens.
         let mut schema = tools_json.as_ref().map(|s| s.len() as u64).unwrap_or(0);
+        let mut loads = first.loaded_count(); // Deferred tools the array carries so far
         // THE REGISTRY A ROUND RUNS UNDER, once the boundary has offered a newer one: a scope or
         // a roster changed mid-turn waits for the next round and is never refused.
         let mut adopted: Option<Rc<ToolRegistry<H>>> = None;
@@ -2600,6 +2618,12 @@ impl Agent {
                 Some(r) => r,
                 None    => first,
             };
+            // A tool `tool_search` loaded last round is callable from this one: in the array.
+            if registry.loaded_count() != loads {
+                loads = registry.loaded_count();
+                tools_json = self.tools_json(registry);
+                schema = tools_json.as_ref().map(|s| s.len() as u64).unwrap_or(0);
+            }
             self.llm.set_pin(session.pin.clone());          // this conversation's host (r578 U3)
             // A STOPPED TURN GOES NO FURTHER, asked before anything of the next round -- the
             // cap's fold, the proactive fold, the request -- can spend.  The seam below asks it
@@ -4033,7 +4057,7 @@ impl Agent {
             let again = self.planned_words(&compact::person_said(&msgs[..cut], pin.as_ref()),
                 budget).len() as u64;
             let freed = compact::conversation_bytes(&msgs[..cut]).saturating_sub(again);
-            let worth = self.gauge.bytes(gain + compact::FOLD_MAX_TOKENS as u64);
+            let worth = self.gauge.bytes(gain + self.limits.borrow().fold_max_tokens as u64);
             if only_notes || (!why.forces() && freed < worth) {
                 cut = 0;
             }
@@ -4265,6 +4289,7 @@ impl Agent {
         // Whether the note came back in the layout, which the feed carries and the bank counts.
         let mut structured = false;
         let mut summarised = false;
+        let mut call: Option<crate::protocol::FoldCall> = None;
         // THE LINE THE FOLD LANDS UNDER, set before the summary is asked for so the summary can
         // be sized to it (invariant 7).  See `compact::FOLD_TARGET`.
         let target = self.gauge.bytes((budget as f64 * compact::FOLD_TARGET) as u64)
@@ -4301,7 +4326,8 @@ impl Agent {
             // Rounded down, and a fifth held back for a reply denser in bytes than the gauge
             // prices it; see `compact::FOLD_ASK_MARGIN`.
             let ask = ((room.saturating_sub(frame) as f64 * self.gauge.ratio()
-                * compact::FOLD_ASK_MARGIN) as u64).min(shape.max_tokens() as u64) as u32;
+                * compact::FOLD_ASK_MARGIN) as u64)
+                .min(self.limits.borrow().fold_cap(shape) as u64) as u32;
             let raw = if ask < compact::FOLD_MIN_ASK {
                 Err(fmt!("there was no room left for one under the fold's target"))
             } else {
@@ -4312,13 +4338,34 @@ impl Agent {
                 match self.summarise(&rendered, &model, session, why, pin.is_some(), shape, ask)
                     .await
                 {
-                    Ok((s, false)) => Ok(s),
-                    // CUT AT ITS LIMIT IS A DEFINED OUTCOME (M1): trimmed to its last whole
-                    // sentence and marked, never riding cut mid-word and never dropped unsaid.
-                    Ok((s, true))  => match compact::cut_short(&s) {
-                        Some(t) => Ok(t),
-                        None    => Err(fmt!("it reached its length limit before one sentence \
-                            ended")),
+                    Ok((s, truncated, c)) => {
+                        // WHERE THE CAP HELD REASONING TOO (U89) it no longer holds the answer:
+                        // what the answer was asked for is measured here instead, and a longer
+                        // one is cut at its last whole sentence inside it.
+                        let most = self.gauge.bytes(ask as u64) as usize;
+                        let over = c.max_tokens > ask && s.len() > most;
+                        call = Some(c);
+                        if s.trim().is_empty() {
+                            Err(err!("Fold: the model returned an empty summary."; Invalid, Data)
+                                .plain())
+                        } else if over {
+                            match compact::cut_within(&s, most) {
+                                Some(t) => Ok(t),
+                                None    => Err(fmt!("it came back longer than it was asked for, \
+                                    with no sentence ended inside that length")),
+                            }
+                        } else if truncated {
+                            // CUT AT ITS LIMIT IS A DEFINED OUTCOME (M1): trimmed to its last
+                            // whole sentence and marked, never riding cut mid-word and never
+                            // dropped unsaid.
+                            match compact::cut_short(&s) {
+                                Some(t) => Ok(t),
+                                None    => Err(fmt!("it reached its length limit before one \
+                                    sentence ended")),
+                            }
+                        } else {
+                            Ok(s)
+                        }
                     },
                     // In plain words: the model reads this, and so does he (L1).
                     Err(e)         => Err(e.plain()),
@@ -4544,6 +4591,7 @@ impl Agent {
             sp: by_sp,
             cut,
             summarised,
+            call,
         });
         // SHORTENING ALONE IS NOT A FOLD.  The user is still told (the 2026-08-28 ruling), but the
         // record is untouched and nothing was summarised, so the caller does not treat it as one
@@ -4596,7 +4644,8 @@ impl Agent {
     /// * `shape` - Which layout the compactor is asked for.
     /// * `ask` - Tokens it may write: the shape's budget, or less where the fold has less room.
     ///
-    /// Answers the summary and whether the provider cut it at `ask`.
+    /// Answers the summary, whether the provider cut it at its cap, and what the call came back
+    /// with.  An empty summary is answered as one; the caller says so.
     async fn summarise(
         &self,
         rendered: &str,
@@ -4607,13 +4656,23 @@ impl Agent {
         shape:    compact::FoldShape,
         ask:      u32,
     )
-        -> Outcome<(String, bool)>
+        -> Outcome<(String, bool, crate::protocol::FoldCall)>
     {
         let mut llm = self.llm.clone();
         if !model.trim().is_empty() {
             llm.model = model.trim().to_string();
         }
-        llm.max_tokens = ask;
+        // A BOUNDED WRITING JOB STATES ITS OWN REASONING (U89).  Reasoning counts against the
+        // output cap, so a model left to its default (DeepSeek v4.1 Flash reasons at `high`)
+        // spent an ask sized for the answer on thinking and wrote a few words.  Off where the
+        // catalogue allows it, whatever the chat's own level; where it does not, or nothing
+        // says, the lowest level and a cap with room for the reasoning beside the answer.
+        let quiet = llm.quieten();
+        let reserve = self.limits.borrow().fold_reasoning_reserve;
+        llm.max_tokens = match quiet {
+            crate::llm::Quiet::Off => ask,
+            _                      => ask.saturating_add(reserve),
+        };
         // THE SHAPE IS APPENDED OVER A USER-EDITED PROMPT, on the reducer's own reasoning
         // (`prompts::Role::compose_for`): the compactor's prompt is the user's to rewrite, and
         // what `compact::parse_fold_notes` then reads is not. A user who rewrote the job
@@ -4652,7 +4711,35 @@ impl Agent {
             ChatMessage::system(system),
             ChatMessage::user(fmt!("{} Write at most {} words.\n\n{}", opening, words, rendered)),
         ];
-        let resp = res!(llm.chat_once(&msgs, None).await);
+        let mut resp = res!(llm.chat_once(&msgs, None).await);
+        self.book_fold(session, &resp);
+        // THE BACKSTOP, NOT THE FIX: where nothing said whether reasoning could be turned off
+        // and it used up the cap, asked once more with it off.  A refusal of that keeps the
+        // first answer.  A model known to need reasoning is not asked to drop it.
+        let mut retried = false;
+        if quiet == crate::llm::Quiet::Unknown && resp.truncated && reasoned_out(&resp)
+            && !self.llm.halt().is_set()
+        {
+            llm.reasoning_off();
+            if let Ok(again) = llm.chat_once(&msgs, None).await {
+                self.book_fold(session, &again);
+                resp = again;
+                retried = true;
+            }
+        }
+        let call = crate::protocol::FoldCall {
+            finish_reason:     resp.finish_reason.clone(),
+            completion_tokens: resp.completion_tokens,
+            reasoning_tokens:  resp.reasoning_tokens,
+            reply_bytes:       resp.content.len() as u64,
+            max_tokens:        llm.max_tokens,
+            retried,
+        };
+        Ok((resp.content, resp.truncated, call))
+    }
+
+    /// Add a summarising call's usage into the session's totals and the live figures.
+    fn book_fold(&self, session: &mut Session, resp: &crate::llm::ChatOnceResponse) {
         session.prompt_tokens     += resp.prompt_tokens;
         session.completion_tokens += resp.completion_tokens;
         session.cached_tokens     += resp.cached_tokens;
@@ -4661,10 +4748,6 @@ impl Agent {
         self.live_completion.set(session.completion_tokens);
         self.live_cached.set(session.cached_tokens);
         self.live_cost.set(session.cost_usd);
-        if resp.content.trim().is_empty() {
-            return Err(err!("Fold: the model returned an empty summary."; Invalid, Data));
-        }
-        Ok((resp.content, resp.truncated))
     }
 }
 
@@ -4672,6 +4755,15 @@ impl Agent {
 // ┌───────────────────────────────────────────────────────────────┐
 // │ The tool that ends a turn                                      │
 // └───────────────────────────────────────────────────────────────┘
+
+/// Whether a reply cut at its cap spent most of it reasoning: the provider's count where it gives
+/// one, else more thinking text than answer.
+fn reasoned_out(resp: &crate::llm::ChatOnceResponse) -> bool {
+    if resp.reasoning_tokens > 0 {
+        return resp.reasoning_tokens.saturating_mul(2) > resp.completion_tokens;
+    }
+    resp.thinking.trim().len() > resp.content.trim().len()
+}
 
 /// Whether this tool result is the turn's answer, so the loop stops here.
 ///

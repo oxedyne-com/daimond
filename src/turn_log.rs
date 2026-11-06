@@ -30,7 +30,9 @@ pub enum LogRow {
     Tool    { name: String, args: String, call_id: String, content: String, outcome: String,
               paused: String, ts: u64 },
     Fold    { note: String, folded: u64, kept: u64, structured: bool, model: String, sp: String,
-              cut: u64, summarised: bool, ts: u64 },
+              cut: u64, summarised: bool, ts: u64,
+              // What the summarising call came back with (U89); empty and zero where none was made
+              finish: String, completion: u64, reasoning: u64, reply: u64, cap: u64, retried: bool },
     Vision  { images: u64, model: String, source: String, ts: u64 },
     Leak    { fragment: String, ts: u64 },
     Error   { content: String, ts: u64 },
@@ -82,7 +84,8 @@ impl LogRow {
                 }
                 o.push_str(&n("ts", *ts));
             },
-            Self::Fold { note, folded, kept, structured, model, sp, cut, summarised, ts } => {
+            Self::Fold { note, folded, kept, structured, model, sp, cut, summarised, ts,
+                finish, completion, reasoning, reply, cap, retried } => {
                 o.push_str(&s("content", note));
                 o.push_str(&n("folded", *folded));
                 o.push_str(&n("kept", *kept));
@@ -91,6 +94,15 @@ impl LogRow {
                 o.push_str(&s("sp", sp));
                 o.push_str(&n("cut", *cut));
                 o.push_str(&b("summarised", *summarised));
+                // Written only where a call was made, so a row from before U89 reads back the same.
+                if !finish.is_empty() || *completion > 0 {
+                    o.push_str(&s("finish", finish));
+                    o.push_str(&n("completion", *completion));
+                    o.push_str(&n("reasoning", *reasoning));
+                    o.push_str(&n("reply", *reply));
+                    o.push_str(&n("cap", *cap));
+                    o.push_str(&b("retried", *retried));
+                }
                 o.push_str(&n("ts", *ts));
             },
             Self::Vision { images, model, source, ts } => {
@@ -128,7 +140,9 @@ impl LogRow {
                 content: text("content"), outcome: text("outcome"), paused: text("paused"), ts },
             "fold_log"      => Self::Fold { note: text("content"), folded: num("folded"), kept: num("kept"),
                 structured: flag("structured"), model: text("model"), sp: text("sp"), cut: num("cut"),
-                summarised: flag("summarised"), ts },
+                summarised: flag("summarised"), ts, finish: text("finish"),
+                completion: num("completion"), reasoning: num("reasoning"), reply: num("reply"),
+                cap: num("cap"), retried: flag("retried") },
             "vision_log"    => Self::Vision { images: num("images"), model: text("model"),
                 source: text("source"), ts },
             r               => return Err(err!("A turn log row has no role {:?}.", r; Decode, Invalid)),
@@ -211,10 +225,13 @@ impl TurnLog {
                     *p = paused.clone();
                 }
             },
-            AgentEvent::Compacted { folded, kept, note, structured, model, sp, cut, summarised } => {
+            AgentEvent::Compacted { folded, kept, note, structured, model, sp, cut, summarised, call } => {
+                let c = call.clone().unwrap_or_default();
                 self.rows.push(LogRow::Fold { note: note.clone(), folded: *folded as u64, kept: *kept as u64,
                     structured: *structured, model: model.clone(), sp: sp.clone(), cut: *cut as u64,
-                    summarised: *summarised, ts });
+                    summarised: *summarised, ts, finish: c.finish_reason, completion: c.completion_tokens,
+                    reasoning: c.reasoning_tokens, reply: c.reply_bytes, cap: c.max_tokens as u64,
+                    retried: c.retried });
             },
             AgentEvent::Unseeable { images, model, source } => {
                 self.rows.push(LogRow::Vision { images: *images as u64, model: model.clone(),

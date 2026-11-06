@@ -2,7 +2,7 @@
 import { Wasm } from './wasm.js';
 import { _saidThere, _steerApp, _steerDetached, agentsGrid, chatInput, chatOutput, diamondBusy,
 	diamondList, pg, sessionList, sessionNameEl } from './state.js';
-import { MIN_MAX, capRefused, dsEvent, fmtTok, friendlyError, maxOutFor, noteCapRefused,
+import { MIN_MAX, capRefused, dsEvent, dsFold, fmtTok, friendlyError, maxOutFor, noteCapRefused,
 	opaqueRefusal, t, tn, truncatedArgs } from './util.js';
 import { endedHow, msgTombstone, newMid, persistChats, stampMessages, touchChat, touchMsg } from './chatstore.js';
 import { _liveMid, _liveProd, _liveTurn, _localEnding, _localRecovering, _progressView, _turnRun,
@@ -1739,11 +1739,11 @@ export async function runTurn(chat, text, opts) {
 			// show as an ordinary fold for ever, which is the reading the measurement
 			// most needs; an engine too old to say answers 'prose', which it was.
 			// Shortening alone (`folded` 0) is told to the user but is not a fold.
-			if (ev.folded | 0) dsEvent('fold', { turn: String(umid), r: callN, folded: ev.folded || 0,
-				kept: ev.kept || 0, trigger: 'real', shape: ev.shape || 'prose',
-				// Where it cut and whether a summary was paid for: a fold over nothing but
-				// the last note reads as `cut 1, summarised 1`, which the lens could not see.
-				cut: ev.cut | 0, summarised: ev.summarised ? 1 : 0 });
+			if (ev.folded | 0) dsFold('tab', { chat: chat.id, diamond: chat.diamondId }, ev, { turn: String(umid),
+				r: callN, trigger: 'real', shape: ev.shape || 'prose',
+				// Where it cut: a fold over nothing but the last note reads as `cut 1,
+				// summarised 1`, which the lens could not see.
+				cut: ev.cut | 0 });
 			try { if (window.DEBUG_SHARE && DEBUG_SHARE.noteRealFold) DEBUG_SHARE.noteRealFold(String(umid)); }
 			catch (e) { /* the feed must never break a turn */ }
 			// Persisted, so a reload still shows that the history was folded --
@@ -2984,9 +2984,32 @@ function stopEndedTurn(ev) {
 		abortTurn(c);
 	}
 }
+
+/// A row of turn `turn` this device could not write to its chat's log (turnwrite.js `onFault`),
+/// said on that turn in words: an `error_log` row after its last message, live or done.
+function sayTurnLogFault(ev) {
+	var d = (ev && ev.detail) || {};
+	var c = pg.chats.find(function (x) { return x && String(x.id) === String(d.chat); });
+	if (!c) return;
+	var turn = String(d.turn || '');
+	var said = "Part of this turn could not be written to the chat's log, so your other devices may not show all of it. "
+		+ friendlyError(d.why || '');
+	var row = { role: 'error_log', content: said, mid: newMid(), ts: Date.now(), iturn: turn };
+	if (c._generating && String(c._turnTag) === turn) {
+		pushRunRow(c, turn, row);
+		if (pg.current && pg.current.id === c.id) appendError(said);
+	} else {
+		var at = c.messages.findIndex(function (m) { return m && String(m.mid) === turn; });
+		if (at < 0) return;
+		while (at + 1 < c.messages.length && !(c.messages[at + 1] && c.messages[at + 1].role === 'user')) at++;
+		c.messages.splice(at + 1, 0, row);
+	}
+	touchChat(c); persistChats();
+}
 // page-split: install 134
 
 export function install() { // page-split: install
 	// page-split: install 134
 	window.addEventListener('daimond:turnlog-ended', stopEndedTurn);
+	window.addEventListener('daimond:turnlog-fault', sayTurnLogFault);
 } // page-split: end install

@@ -26,6 +26,7 @@ use crate::errand::{
         Change,
         End,
         Header,
+        Part,
         Row,
         TurnView,
         Writer,
@@ -113,14 +114,15 @@ pub fn row_aad() -> String {
 	String::from_utf8_lossy(row::ROW_AAD).into_owned()
 }
 
-/// A row body's plaintext, checked against the header's kind (every kind but `end` names its
-/// `mid`), to seal under the space key with [`row_aad`].
+/// A row body's plaintext, a whole body or one piece of one as [`log_rows`] gave it, checked
+/// against the header's kind (every whole body but `end` names its `mid`), to seal under the
+/// space key with [`row_aad`].
 #[wasm_bindgen]
 pub fn row_seal(head_json: &str, body_json: &str) -> Result<Vec<u8>, JsValue> {
 	let head = Header::of_js(&parse(head_json)?).map_err(to_js_err)?;
 	let kind = head.kind().ok_or_else(|| to_js_err(err!("Unknown row kind '{}'.", head.kind; Invalid, Input)))?;
-	let body = Body::of_js(kind, &parse(body_json)?).map_err(to_js_err)?;
-	row::body_plain(&head, &body).map_err(to_js_err)
+	let part = Part::of_js(kind, &parse(body_json)?).map_err(to_js_err)?;
+	row::part_plain(&head, &part).map_err(to_js_err)
 }
 
 /// The wire row to append: the header with `len` set and the sealed body.
@@ -184,6 +186,24 @@ pub fn log_rows(turn: &str, daimon: &str, n: f64, change_json: &str, plain_max: 
 {
 	let c = Change::of_js(&parse(change_json)?).map_err(to_js_err)?;
 	let rows = row::change_rows(turn, daimon, n as i64, &c, plain_max as usize).map_err(to_js_err)?;
+	Ok(Js::Arr(rows.iter().map(|(h, b)| Js::Obj(vec![
+		("head".into(),	h.to_js()),
+		("body".into(),	b.to_js()),
+	])).collect()).stringify())
+}
+
+/// One queued row the log door refused alone as too large, cut again from its own number with
+/// each plaintext within `plain_max`: a whole body as [`log_rows`] cuts it, a piece into smaller
+/// pieces.  Answers `[{head, body}]`, one row when it cannot be cut.
+#[wasm_bindgen]
+pub fn log_recut(head_json: &str, body_json: &str, plain_max: f64) -> Result<String, JsValue> {
+	let head = Header::of_js(&parse(head_json)?).map_err(to_js_err)?;
+	let kind = head.kind().ok_or_else(|| to_js_err(err!("Unknown row kind '{}'.", head.kind; Invalid, Input)))?;
+	let rows = match Part::of_js(kind, &parse(body_json)?).map_err(to_js_err)? {
+		Part::Whole(b)	=> row::change_rows(&head.turn, &head.daimon, head.n,
+			&Change { kind, body: b }, plain_max as usize),
+		Part::Piece(p)	=> row::piece_rows(head, &p.piece, p.first, p.last, plain_max as usize),
+	}.map_err(to_js_err)?;
 	Ok(Js::Arr(rows.iter().map(|(h, b)| Js::Obj(vec![
 		("head".into(),	h.to_js()),
 		("body".into(),	b.to_js()),

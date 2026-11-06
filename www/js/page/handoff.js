@@ -1,6 +1,6 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
 import { chatOutput, diamondBusy, pg } from './state.js';
-import { readJson, t } from './util.js';
+import { dsFold, readJson, t } from './util.js';
 import { ChatStore, chatTaintOf, ensureDispatchedResident, loadChatMessages, msgJoin, msgTombstone, newMid,
 	onChatsChangedElsewhere, persistChats, stampMessages, takeReportTaint, touchChat, touchMsg } from './chatstore.js';
 import { DEVICE_ID_RE, loadDevices, nominatedDeviceId } from './parcel_collect.js';
@@ -1866,6 +1866,7 @@ function onLogEnd(chat, turnId, view) {
 // (D-20261006-27) leaves the tool row in the log, and the asker opens it from that row
 // (`panelIntent`): nothing rides beside the rows. Each row once, in order, and only for a
 // turn this device handed off and still holds open (its placeholder, dispatched from here).
+var _foldSeen = Object.create(null);	// fold_log row mid -> told the debug feed here
 var _uiDone  = Object.create(null);		// tool row mid -> opened (or being opened) here
 var _uiChain = Object.create(null);		// turn -> the shows still to finish, one at a time
 // How long after a failed show it is tried again, in turn.
@@ -1881,6 +1882,12 @@ function onLogRows(chat, turnId, fresh, changed) {
 	var ph = dispatchedPlaceholderIn(chat, turnId);
 	if (!ph || String(ph.dispatchedBy || '') !== selfDeviceId()) return;
 	var owner = String((chat && chat.diamondId) || '');
+	// Its folds, for the debug feed's `fold` (U89): once per row, on the device that handed it off.
+	(fresh || []).forEach(function (m) {
+		if (!m || m.role !== 'fold_log' || !(m.folded | 0) || !m.mid || _foldSeen[m.mid]) return;
+		_foldSeen[m.mid] = 1;
+		dsFold('kimberlite', { chat: chat.id, diamond: owner }, m, { turn: String(turnId), trigger: 'real' });
+	});
 	(fresh || []).concat(changed || []).forEach(function (m) {
 		var u = panelIntent(m), id = String((m && m.mid) || '');
 		if (!u || !id || _uiDone[id]) return;
@@ -3555,7 +3562,7 @@ async function runDispatchFallback(chatId, turnId, opts) {
 		var refWhy  = (refRep && refRep.why) ? ': ' + String(refRep.why) : '';
 		var notRun = (opts && opts.notRun) ? String(opts.notRun)
 			: (hbCause === 'models-behind' ? 'handed back: the runner had not reached this turn\'s models'
-			: ((hbCause === 'refused' || (lease && lease.mode === 'released' && String(lease.cut || '') === 'refused')) ? 'the runner refused it before the run' + refWhy : ''));
+			: ((hbCause === 'refused' || (lease && lease.mode === 'released' && String(lease.cut || '') === 'refused')) ? 'Kimberlite refused it before the run' + refWhy : ''));
 		if (notRun) {
 			var nrc = (opts && opts.notRun) ? String(opts.cause || '') : (hbCause === 'models-behind' ? hbCause : 'refused');
 			await endHandOffNotRun(chat, m, notRun, notRunCause(nrc, m.toDevice, m.toName, refRep && refRep.why));

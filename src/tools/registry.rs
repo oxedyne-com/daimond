@@ -260,6 +260,11 @@ pub struct ToolRegistry<H: Host = DefaultHost> {
     /// turn is already short of room for.  Cleared where `read_seen` is, at `begin_turn`.
     pub(super) hinted: std::rc::Rc<std::cell::RefCell<Vec<&'static str>>>,
     pub(super) machine: std::cell::Cell<Option<bool>>, // A folder reachable when this turn was briefed?
+    /// The deferred tools `tool_search` has answered this turn, which ride in the tools array
+    /// from the next round on, as Claude Code's loaded deferred tools do: a model on an
+    /// OpenAI-style endpoint calls only what the array declares, and searched for ever instead.
+    pub(super) loaded: std::rc::Rc<std::cell::RefCell<Vec<Tool>>>,
+    pub(super) typst_here: std::cell::Cell<bool>, // The diamond holds a `.typ`, so its compiler is core?
 }
 
 // Concrete until U2c4: these methods hand `self.ctx` to tools that take a `ToolContext` on the
@@ -333,7 +338,9 @@ impl<H: Host> ToolRegistry<H> {
         Self { tools, ctx, family: std::cell::Cell::new(crate::profile::Family::Unknown),
             claude_names: std::cell::Cell::new(false),
             hinted: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
-            machine: std::cell::Cell::new(None) }
+            machine: std::cell::Cell::new(None),
+            loaded: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            typst_here: std::cell::Cell::new(false) }
     }
 
     /// Record whether a command has anywhere to run, as this turn's briefing found out; `None`
@@ -344,6 +351,22 @@ impl<H: Host> ToolRegistry<H> {
     /// mid-turn, or the prefix cache misses and a call the turn could make is refused.
     pub fn set_machine_rooted(&self, rooted: Option<bool>) {
         self.machine.set(rooted);
+    }
+
+    /// Record whether the diamond holds a Typst source, as this turn's briefing found: then
+    /// `typst_compile` is core, its schema in the array from the first round.
+    pub fn set_typst_here(&self, here: bool) {
+        self.typst_here.set(here);
+    }
+
+    /// Is `t`'s schema held behind `tool_search` on this turn's first round?
+    pub(super) fn held_back(&self, t: &Tool) -> bool {
+        t.deferred() && !(matches!(t, Tool::TypstCompile) && self.typst_here.get())
+    }
+
+    /// How many deferred tools `tool_search` has loaded this turn.
+    pub fn loaded_count(&self) -> usize {
+        self.loaded.borrow().len()
     }
 
     /// Whether a command has anywhere to run, as this turn was briefed; `None` until asked.
@@ -401,6 +424,7 @@ impl<H: Host> ToolRegistry<H> {
     pub fn begin_turn(&self) -> TurnEnd<H> {
         self.ctx.begin_turn();
         self.hinted.borrow_mut().clear();
+        self.loaded.borrow_mut().clear();
         TurnEnd { ctx: self.ctx.clone() }
     }
 
@@ -443,6 +467,8 @@ impl<H: Host> ToolRegistry<H> {
             // must not be given again because the registry was narrowed between rounds.
             hinted: self.hinted.clone(),
             machine: std::cell::Cell::new(self.machine.get()),
+            loaded: self.loaded.clone(),
+            typst_here: std::cell::Cell::new(self.typst_here.get()),
         }
     }
 
@@ -616,7 +642,7 @@ impl<H: Host> ToolRegistry<H> {
         let mut names: Vec<String> = offered.iter()
             .map(|t| t.wire_name(self.family.get(), self.claude_names.get()).to_string())
             .collect();
-        if offered.iter().any(|t| t.deferred()) {
+        if offered.iter().any(|t| self.held_back(t)) {
             names.push(TOOL_SEARCH.to_string());
         }
         names
@@ -627,7 +653,7 @@ impl<H: Host> ToolRegistry<H> {
     pub fn tool_search_json(&self, offered: &[Tool]) -> Option<String> {
         let (fam, alias) = (self.family.get(), self.claude_names.get());
         let index: Vec<String> = offered.iter()
-            .filter(|t| t.deferred())
+            .filter(|t| self.held_back(t))
             .map(|t| fmt!("{}: {}", t.wire_name(fam, alias), t.summary()))
             .collect();
         if index.is_empty() {
@@ -652,24 +678,40 @@ impl<H: Host> ToolRegistry<H> {
         let query = crate::llm::extract_json_string(args_json, "query")
             .map(|q| q.to_lowercase())
             .unwrap_or_default();
-        let found: Vec<String> = self.offered().iter()
-            .filter(|t| t.deferred())
-            .filter(|t| {
-                let wire = t.wire_name(fam, alias);
-                names.iter().any(|n| n == wire || n == t.name())
-                    || (!query.is_empty()
-                        && (wire.to_lowercase().contains(&query)
-                            || t.summary().to_lowercase().contains(&query)
-                            || t.description_for(fam, alias).to_lowercase().contains(&query)))
-            })
-            .map(|t| t.definition_json_where(fam, alias, kept))
-            .collect();
-        match found.is_empty() {
-            true  => fmt!("No deferred tool matches. The index in tool_search's description \
-                names every one; give 'names' from it."),
-            false => fmt!("Each schema below is a tool you may now call by its name.\n{}",
-                found.join("\n")),
+        let mut found = Vec::new();
+        let mut ready = Vec::new();
+        for t in self.offered() {
+            let wire = t.wire_name(fam, alias);
+            let named = names.iter().any(|n| n == wire || n == t.name());
+            let asked = named || (!query.is_empty() && self.held_back(&t)
+                && (wire.to_lowercase().contains(&query)
+                    || t.summary().to_lowercase().contains(&query)
+                    || t.description_for(fam, alias).to_lowercase().contains(&query)));
+            if !asked {
+                continue;
+            }
+            let def = t.definition_json_where(fam, alias, kept);
+            // A tool already in hand is answered in one line, never its schema again: a model
+            // that searched for it twice will search a third time for the same answer.
+            if !self.held_back(&t) || self.loaded.borrow().contains(&t) {
+                let keys: Vec<String> = crate::llm::extract_json_string_array(&def, "required")
+                    .unwrap_or_default().iter().map(|k| fmt!("\"{}\":…", k)).collect();
+                ready.push(fmt!("{} is loaded: call it now with {{{}}}", wire, keys.join(",")));
+                continue;
+            }
+            self.loaded.borrow_mut().push(t.clone());
+            found.push(def);
         }
+        if found.is_empty() && ready.is_empty() {
+            return fmt!("No deferred tool matches. The index in tool_search's description \
+                names every one; give 'names' from it.");
+        }
+        let mut out = ready;
+        if !found.is_empty() {
+            out.push(fmt!("Each schema below is a tool you may now call by its name.\n{}",
+                found.join("\n")));
+        }
+        out.join("\n")
     }
 
     /// The `tools` JSON array for the LLM request, or `None` if empty.
@@ -679,16 +721,19 @@ impl<H: Host> ToolRegistry<H> {
             return None;
         }
         let kept = runner_keeps(&self.ctx);
-        // THE CORE IN FULL AND THE REST AS ONE INDEX (P2.5c): a deferred tool's schema is
-        // answered by `tool_search` into the conversation, never added here, so the array stays
-        // the bytes it was on the first round.
+        // THE CORE IN FULL AND THE REST AS ONE INDEX (P2.5c).  A tool `tool_search` has loaded
+        // joins at the very end, after the index and the machine stub, so the first round's
+        // bytes stay a prefix.
         let mut defs: Vec<String> = offered.iter()
-            .filter(|t| !t.deferred())
+            .filter(|t| !self.held_back(t))
             .map(|t| t.definition_json_where(self.family.get(), self.claude_names.get(), kept))
             .collect();
         defs.extend(self.tool_search_json(&offered));
         // Not in `tool_names`: the briefing says plainly that run is not on the belt.
         defs.extend(self.machine_stub_json());
+        for t in self.loaded.borrow().iter().filter(|t| offered.contains(t)) {
+            defs.push(t.definition_json_where(self.family.get(), self.claude_names.get(), kept));
+        }
         Some(fmt!("[{}]", defs.join(",")))
     }
 

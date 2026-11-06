@@ -1,7 +1,7 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
 import { Wasm } from './wasm.js';
 import { daimonOnScreen, pg, sessionList } from './state.js';
-import { appCfgFor, fmtCtx, friendlyError, mark, t } from './util.js';
+import { appCfgFor, dsFold, fmtCtx, friendlyError, mark, t } from './util.js';
 import { ChatStore, bumpDiamonds, chatMsgCount, msgTombstone, newMid, persistChats, touchChat,
 	touchChatModel } from './chatstore.js';
 import { deviceId, loadDevices } from './parcel_collect.js';
@@ -959,6 +959,8 @@ async function foldChatNow(chat, btn, onDone) {
 		// which is the one thing `appendCompacted` exists to prevent.
 		moved = await app.fold_now(function (ev) {
 			if (!ev || ev.type !== 'compacted') return;
+			if (ev.folded | 0) dsFold('tab', { chat: chat.id, diamond: chat.diamondId }, ev,
+				{ trigger: 'manual', shape: ev.shape || 'prose', cut: ev.cut | 0 });
 			var manualFoldTs = Date.now(), manualMid = newMid();
 			var manualRow = { role: 'fold_log', content: ev.content || '',
 				folded: ev.folded || 0, kept: ev.kept || 0, mid: manualMid, ts: manualFoldTs };

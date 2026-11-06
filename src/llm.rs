@@ -310,6 +310,19 @@ impl ReasoningEffort {
         }
     }
 
+    /// Where the level sits on the ladder, lowest first.
+    pub fn rung(self) -> u8 {
+        match self {
+            Self::None    => 0,
+            Self::Minimal => 1,
+            Self::Low     => 2,
+            Self::Medium  => 3,
+            Self::High    => 4,
+            Self::XHigh   => 5,
+            Self::Max     => 6,
+        }
+    }
+
     /// Read a spelling; anything else is `None` rather than a silent default.
     pub fn from_wire(s: &str) -> Option<Self> {
         match s.trim() {
@@ -339,6 +352,55 @@ struct ChosenEffort {
 /// OpenRouter's `provider.data_collection` on every request sent to it: only hosts that do not
 /// store or train on what they are sent (https://openrouter.ai/docs/features/provider-routing).
 pub const DATA_COLLECTION: &str = "deny"; // fixed: his ruling D-20261031-02, REQ-D-044
+
+/// What a model's catalogue entry says of its reasoning: OpenRouter's `reasoning.mandatory` and
+/// `reasoning.supported_efforts`, read by the page (`DaimondModels.effortsFor`).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ReasoningFacts {
+    pub mandatory:  bool,                   // reasoning cannot be turned off
+    pub efforts:    Vec<ReasoningEffort>,   // the levels it takes, low to high
+}
+
+impl ReasoningFacts {
+    /// The lines the page and the errand carry, one model each: `<model>\t<1|0>\t<level,level>`,
+    /// the middle field whether reasoning is mandatory.  A line that does not read is skipped.
+    pub fn parse_lines(text: &str) -> Vec<(String, Self)> {
+        let mut out = Vec::new();
+        for line in text.lines() {
+            let mut f = line.split('\t');
+            let (model, must, levels) = match (f.next(), f.next(), f.next()) {
+                (Some(m), Some(b), Some(l)) => (m.trim(), b.trim(), l),
+                _                           => continue,
+            };
+            if model.is_empty() {
+                continue;
+            }
+            let mut efforts: Vec<ReasoningEffort> = levels.split(',')
+                .filter_map(ReasoningEffort::from_wire).collect();
+            efforts.sort_by_key(|e| e.rung());
+            efforts.dedup();
+            out.push((model.to_string(), Self { mandatory: must == "1", efforts }));
+        }
+        out
+    }
+
+    /// The level a bounded writing job asks for: off where the model allows it, else the
+    /// lowest it takes, else nothing (the model's own default).
+    pub fn least(&self) -> Option<ReasoningEffort> {
+        if !self.mandatory && self.efforts.contains(&ReasoningEffort::None) {
+            return Some(ReasoningEffort::None);
+        }
+        self.efforts.iter().copied().find(|e| *e != ReasoningEffort::None)
+    }
+}
+
+/// How far a one-off call could turn its model's reasoning down; see [`LlmClient::quieten`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Quiet {
+    Off,        // turned off: the output cap is the answer's alone
+    Least,      // cannot be turned off, so turned to its lowest; the cap must hold the reasoning too
+    Unknown,    // nothing says; the cap must hold whatever reasoning the model does by default
+}
 
 /// Which upstream providers OpenRouter should try for this model, and in what order.
 ///
@@ -921,6 +983,14 @@ pub struct LlmClient {
     /// [`set_reasoning_effort`](Self::set_reasoning_effort).  Shared across clones as
     /// `provider_routing` is.
     reasoning:      std::rc::Rc<std::cell::RefCell<Option<ChosenEffort>>>,
+    /// What each model's catalogue entry says of its reasoning, pushed by the page (and by
+    /// Kimberlite from the errand) through [`set_reasoning_facts`](Self::set_reasoning_facts).
+    /// Shared across clones as `reasoning` is, so the fold's clone can look up its own model.
+    facts:          std::rc::Rc<std::cell::RefCell<Vec<(String, ReasoningFacts)>>>,
+    // A ONE-OFF CALL'S OWN REASONING, over the chat's: set on a clone by
+    // [`quieten`](Self::quieten) for the fold's summary, and a plain field so it never reaches
+    // the chat's client.  `None` sends what the chat would.
+    quiet:          Option<ReasoningEffort>,
     // THE CONVERSATION'S HOST (r578 U3), handed in by the agent at the head of every round from
     // the session that owns it and read back after the round; see `set_pin` and `settle_pin`.
     // A plain cell and NOT an `Rc` like the routing above: the routing is the model row's and
@@ -989,6 +1059,9 @@ pub struct Usage {
     /// What the provider says the call actually cost, in USD.  Zero means it
     /// said nothing, never that the call was free.
     pub cost_usd:   f64,
+    /// Of `completion`, the tokens spent reasoning (`completion_tokens_details.reasoning_tokens`);
+    /// zero where the provider says nothing.
+    pub reasoning:  u64,
 }
 
 /// The response from a completed streaming chat call.
@@ -1438,6 +1511,9 @@ pub struct ChatOnceResponse {
     /// beside `truncated` as the word behind that bit, for the same trace.  Empty on the
     /// Anthropic dialect, which reports `stop_reason` instead; see `anthropic_truncated`.
     pub finish_reason:        String,
+    /// Of `completion_tokens`, those the model spent reasoning, where the provider says (the
+    /// OpenAI dialect's `completion_tokens_details.reasoning_tokens`); zero otherwise.
+    pub reasoning_tokens:     u64,
     /// OpenRouter's own `native_finish_reason`: the upstream provider's word, before
     /// OpenRouter's normalisation to the field above.  Empty off OpenRouter.
     pub native_finish_reason: String,
@@ -2217,6 +2293,8 @@ impl LlmClient {
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
             reasoning:  std::rc::Rc::new(std::cell::RefCell::new(None)),
+            facts:      std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            quiet:      None,
             pin:        std::cell::RefCell::new(None),
             tls_config,
             halt:       Halt::new(),
@@ -2405,6 +2483,8 @@ impl LlmClient {
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
             reasoning:  std::rc::Rc::new(std::cell::RefCell::new(None)),
+            facts:      std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            quiet:      None,
             pin:        std::cell::RefCell::new(None),
             secure,
             halt:       Halt::new(),
@@ -2897,6 +2977,7 @@ impl LlmClient {
             shape:             ReplyShape::Plain,
             gen_id:               String::new(),
             finish_reason:        String::new(),
+            reasoning_tokens:     0,
             native_finish_reason: String::new(),
             provider:             String::new(),
             // Set by `stream_turn` from the `StreamOutcome`; zero on a whole reply.
@@ -3348,7 +3429,10 @@ impl LlmClient {
         // THE CHAT'S OWN REASONING LEVEL, drawn by the page from the model's catalogue entry
         // and set for this model alone (`ChosenEffort`).  Unset sends nothing, which is the
         // model's own default.
-        if let Some(c) = self.reasoning.borrow().as_ref() {
+        // A one-off call's own level (`quieten`) outranks it.
+        if let Some(q) = self.quiet {
+            out.push_str(&fmt!("\"reasoning\":{{\"effort\":\"{}\"}},", q.wire()));
+        } else if let Some(c) = self.reasoning.borrow().as_ref() {
             if c.model == self.model {
                 out.push_str(&fmt!("\"reasoning\":{{\"effort\":\"{}\"}},", c.effort.wire()));
             }
@@ -3394,7 +3478,12 @@ impl LlmClient {
         -> String
     {
         let marks = self.cache_breakpoints(messages, tools);
-        let tune = self.thinking_tune();
+        // A one-off call quietened (`quieten`) asks for thinking off at the lowest effort,
+        // whatever the chat asks; `off_lands` below still decides whether the model takes it.
+        let tune = match self.quiet {
+            Some(_) => ThinkTune { thinking: Thinking::Off, effort: Effort::Low },
+            None    => self.thinking_tune(),
+        };
         let adaptive = model_takes_adaptive_thinking(&self.model);
         // THREE STATES, not two.  `thinks` is whether this request ASKS for thinking;
         // `off_lands` is whether asking for it to stop is something this model will accept at
@@ -3539,10 +3628,11 @@ impl LlmClient {
 
     /// The output cap for a Messages API request.
     ///
-    /// On the OpenAI side `max_tokens` bounds the answer.  On this side it
-    /// bounds the reasoning *and* the answer together -- thinking is billed as
+    /// Here, as on the OpenAI side (OpenRouter counts reasoning tokens against
+    /// `max_tokens` on most providers; https://openrouter.ai/docs/use-cases/reasoning-tokens),
+    /// the cap bounds the reasoning *and* the answer together -- thinking is billed as
     /// output and counts against the same cap -- so a figure chosen for the
-    /// first meaning truncates under the second, and the app's is 4096: enough
+    /// answer alone truncates once the model thinks, and the app's is 4096: enough
     /// for an answer, not enough for a hard problem thought through first.  A
     /// floor is applied rather than the configured value being used, because
     /// that value is an internal default and not something a user chose.
@@ -3704,6 +3794,58 @@ impl LlmClient {
             model:  self.model.clone(),
             effort: e,
         });
+    }
+
+    /// Hold what the catalogue says of each model's reasoning, from
+    /// [`ReasoningFacts::parse_lines`]'s text; a model named again replaces what it said before.
+    pub fn set_reasoning_facts(&self, lines: &str) {
+        let mut held = self.facts.borrow_mut();
+        for (model, f) in ReasoningFacts::parse_lines(lines) {
+            held.retain(|(m, _)| *m != model);
+            held.push((model, f));
+        }
+    }
+
+    /// What the catalogue says of this client's model's reasoning, if anything.
+    pub fn reasoning_facts(&self) -> Option<ReasoningFacts> {
+        self.facts.borrow().iter().find(|(m, _)| *m == self.model).map(|(_, f)| f.clone())
+    }
+
+    /// Turn this client's reasoning down as far as its model allows, for a bounded writing job
+    /// (the fold's summary), whatever the chat itself asks; a clone's own, never the chat's.
+    ///
+    /// On the OpenAI dialect the catalogue decides: off where reasoning is not mandatory and
+    /// `none` is offered, else the lowest level offered.  On the Anthropic dialect thinking is
+    /// asked off at effort `low`, which a model that always thinks does not take.
+    pub fn quieten(&mut self) -> Quiet {
+        match self.dialect {
+            Dialect::Anthropic => {
+                self.quiet = Some(ReasoningEffort::None);
+                if !model_takes_adaptive_thinking(&self.model)
+                    || thinking_off_accepted(&self.model, Effort::Low)
+                {
+                    Quiet::Off
+                } else {
+                    Quiet::Least
+                }
+            },
+            Dialect::OpenAi => match self.reasoning_facts() {
+                None    => Quiet::Unknown,
+                Some(f) => {
+                    self.quiet = f.least();
+                    match self.quiet {
+                        Some(ReasoningEffort::None) => Quiet::Off,
+                        _                           => Quiet::Least,
+                    }
+                },
+            },
+        }
+    }
+
+    /// Ask this client's model for reasoning off on its next calls, whatever anything else
+    /// says: the fold's one retry once reasoning used up its cap.
+    pub fn reasoning_off(&mut self) {
+        self.quiet = Some(ReasoningEffort::None);
     }
 
     /// The thinking blocks held for `id`, or none when no held turn produced
@@ -4633,6 +4775,10 @@ pub(crate) fn parse_usage(json: &str) -> Option<Usage> {
     // What the provider actually drew.  This is money, not an estimate, and it
     // supersedes anything the price table would have guessed.
     if let Some(c) = extract_json_f64(&usage, "cost") { u.cost_usd = c; }
+    u.reasoning = match find_json_object(&usage, "completion_tokens_details") {
+        Some(d) => extract_json_number(&d, "reasoning_tokens").unwrap_or(0),
+        None    => 0,
+    };
     Some(u)
 }
 
@@ -6129,6 +6275,7 @@ impl StreamAcc {
             shape:             ReplyShape::Plain,
             gen_id:               self.gen_id,
             finish_reason:        self.finish_reason,
+            reasoning_tokens:     self.usage.reasoning,
             native_finish_reason: self.native_finish_reason,
             provider:             self.provider,
             // Set by `stream_turn` from the `StreamOutcome`; zero on a whole reply.
@@ -6276,6 +6423,8 @@ impl AnthUsage {
             // Anthropic bills against an account and reports no per-call cost,
             // so this stays zero and the price table answers instead.
             cost_usd:   0.0,
+            // Thinking is inside `output` and not counted apart.
+            reasoning:  0,
         }
     }
 }
@@ -6507,6 +6656,7 @@ impl AnthropicAcc {
             // The Anthropic dialect carries none of these; see `ChatOnceResponse`.
             gen_id:               String::new(),
             finish_reason:        String::new(),
+            reasoning_tokens:     0,
             native_finish_reason: String::new(),
             provider:             String::new(),
             // Set by `stream_turn` from the `StreamOutcome`; zero on a whole reply.

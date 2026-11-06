@@ -129,6 +129,14 @@ async function main() {
 		&& Array.isArray(synced['acme/three'].efforts) && synced['acme/three'].efforts.join(',') === 'low,medium,high',
 		JSON.stringify(synced && synced['acme/three']));
 	check('and a levels-only row', !!synced && !!synced['acme/levels-only']);
+	// U89: whether reasoning is mandatory is kept and synced, and the engine's facts lines say so.
+	check('mandatory is kept', (M.effortsFor('or', 'acme/three') || {}).mandatory === true
+		&& (M.effortsFor('or', 'acme/levels-only') || {}).mandatory === false);
+	check('the sync copy carries mandatory', !!synced && synced['acme/three'].reasonMust === true
+		&& !('reasonMust' in synced['acme/levels-only']));
+	const lines = M.reasoningLines('or', ['acme/three', 'acme/levels-only', 'deepseek/deepseek-chat', 'acme/absent']);
+	check('the facts lines name each model the catalogue says something of',
+		lines === 'acme/three\t1\tlow,medium,high\nacme/levels-only\t0\tlow,high', JSON.stringify(lines));
 
 	console.log('(c) a model change keeps a level the new model has and clears one it has not');
 	const keep = M.effortAfterSwitch('low', 'or', 'z-ai/glm-5.3');
@@ -150,11 +158,14 @@ async function main() {
 		return at < 0 || end < 0 ? null : src.slice(at, end + 4);
 	};
 	const applySrc = lift('applyEffort');
-	check('applyEffort is defined in daimond.js', !!applySrc);
-	if (applySrc) {
+	const factsSrc = lift('applyReasoningFacts');
+	check('applyEffort and applyReasoningFacts are defined in daimond.js', !!applySrc && !!factsSrc);
+	if (applySrc && factsSrc) {
 		const sent = [];
-		const run = (effort, app, levels) => new Function('DaimondModels', applySrc + '\nreturn applyEffort;')(
-			{ effortsFor: () => (levels ? { levels: levels, dflt: '' } : null) })(app, 'or', 'm', effort);
+		const run = (effort, app, levels) => new Function('DaimondModels',
+			applySrc + '\n' + factsSrc + '\nreturn applyEffort;')(
+			{ effortsFor: () => (levels ? { levels: levels, dflt: '' } : null),
+				reasoningLines: () => '' })(app, 'or', 'm', effort);
 		const app = { set_reasoning_effort: (e) => sent.push(e) };
 		run('low', app, ['low', 'medium', 'high']);
 		run('', app, ['low', 'medium', 'high']);
@@ -166,6 +177,13 @@ async function main() {
 		try { run('low', {}, ['low']); run('low', null, ['low']); run('low', { set_reasoning_effort: () => { throw new Error('old'); } }, ['low']); }
 		catch (e) { threw = true; }
 		check('an older engine with no setter, or one that throws, is no error', !threw);
+		// U89: what the catalogue says of the model's reasoning reaches the engine with the level.
+		const facts = [];
+		new Function('DaimondModels', applySrc + '\n' + factsSrc + '\nreturn applyEffort;')(
+			{ effortsFor: () => null, reasoningLines: (p, ms) => ms.join(',') === 'm' ? 'm\t1\tlow' : '' })(
+			{ set_reasoning_effort: () => {}, set_reasoning_facts: (l) => facts.push(l) }, 'or', 'm', '');
+		check('the model\u2019s reasoning facts are handed to the engine', facts.join('|') === 'm\t1\tlow',
+			JSON.stringify(facts));
 	}
 	const calls = src.split('applyEffort(').length - 2;
 	// Less U5b's kept-engine refresh (ensureApp): it re-sends the stored routing on an engine already set up for this

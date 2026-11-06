@@ -1252,6 +1252,18 @@ export function applyEffort(app, providerId, model, effort) {
 	try { f = DaimondModels.effortsFor(providerId || '', model || ''); } catch (e) { /* no store yet */ }
 	var e = (effort && f && f.levels.indexOf(effort) >= 0) ? effort : '';
 	try { app.set_reasoning_effort(e); } catch (x) { /* an older wasm build has no setter */ }
+	applyReasoningFacts(app, providerId, [model]);
+}
+
+/// Hand the engine what the catalogue says of `models`' reasoning, so the fold can turn it
+/// down as far as each allows and size its cap to what is left (`Agent::summarise`).
+function applyReasoningFacts(app, provider, models) {
+	if (!app || typeof app.set_reasoning_facts !== 'function') return;
+	var lines = '';
+	try { lines = DaimondModels.reasoningLines(provider || '', models); } catch (e) { /* no store yet */ }
+	if (lines) {
+		try { app.set_reasoning_facts(lines); } catch (x) { /* an older wasm build has no setter */ }
+	}
 }
 
 /// Choose what folds a conversation (Summarising): `''` for the conversation's own model.
@@ -1323,6 +1335,7 @@ export function applyFoldSettings(app, provider) {
 			app.set_fold_model(foldModelFor(provider));
 		}
 	} catch (e) { /* an older wasm build has no setter */ }
+	applyReasoningFacts(app, provider, [foldModelFor(provider)]);
 	// And the engines a PDF or picture is read on (P2.5d), the gateway's as `/api/policy` served
 	// them; none served is '{}', which the engine reads as its own figures.
 	try {

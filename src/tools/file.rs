@@ -1082,6 +1082,38 @@ pub(crate) async fn orientation_tree<H: Host>(ctx: &ToolContext<H>, cwd: &str, b
     orientation_tree_note(cwd, &nodes, 3, &recent_paths)
 }
 
+/// Does the diamond's own folder hold a Typst source?  Walked within one [`WalkBudget`], hidden
+/// folders skipped; a walk the budget stops answers no.
+pub(crate) async fn holds_typst<H: Host>(ctx: &ToolContext<H>) -> bool {
+    let own = match normalise(&ctx.path_prefix) {
+        p if p.is_empty()   => normalise(ctx.workspace.base()),
+        p                   => p,
+    };
+    let mut budget = WalkBudget::new();
+    let mut todo = vec![own];
+    while let Some(dir) = todo.pop() {
+        let entries = match ctx.host().fs().list_dir(ctx.root, &dir).await {
+            Ok(e)   => e,
+            Err(_)  => continue,
+        };
+        for (name, is_dir, _) in entries {
+            if !budget.spend(&dir) {
+                return false;
+            }
+            let name = name.trim_end_matches('/');
+            match (is_dir, name.starts_with('.')) {
+                (false, _)      => if name.ends_with(".typ") { return true; },
+                (true, false)   => todo.push(match dir.is_empty() {
+                    true    => name.to_string(),
+                    false   => fmt!("{}/{}", dir, name),
+                }),
+                (true, true)    => (),
+            }
+        }
+    }
+    false
+}
+
 /// A hand's listing, re-printed with the host inside each entry's parentheses.
 ///
 /// The hand answers with bare names and `name/` for a directory -- which is byte for byte what

@@ -912,6 +912,25 @@ export function dsEvent(kind, payload) {
 	} catch (e) { /* the feed must never break the app */ }
 }
 
+/// The debug feed's ONE `fold` event, whoever ran the fold: this tab (`src` 'tab', `f` the
+/// engine's `compacted` event) or a Kimberlite turn (`src` 'kimberlite', `f` its `fold_log`
+/// row). `where` is `{ chat, diamond }`, `diamond` '' for a chat outside one; `extra` the
+/// caller's own keys (turn, round, trigger, shape).
+export function dsFold(src, where, f, extra) {
+	var w = where || {}, dia = String(w.diamond || '');
+	var p = { chat: String(w.chat || ''), kind: dia ? 'diamond' : 'chat', diamond: dia, src: src,
+		model: String(f.model || ''), folded: f.folded | 0, kept: f.kept | 0,
+		summarised: f.summarised ? 1 : 0,
+		finish_reason: String(f.finish_reason || f.finish || ''),
+		completion_tokens: (f.completion_tokens || f.completion) | 0,
+		reasoning_tokens: (f.reasoning_tokens || f.reasoning) | 0,
+		reply_bytes: (f.reply_bytes || f.reply) | 0,
+		max_tokens: (f.max_tokens || f.cap) | 0,
+		retried: f.retried ? 1 : 0 };
+	Object.keys(extra || {}).forEach(function (k) { if (p[k] === undefined) p[k] = extra[k]; });
+	dsEvent('fold', p);
+}
+
 export function install() { // page-split: install
 	// page-split: install 9
 
@@ -1019,6 +1038,13 @@ export function install() { // page-split: install
 			logRows: function (turn, daimon, n, change, plainMax) {
 				return call(function () {
 					return JSON.parse(Sbj.log_rows(turn, daimon || '', n, JSON.stringify(change), plainMax));
+				});
+			},
+			/// A row the door refused alone as too large, cut again within `plainMax`: a whole
+			/// body as `logRows` cuts it, a piece into smaller pieces. `[{head, body}]`.
+			logRecut: function (head, body, plainMax) {
+				return call(function () {
+					return JSON.parse(Sbj.log_recut(JSON.stringify(head), JSON.stringify(body), plainMax));
 				});
 			},
 			/// Seal bytes to a list of 32-byte X25519 public keys (DPS1).

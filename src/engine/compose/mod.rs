@@ -270,6 +270,10 @@ pub async fn briefing<H: Host>(llm: &LlmClient, registry: &ToolRegistry<H>, toda
             &registry.ctx, &registry.ctx.cwd, &registry.ctx.no_write).await;
         blocks.set(Block::Tree, &note);
     }
+    // A diamond holding Typst sources has its compiler in hand, never behind `tool_search`.
+    if registry.tools.contains(&Tool::TypstCompile) {
+        registry.set_typst_here(crate::tools::holds_typst(&registry.ctx).await);
+    }
     // What the account has NOT bought, since those tools are not in the request at all.
     if let Some(packs) = registry.locked_pack_note() {
         blocks.set(Block::Packs, &packs);

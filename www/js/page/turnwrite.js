@@ -28,6 +28,7 @@ var _timer    = null;
 var _flushing = null;
 var _loaded   = false;
 var _serial   = Promise.resolve();	// the chain `serial` runs looks and cuts on
+var _faulted  = {};		// turn id -> its row fault already said
 var _readerEnded = null;	// the reader's `(chat, turn) -> ended?` (`readerEnded`)
 
 /// The page's own codec, key, door and storage, or the ones a test configured.
@@ -46,6 +47,10 @@ function deps() {
 			try { w.dispatchEvent(new CustomEvent('daimond:turnlog-ended', { detail: { chat: chat, turn: turn } })); }
 			catch (e) { /* nothing listens */ }
 		},
+		onFault: function (chat, turn, why) {
+			try { w.dispatchEvent(new CustomEvent('daimond:turnlog-fault', { detail: { chat: chat, turn: turn, why: why } })); }
+			catch (e) { /* nothing listens */ }
+		},
 		onLanded: function (chat, head) {
 			try { w.dispatchEvent(new CustomEvent('daimond:turnlog-landed', { detail: { chat: chat, head: head } })); }
 			catch (e) { /* nothing listens */ }
@@ -57,7 +62,7 @@ function deps() {
 /// at install); `null` returns to window's. Forgets every turn and row held.
 export function configureTurnLog(d) {
 	_deps = d || null;
-	_turns = {}; _queue = []; _limits = { rowMax: 0, batchMax: 0, flushMs: 0 };
+	_turns = {}; _queue = []; _faulted = {}; _limits = { rowMax: 0, batchMax: 0, flushMs: 0 };
 	_foreign = {};
 	_sealOver = -1; _loaded = false; _flushing = null; _serial = Promise.resolve();
 	if (_timer) { clearTimeout(_timer); _timer = null; }
@@ -174,9 +179,22 @@ async function lookTurn(turn, end) {
 	if (!t || t.ended || (t.writer && t.writer.ended) || !(t.due || end)) return;
 	t.due = false;
 	t.looked = true;
-	var got = await deps().bridge.logDiff(t.writer, t.msgs, end);
-	t.writer = got.writer;
-	await queueChanges(t, turn, got.changes);
+	try {
+		var got = await deps().bridge.logDiff(t.writer, t.msgs, end);
+		t.writer = got.writer;
+		await queueChanges(t, turn, got.changes);
+	} catch (e) {
+		fault(t.chat, turn, e);
+	}
+}
+
+/// A row this device could not write, said on its turn once (`onFault`). The look runs off the
+/// flush timer too, so a throw here would otherwise surface as an unhandled rejection.
+function fault(chat, turn, e) {
+	if (_faulted[turn]) return;
+	_faulted[turn] = true;
+	var why = String(e && e.message || e);
+	try { deps().onFault(chat, turn, why); } catch (x) { /* the next look says it again */ }
 }
 
 /// Every turn's look and every outbox cut, one at a time: a writer and its row numbers are
@@ -318,7 +336,10 @@ export async function flushTurnLog() {
 			} else if (st === 413 && k > 1) {
 				cap = Math.max(1, Math.floor(k / 2));
 			} else if (st === 413) {
-				if (!(await serial(recutFront))) {
+				var cut = false;
+				try { cut = await serial(recutFront); }
+				catch (e) { fault(_queue[0].chat, _queue[0].turn, e); }
+				if (!cut) {
 					// A row too large that cannot be cut is dropped, never left to wedge the log.
 					_queue.shift();
 				}
@@ -346,8 +367,8 @@ async function recutFront() {
 	if (_queue.some(function (q) { return q.turn === f.turn && q.tried; })) return false;
 	var d = deps();
 	var plain = (await d.bridge.rowSeal(f.head, f.body)).length;
-	var rows = await d.bridge.logRows(f.turn, f.head.daimon || '', f.head.n,
-		{ kind: f.head.kind, body: f.body }, Math.floor(plain / 2));
+	var rows = await d.bridge.logRecut(f.head, f.body, Math.floor(plain / 2));
+	if (rows.length < 2) return false;
 	var shift = rows.length - 1;
 	var later = _queue.slice(1);
 	for (var i = 0; i < later.length; i++) {

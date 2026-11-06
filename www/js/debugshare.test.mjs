@@ -1783,6 +1783,7 @@ async function main() {
 			// A round goes through the turn's `roundFeed` (Q8b), not a bare `dsEvent`.
 			check('runSteer emits ' + kind, kind === 'round'
 				? /rounds = dsRounds\(\)/.test(body) && body.indexOf('rounds.add({') !== -1
+				: kind === 'fold' ? body.indexOf("dsFold('tab'") !== -1	// the one fold event (U89)
 				: body.indexOf("dsEvent('" + kind + "'") !== -1);
 		}
 		// BOTH exits, because `doSteer` has no `finally`: a failure before the turn and

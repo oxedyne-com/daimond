@@ -1459,7 +1459,10 @@
 			var sees = sightOf(m);
 			var eff  = effortsOf(m);
 			var nm   = nameOf(m, mid);
-			if (!mid || (!rr && sees === null && !eff && !nm)) return;
+			// Whether the model always reasons: a fold asked to stop it would be refused, so
+			// its output cap has to hold the reasoning as well (`Agent::summarise`).
+			var must = !!(m.reasoning && typeof m.reasoning === 'object' && m.reasoning.mandatory === true);
+			if (!mid || (!rr && sees === null && !eff && !nm && !must)) return;
 			// The pictures flag, the Effort levels and the catalogue's own name for the model
 			// ride the rates row, so they are stored, merged and synced with them.
 			var row = rr || {};
@@ -1469,6 +1472,7 @@
 				row.efforts = eff.levels;
 				if (eff.dflt) row.effortDefault = eff.dflt;
 			}
+			if (must) row.reasonMust = true;
 			rates[mid] = row;
 		});
 		var p = store.providers[id];
@@ -1653,7 +1657,25 @@
 		if (!p || !p.rates) return null;
 		var r = p.rates[model];
 		if (!r || !Array.isArray(r.efforts) || !r.efforts.length) return null;
-		return { levels: r.efforts.slice(), dflt: typeof r.effortDefault === 'string' ? r.effortDefault : '' };
+		return { levels: r.efforts.slice(), dflt: typeof r.effortDefault === 'string' ? r.effortDefault : '',
+			mandatory: r.reasonMust === true };
+	}
+
+	/// What `provider`'s catalogue says of each of `models`' reasoning, as the engine's
+	/// `set_reasoning_facts` reads it: one line per model it says anything of,
+	/// `<model>\t<1|0>\t<level,level>`, the middle field whether reasoning is mandatory.
+	function reasoningLines(provider, models) {
+		var p = store.providers[provider];
+		if (!p || !p.rates) return '';
+		var out = [];
+		(models || []).forEach(function (mid) {
+			var r = mid && p.rates[mid];
+			if (!r) return;
+			var lv = Array.isArray(r.efforts) ? r.efforts : [];
+			if (!lv.length && r.reasonMust !== true) return;
+			out.push(mid + '\t' + (r.reasonMust === true ? '1' : '0') + '\t' + lv.join(','));
+		});
+		return out.join('\n');
 	}
 
 	/// A chat's Effort after its model changes: kept when the new model offers it, cleared
@@ -3041,7 +3063,8 @@
 			var sighted = !!r && typeof r.sees === 'boolean';
 			var levelled = !!r && Array.isArray(r.efforts) && r.efforts.length > 0;
 			var named = !!r && typeof r.name === 'string' && r.name !== '';
-			if (!priced && !sighted && !levelled && !named) return;
+			var must = !!r && r.reasonMust === true;
+			if (!priced && !sighted && !levelled && !named && !must) return;
 			var row = priced ? { in: r.in, out: r.out } : {};
 			if (named) row.name = r.name;
 			if (priced && typeof r.cached === 'number') row.cached = r.cached;
@@ -3052,6 +3075,7 @@
 				row.efforts = r.efforts.map(String);
 				if (typeof r.effortDefault === 'string' && r.effortDefault) row.effortDefault = r.effortDefault;
 			}
+			if (must) row.reasonMust = true;
 			out[mid] = row;
 			n++;
 		});
@@ -5290,6 +5314,7 @@
 		// A model's own reasoning levels, which the chat's Effort is drawn from.
 		effortsOf:      effortsOf,
 		effortsFor:     effortsFor,
+		reasoningLines: reasoningLines,
 		effortAfterSwitch: effortAfterSwitch,
 		effortClamp:    effortClamp,
 		effortInForce:  effortInForce,

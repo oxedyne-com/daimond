@@ -139,6 +139,7 @@ pub struct TurnLimits {
     pub fold_model:     String,	// the effective Summarising model on the turn's provider
     pub fold_prompt:    String,	// the person's `prompts/compactor.md`
     pub tune:           String,	// the tune JSON; `Agent::set_tune`
+    pub reasoning:      String,	// catalogue reasoning facts; `Agent::set_reasoning_facts`
     pub ocr:            OcrConf,	// the gateway's OCR engines and figures; `Agent::set_ocr`
 }
 
@@ -167,6 +168,7 @@ impl TurnLimits {
             fold_model:     text(m, "foldModel"),
             fold_prompt:    text(m, "foldPrompt"),
             tune:           text(m, "tune"),
+            reasoning:      text(m, "reasoning"),
             ocr:            m.get(&key("ocr")).map(OcrConf::of_dat).unwrap_or_default(),
         })
     }
@@ -182,6 +184,10 @@ impl TurnLimits {
         d.insert(key("foldModel"), Dat::Str(self.fold_model.clone()));
         d.insert(key("foldPrompt"), Dat::Str(self.fold_prompt.clone()));
         d.insert(key("tune"), Dat::Str(self.tune.clone()));
+        // Absent when empty, so an errand from a page without the catalogue reads byte-equal.
+        if !self.reasoning.is_empty() {
+            d.insert(key("reasoning"), Dat::Str(self.reasoning.clone()));
+        }
         d.insert(key("ocr"), self.ocr.to_dat());
         Dat::Map(d)
     }
@@ -199,6 +205,7 @@ impl TurnLimits {
         agent.set_fold_model(&self.fold_model);
         agent.set_fold_prompt(&self.fold_prompt);
         agent.set_ocr(&self.ocr);
+        agent.set_reasoning_facts(&self.reasoning);
         agent.set_tune(&self.tune)
     }
 }

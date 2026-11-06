@@ -1315,6 +1315,13 @@ impl DaimondApp {
         self.agent.set_provider_routing(&order, &ignore, only);
     }
 
+    /// Tell the engine what each model's catalogue entry says of its reasoning, one line a
+    /// model (`<model>\t<1|0 mandatory>\t<levels>`; see `ReasoningFacts::parse_lines`), so a fold
+    /// can turn its own reasoning off where the model allows it (U89).
+    pub fn set_reasoning_facts(&self, lines: String) {
+        self.agent.set_reasoning_facts(&lines);
+    }
+
     /// Ask this app's model for a reasoning level, by OpenRouter's spelling (`low`, `high`
     /// ...), or pass an empty string for the model's own default.  The page offers only the
     /// levels the model's catalogue entry names; see `LlmClient::set_reasoning_effort`.
@@ -1626,6 +1633,7 @@ impl DaimondApp {
             \"standing\":{},\"briefing_top3\":{},\"task_log\":{},\"tail_note\":{},\
             \"thinking\":\"{}\",\"effort\":\"{}\",\
             \"stream_idle_ms\":{},\
+            \"fold_max_tokens\":{},\"fold_max_tokens_structured\":{},\"fold_reasoning_reserve\":{},\
             \"fold_shape\":\"{}\",\"family\":\"{}\",\"claude_names\":{}}}",
             l.worker, l.max_rounds, l.max_continuations, l.context_cap, l.keep, l.spend_cap_usd,
             l.fold_at, l.retire_prior,
@@ -1638,6 +1646,7 @@ impl DaimondApp {
             l.standing_files, l.briefing_top3, l.task_log, l.tail_note,
             l.thinking.wire(), l.effort.wire(),
             l.stream_idle_ms,
+            l.fold_max_tokens, l.fold_max_tokens_structured, l.fold_reasoning_reserve,
             l.fold_shape.wire(),
             self.registry().family().name(), self.registry().claude_names())
     }
@@ -4614,7 +4623,7 @@ pub(crate) fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("type", &JsValue::from_str("interjected"));
             set("content", &JsValue::from_str(text));
         }
-        AgentEvent::Compacted { folded, kept, note, structured, model, sp, cut, summarised } => {
+        AgentEvent::Compacted { folded, kept, note, structured, model, sp, cut, summarised, call } => {
             set("type", &JsValue::from_str("compacted"));
             set("cut", &JsValue::from_f64(*cut as f64));
             set("summarised", &JsValue::from_bool(*summarised));
@@ -4630,6 +4639,15 @@ pub(crate) fn event_to_js(ev: &AgentEvent) -> JsValue {
             // count it. A structured fold that quietly stopped parsing would otherwise show as
             // an ordinary fold for ever, which is the reading the measurement most needs.
             set("shape", &JsValue::from_str(if *structured { "structured" } else { "prose" }));
+            // WHAT THE SUMMARISING CALL CAME BACK WITH (U89), so a summary that failed says why.
+            if let Some(c) = call {
+                set("finish_reason", &JsValue::from_str(&c.finish_reason));
+                set("completion_tokens", &JsValue::from_f64(c.completion_tokens as f64));
+                set("reasoning_tokens", &JsValue::from_f64(c.reasoning_tokens as f64));
+                set("reply_bytes", &JsValue::from_f64(c.reply_bytes as f64));
+                set("max_tokens", &JsValue::from_f64(c.max_tokens as f64));
+                set("retried", &JsValue::from_bool(c.retried));
+            }
         }
         AgentEvent::Unseeable { images, model, source } => {
             set("type", &JsValue::from_str("unseeable"));

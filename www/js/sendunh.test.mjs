@@ -193,7 +193,7 @@ const BREAKS = {
 	claimedrow:  ['{ who = peerLeaseClaimed(rt); }', "{ who = peerLeaseHeld(rt) ? String(DaimondLease.holder(rt) || '') || '?' : ''; }"],
 	skewclock: ['return DaimondPeer.uiState(m, lease, report, selfDeviceId(), leaseClockNow(), ask,', 'return DaimondPeer.uiState(m, lease, report, selfDeviceId(), Date.now(), ask,'],
 	settledredraw: ["else if (why === 'held' || why === 'settled' || (took && took.holder)) {", "else if (why === 'held' || (took && took.holder)) {"],
-	refwhy:   ["'the runner refused it before the run' + refWhy", "'the runner refused it before the run'"],
+	refwhy:   ["'Kimberlite refused it before the run' + refWhy", "'Kimberlite refused it before the run'"],
 	// The sticky store killrunner found: the runner last drawn pressed, kept until Here is pressed.
 	sticky:   [["if (shown === undefined) { try { shown = seatDrawnRunner(chat); }",
 			"if (shown === undefined) { try { shown = (seatDrawnRunner(chat), _seatSticky[String(chat.id || '')]); }"],

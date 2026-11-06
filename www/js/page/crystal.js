@@ -2,7 +2,7 @@
 import { Wasm } from './wasm.js';
 import { _diamondIdle, _steerApp, _steerDetached, crystalBody, crystalControls, crystalRunning,
 	daimonOnScreen, diamondBusy, pg } from './state.js';
-import { dsEvent, friendlyError, t, tn } from './util.js';
+import { dsEvent, dsFold, friendlyError, t, tn } from './util.js';
 import { ChatStore, bumpDiamonds, endedHow, newMid, persistChats, touchChat, touchMsg } from './chatstore.js';
 import { _liveMid, _liveProd, _liveTurn, _turnRun, beginTurnRun, noteHerePrompt, selfDeviceId } from './handoff.js';
 import { clearComposer, confirmHold, daimonPrior, foldFrom, landFailedTurn, sessionMarker,
@@ -4339,9 +4339,8 @@ async function runSteerHeld(f, presetArg, depthArg, detached, how, held, models)
 			// TRAINING WHEELS — the debug feed's `fold`, the daimon's half. REAL, so
 			// the feed's own drop-inference stands down for this turn.
 			// Shortening alone (`folded` 0) is told to the user but is not a fold.
-			if (ev.folded | 0) dsEvent('fold', { turn: String(dumid), r: callN, folded: ev.folded || 0,
-				kept: ev.kept || 0, trigger: 'real', dia: 1, shape: ev.shape || 'prose',
-				cut: ev.cut | 0, summarised: ev.summarised ? 1 : 0 });
+			if (ev.folded | 0) dsFold('tab', { chat: rec.id, diamond: diamondId || '' }, ev, { turn: String(dumid),
+				r: callN, trigger: 'real', dia: 1, shape: ev.shape || 'prose', cut: ev.cut | 0 });
 			try { if (window.DEBUG_SHARE && DEBUG_SHARE.noteRealFold) DEBUG_SHARE.noteRealFold(String(dumid)); }
 			catch (e) { /* the feed must never break a turn */ }
 			// The fold notes2 asks for by name: *"automatically and visibly folded at

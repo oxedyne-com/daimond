@@ -1571,6 +1571,18 @@ pub fn pair_up(msgs: Vec<ChatMessage>) -> Vec<ChatMessage> {
 // │ Agent events                                                   │
 // └───────────────────────────────────────────────────────────────┘
 
+/// What a fold's summarising call came back with, so a summary that failed can be read from
+/// the record afterwards (U89: a reasoning model spent the cap on thinking and nothing said so).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FoldCall {
+    pub finish_reason:     String,  // the wire's word; empty on the Anthropic dialect
+    pub completion_tokens: u64,
+    pub reasoning_tokens:  u64,     // of the completion; zero where the provider says nothing
+    pub reply_bytes:       u64,     // the answer's own length, before any cut
+    pub max_tokens:        u32,     // the output cap the call was sent with
+    pub retried:           bool,    // asked again with reasoning off, once
+}
+
 /// Events emitted by the agent loop, sent to the client over WS.
 #[derive(Clone, Debug)]
 pub enum AgentEvent {
@@ -1610,7 +1622,8 @@ pub enum AgentEvent {
     /// compactor's instructions -- and are empty where the fold shortened without summarising.
     ///
     /// `cut` is where the fold cut and `summarised` whether a summary was asked for, so the feed
-    /// can tell a fold that freed the history from one that re-summarised a note.
+    /// can tell a fold that freed the history from one that re-summarised a note.  `call` is what
+    /// the summarising call came back with, where one was made (U89).
     Compacted {
         folded:     usize,
         kept:       usize,
@@ -1620,6 +1633,7 @@ pub enum AgentEvent {
         sp:         String,
         cut:        usize,
         summarised: bool,
+        call:       Option<FoldCall>,
     },
     /// A picture could not be put in front of this model.
     ///
@@ -1864,7 +1878,7 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("interjected"));
                 m.insert(dat!("content"), dat!(text.clone()));
             }
-            Self::Compacted { folded, kept, note, model, sp, cut, summarised, .. } => {
+            Self::Compacted { folded, kept, note, model, sp, cut, summarised, call, .. } => {
                 m.insert(dat!("type"), dat!("compacted"));
                 m.insert(dat!("cut"), Dat::U64(*cut as u64));
                 m.insert(dat!("summarised"), Dat::Bool(*summarised));
@@ -1874,6 +1888,14 @@ impl AgentEvent {
                 if !model.is_empty() {
                     m.insert(dat!("model"), dat!(model.clone()));
                     m.insert(dat!("sp"), dat!(sp.clone()));
+                }
+                if let Some(c) = call {
+                    m.insert(dat!("finish_reason"), dat!(c.finish_reason.clone()));
+                    m.insert(dat!("completion_tokens"), Dat::U64(c.completion_tokens));
+                    m.insert(dat!("reasoning_tokens"), Dat::U64(c.reasoning_tokens));
+                    m.insert(dat!("reply_bytes"), Dat::U64(c.reply_bytes));
+                    m.insert(dat!("max_tokens"), Dat::U64(c.max_tokens as u64));
+                    m.insert(dat!("retried"), Dat::Bool(c.retried));
                 }
             }
             Self::Unseeable { images, model, source } => {

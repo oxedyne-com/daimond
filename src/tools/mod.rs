@@ -92,6 +92,10 @@ mod spawn_context_tests;
 mod tests;
 
 #[cfg(test)]
+#[path = "../../tests/unit/tools/tool_search_loop.rs"]
+mod tool_search_loop;
+
+#[cfg(test)]
 #[path = "../../tests/unit/tools/no_wasm_memory_views.rs"]
 mod no_wasm_memory_views;
 

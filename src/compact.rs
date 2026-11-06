@@ -364,7 +364,8 @@ pub const IMAGE_TOKEN_CAP: u64 = 4_784;
 /// runaway figure.
 const FALLBACK_IMAGE_TOKENS_PER_BYTE: f64 = 0.05;
 
-/// Tokens the summarising call may generate.
+/// Tokens the summarising call may generate, by default: [`Limits::fold_max_tokens`] holds the
+/// figure in use, which the tune (`fold_max_tokens`) moves.
 ///
 /// The CONTEXT fold's, and only that one -- it is set on the client where the summarising
 /// call is made in `agent.rs` and nowhere else.  Nothing caps what the crystal reducer
@@ -406,7 +407,20 @@ pub fn cut_short(text: &str) -> Option<String> {
 	Some(fmt!("{}\n\n{}", kept, CUT_SHORT_NOTE))
 }
 
-/// Tokens the summarising call may generate when it is asked for the structured shape.
+/// A summary longer than `most` bytes, trimmed back to its last whole sentence within them and
+/// marked as [`cut_short`] marks one; `None` where not one sentence ended inside them.  For a
+/// call whose output cap was raised for reasoning, so the cap no longer holds the answer (U89).
+pub fn cut_within(text: &str, most: usize) -> Option<String> {
+	let mut end = most.min(text.len());
+	while end > 0 && !text.is_char_boundary(end) {
+		end -= 1;
+	}
+	cut_short(&text[..end])
+}
+
+/// Tokens the summarising call may generate when it is asked for the structured shape, by
+/// default: [`Limits::fold_max_tokens_structured`] holds the figure in use (tune key
+/// `fold_max_tokens_structured`).
 ///
 /// Seven headings with bullets under each need more room than a paragraph of prose, and running
 /// out is not a smaller note: it is a note cut mid-sentence.  The layout puts `## Task` and
@@ -414,6 +428,13 @@ pub fn cut_short(text: &str) -> Option<String> {
 /// already carries -- but the budget is raised as well, because relying on the ordering alone
 /// would be relying on a model to write the important part first every time.
 pub const FOLD_MAX_TOKENS_STRUCTURED: u32 = 2_000;
+
+/// Tokens added to a summarising call's output cap for reasoning the model cannot be asked to
+/// leave out, by default: [`Limits::fold_reasoning_reserve`] holds the figure in use (tune key
+/// `fold_reasoning_reserve`).  Reasoning counts against the cap, so an ask sized for the answer
+/// alone was spent on thinking and the summary cut before one sentence ended (U89); the answer's
+/// own length is then held by the prompt's word count and measured afterwards.
+pub const FOLD_REASONING_RESERVE: u32 = 8_000;
 
 /// Which shape the compactor is asked to write in.
 ///
@@ -442,14 +463,6 @@ impl FoldShape {
 			"structured" => Some(Self::Structured),
 			"prose"      => Some(Self::Prose),
 			_            => None,
-		}
-	}
-
-	/// Tokens the summarising call may generate under this shape.
-	pub fn max_tokens(self) -> u32 {
-		match self {
-			Self::Structured => FOLD_MAX_TOKENS_STRUCTURED,
-			Self::Prose      => FOLD_MAX_TOKENS,
 		}
 	}
 }
@@ -484,6 +497,10 @@ pub struct Limits {
 	pub fold_model: String,
 	/// Which shape the compactor is asked to write its note in.
 	pub fold_shape: FoldShape,
+	// The summarising call's output, as data
+	pub fold_max_tokens:            u32,	// prose; see `FOLD_MAX_TOKENS`
+	pub fold_max_tokens_structured: u32,	// structured; see `FOLD_MAX_TOKENS_STRUCTURED`
+	pub fold_reasoning_reserve:     u32,	// see `FOLD_REASONING_RESERVE`
 	// A worker's ceiling
 	pub worker:     bool,	// held to the worker figures, which a user setting may lower only
 
@@ -576,6 +593,9 @@ impl Default for Limits {
 			keep:       KEEP,
 			fold_model: String::new(),
 			fold_shape: FoldShape::Structured,
+			fold_max_tokens:            FOLD_MAX_TOKENS,
+			fold_max_tokens_structured: FOLD_MAX_TOKENS_STRUCTURED,
+			fold_reasoning_reserve:     FOLD_REASONING_RESERVE,
 			worker:     false,
 			retire_prior: true,
 			retire_keep_turns: RETIRE_KEEP_TURNS,
@@ -609,6 +629,14 @@ impl Default for Limits {
 }
 
 impl Limits {
+
+	/// Tokens of answer the summarising call may write under `shape`.
+	pub fn fold_cap(&self, shape: FoldShape) -> u32 {
+		match shape {
+			FoldShape::Structured => self.fold_max_tokens_structured,
+			FoldShape::Prose      => self.fold_max_tokens,
+		}
+	}
 
 	/// Tokens past which old tool results are retired: [`RETIRE_AT`] of [`Limits::budget`], so the
 	/// line moves with the fold point and always sits under it.

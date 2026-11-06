@@ -36,18 +36,20 @@ async function rig(share) {
 		rowWire: (h, s) => JSON.parse(m.row_wire(JSON.stringify(h), s)),
 		logDiff: (w, msgs, end) => JSON.parse(m.log_diff(JSON.stringify(w || {}), JSON.stringify(msgs), end ? JSON.stringify(end) : '')),
 		logRows: (t, d, n, c, p) => JSON.parse(m.log_rows(t, d || '', n, JSON.stringify(c), p)),
+		logRecut: (h, b, p) => JSON.parse(m.log_recut(JSON.stringify(h), JSON.stringify(b), p)),
 	};
 	// The gateway's log (chatlog.rs `chatlog_append`): (turn, n) taken once, first end wins,
 	// 409 for rows after an end, and an end for an open turn under a number already held
 	// lands after the turn's last row.
 	const gw = share ? share.gw
-		: { up: true, rows: [], ended: {}, moved: {}, posts: 0, rowMax: 16384, batchMax: 262144, refuseBatchOver: Infinity, flushMs: 1, batches: [] };
+		: { up: true, rows: [], ended: {}, moved: {}, posts: 0, rowMax: 16384, batchMax: 262144, refuseBatchOver: Infinity, refuseRowOver: Infinity, flushMs: 1, batches: [] };
 	const append = async (chat, rows) => {
 		gw.posts++;
 		if (!gw.up) return { status: 0 };
 		const meta = { row_max: gw.rowMax, batch_max: gw.batchMax, flush_ms: gw.flushMs };
 		gw.batches.push(rows.length);
 		if (rows.length > gw.refuseBatchOver) return { status: 413, json: meta };
+		if (rows.some(r => String(r.body || '').length > gw.refuseRowOver)) return { status: 413, json: meta };
 		const last = (turn) => Math.max(0, ...gw.rows.filter(x => x.turn === turn).map(x => x.n));
 		const keep = [];
 		for (const r of rows) {
@@ -72,8 +74,9 @@ async function rig(share) {
 		return { status: 200, json: { ok: true, head: gw.rows.length, ...meta } };
 	};
 	let kept = [];
-	const ends = [], landed = [];
+	const ends = [], landed = [], faults = [];
 	tl.configureTurnLog({ bridge, wrap, append,
+		onFault: (chat, turn, why) => faults.push([chat, turn, why]),
 		store: { load: () => kept, save: (r) => { kept = JSON.parse(JSON.stringify(r)); } },
 		onEnded: (chat, turn) => ends.push(turn),
 		onLanded: (chat, head) => landed.push([chat, head]) });
@@ -87,7 +90,7 @@ async function rig(share) {
 		}
 		return view;
 	};
-	return { tl, gw, key, fold, ends, landed, kept: () => kept };
+	return { tl, gw, key, fold, ends, landed, faults, bridge, kept: () => kept };
 }
 
 test('a Here turn appends its rows on send and its end last', { skip }, async () => {
@@ -153,6 +156,65 @@ test('a 413 halves the batch and the rows still arrive in order', { skip }, asyn
 	const v = await fold('u4');
 	assert.equal(v.rows.length, 7);
 	assert.deepEqual(gw.rows.map(r => r.n), [1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
+// MSG-NOMID (06 Nov 06:33, turn mw446xdr-5-ys0nw): a 20 kB file_write call is an assistant row
+// over the door's row ceiling, so the engine cut it into pieces, and sealing its first piece
+// (kind `msg`, no `mid` of its own) threw "A 'msg' row's body names no message id (mid)." out
+// of the flush timer as an unhandled rejection.
+const bigCall = () => ({ mid: 'a6', role: 'assistant', content: '',
+	tool_calls: [{ id: 'c1', type: 'function', function: { name: 'file_write',
+		arguments: JSON.stringify({ path: 'reports/x.md', content: 'line of the report\n'.repeat(1100) }) } }] });
+
+test('a message over the row ceiling goes in pieces and folds back whole', { skip }, async () => {
+	const { tl, gw, fold, faults } = await rig();
+	const msgs = [{ mid: 'u6', role: 'user', content: 'write the report' }];
+	await tl.logTurn('c1', 'u6', tl.turnMessages(msgs, 'u6'));
+	msgs.push(bigCall());
+	await tl.logTurn('c1', 'u6', tl.turnMessages(msgs, 'u6'), { status: 'done' });
+	assert.deepEqual(faults, []);
+	assert.ok(gw.rows.filter(r => r.kind === 'more').length >= 1, 'the call went in pieces');
+	const v = await fold('u6');
+	assert.deepEqual(v.rows.map(r => r.mid), ['u6', 'a6']);
+	assert.deepEqual(v.rows[1].meta.tool_calls, bigCall().tool_calls, 'the call folds back whole');
+	assert.equal(v.end.status, 'done');
+});
+
+test('a piece the door refuses alone as too large is cut again and still folds whole', { skip }, async () => {
+	const { tl, gw, fold, faults } = await rig();
+	const msgs = [{ mid: 'u7', role: 'user', content: 'write the report' }];
+	await tl.logTurn('c1', 'u7', tl.turnMessages(msgs, 'u7'));
+	gw.refuseRowOver = 12000;
+	msgs.push(Object.assign(bigCall(), { mid: 'a7' }));
+	await tl.logTurn('c1', 'u7', tl.turnMessages(msgs, 'u7'), { status: 'done' });
+	assert.deepEqual(faults, []);
+	assert.equal(tl.turnLogPending(), 0);
+	const v = await fold('u7');
+	assert.deepEqual(v.rows.map(r => r.mid), ['u7', 'a7']);
+	assert.deepEqual(v.rows[1].meta.tool_calls, bigCall().tool_calls);
+	assert.equal(v.end.status, 'done');
+});
+
+test('a row fault on the flush timer reaches the turn in words, never as an unhandled rejection', { skip }, async () => {
+	const { tl, gw, faults, bridge } = await rig();
+	gw.flushMs = 20;
+	const msgs = [{ mid: 'u8', role: 'user', content: 'ask' }];
+	await tl.logTurn('c1', 'u8', tl.turnMessages(msgs, 'u8'));
+	const loose = [];
+	const catcher = (e) => loose.push(e);
+	process.on('unhandledRejection', catcher);
+	bridge.logRows = () => { throw new Error('A broken row.'); };
+	try {
+		msgs.push({ mid: 'a8', role: 'assistant', content: 'answer' });
+		await tl.logTurn('c1', 'u8', tl.turnMessages(msgs, 'u8'));
+		await new Promise(r => setTimeout(r, 80));
+	} finally {
+		process.off('unhandledRejection', catcher);
+	}
+	assert.deepEqual(loose, []);
+	assert.equal(faults.length, 1);
+	assert.deepEqual(faults[0].slice(0, 2), ['c1', 'u8']);
+	assert.match(faults[0][2], /A broken row\./);
 });
 
 test('streamed answer text goes once per flush_ms, not once per delta', { skip }, async () => {

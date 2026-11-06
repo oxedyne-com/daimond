@@ -500,6 +500,7 @@
 			tune:       text(l.tune),
 		};
 		if (ocr) out.ocr = ocr;
+		if (text(l.reasoning)) out.reasoning = text(l.reasoning);
 		return out;
 	}
 
