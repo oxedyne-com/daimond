@@ -3704,6 +3704,8 @@
 	'seat.tile_local_mobile': '在这里运行——请保持打开',
 	'seat.refused': '正在这里运行 · {name} 无法接手',
 	'seat.here': '这里',
+	'seat.kimberlite': 'Kimberlite',
+	'seat.kimberlite_on': '{host} 上的 Kimberlite',
 	'seat.switch': '下一轮在哪里运行',
 	'errand.prompt_too_large': '仅提示词就超过了中继允许的大小',
 	'errand.session_unsent': '无法为交接保存对话',

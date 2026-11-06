@@ -3714,6 +3714,8 @@
 	'seat.tile_local_mobile': '여기서 실행돼요 — 열어 두세요',
 	'seat.refused': '여기서 실행 중 · {name}이(가) 받을 수 없었어요',
 	'seat.here': '여기',
+	'seat.kimberlite': 'Kimberlite',
+	'seat.kimberlite_on': '{host}의 Kimberlite',
 	'seat.switch': '다음 차례가 실행될 곳',
 	'errand.prompt_too_large': '프롬프트만으로도 릴레이가 받아들일 수 있는 크기를 넘어요',
 	'errand.session_unsent': '인계를 위해 대화를 저장하지 못했어요',

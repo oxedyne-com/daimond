@@ -3674,6 +3674,8 @@
 	'seat.tile_local_mobile': 'Se ejecuta aquí — manténlo abierto',
 	'seat.refused': 'Ejecutando aquí · {name} no pudo aceptarlo',
 	'seat.here': 'Aquí',
+	'seat.kimberlite': 'Kimberlite',
+	'seat.kimberlite_on': 'Kimberlite en {host}',
 	'seat.switch': 'Dónde se ejecuta el próximo turno',
 	'errand.prompt_too_large': 'el propio mensaje es más grande de lo que el relay acepta',
 	'errand.session_unsent': 'no se pudo guardar la conversación para el traspaso',

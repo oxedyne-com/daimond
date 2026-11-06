@@ -175,14 +175,58 @@ svg { display: block; }
    takes the app's green; the keyframes, the timing and the rule are written once, here.
    (The lens's own stylesheet, injected by js/debugshare.js, no longer sets an animation,
    so nothing later in the cascade can undo the rule.) */
+/* THE PULSE RUNS ON THE COMPOSITOR, NOT THE PAGE (TAB-MEM-5D, 5 Nov 2026). It used to
+   animate `box-shadow`, which only the page's main thread can paint, so for as long as the
+   lens was on (all day, with debug sharing on) every frame re-ran style, pre-paint and a
+   repaint of the WHOLE document around it: 42 frames a second at ~18 ms each, 88% of a core,
+   on a tab doing nothing. So each icon holds a `.pulse-ring` span (debugshare.js builds the
+   lens's, index.html carries the sync icon's): a 44px box, 5px out from the icon's border
+   edge, clipped by a STATIC path to exactly the band the old shadow could reach (outside the
+   34px r8 icon, inside its full 5px spread, r13), so nothing is ever drawn inside the icon.
+   In it the old shadow's shape is built from pieces that each only SCALE: a shadow of
+   spread d is the icon's rounded square grown by d on every side, which is two crossed
+   bars (44px long, 18px wide, between the corners) and four corner discs (each about its
+   corner's centre, radius 8+d). Each bar scales along its length (34/44 -> 1) and each disc
+   about its own centre (8/13 -> 1), so at every instant they draw spread d = 5t exactly, and
+   the span fades the union as one (.55 -> 0, the colour's old alpha), so overlaps never
+   darken. Same stops, same easing as the old box-shadow keyframes: frame for frame the old
+   look. Only `transform` and `opacity` move, which the compositor animates with no
+   main-thread frame at all. dev/verify_idleframes.mjs holds it: an idle page draws no
+   main-thread frames. Never animate a paint property (box-shadow, background, width...) on
+   an infinite loop; www/js/paintloop.test.mjs refuses one anywhere in www. */
 @keyframes pulse-ring {
-	0%, 100% { box-shadow: 0 0 0 0 var(--pulse-from); }
-	50%      { box-shadow: 0 0 0 5px var(--pulse-to); }
+	/* fixed: .55, the alpha the old ring started at */
+	0%, 100% { opacity: .55; }
+	50%      { opacity: 0; }
 }
-.ds-indicator { --pulse-from: rgba(239, 68, 68, .55); --pulse-to: rgba(239, 68, 68, 0); }
-.ds-indicator, .sync-ico.on { animation: pulse-ring 1.6s ease-in-out infinite; }
+/* fixed: 34/44, a 44px bar (the 34px icon plus 5px a side) shrunk onto the icon's edge */
+@keyframes pulse-ring-x { 0%, 100% { transform: scaleX(.772727); } 50% { transform: scaleX(1); } }
+@keyframes pulse-ring-y { 0%, 100% { transform: scaleY(.772727); } 50% { transform: scaleY(1); } }
+/* fixed: 8/13, the icon's corner radius over the radius at the full 5px spread */
+@keyframes pulse-ring-c { 0%, 100% { transform: scale(.615385); } 50% { transform: scale(1); } }
+.ds-indicator { --pulse: rgb(239, 68, 68); position: relative; }
+.ds-indicator, .sync-ico.on { --pulse-from: color-mix(in srgb, var(--pulse) 55%, transparent); }
+.pulse-ring { display: none; position: absolute; inset: -5px; pointer-events: none;
+	/* fixed: the old shadow's reach for a 34px r8 icon: 44px r13 minus the icon itself */
+	clip-path: path(evenodd, 'M13 0H31A13 13 0 0 1 44 13V31A13 13 0 0 1 31 44H13A13 13 0 0 1 0 31V13A13 13 0 0 1 13 0ZM13 5H31A8 8 0 0 1 39 13V31A8 8 0 0 1 31 39H13A8 8 0 0 1 5 31V13A8 8 0 0 1 13 5Z');
+	animation: pulse-ring 1.6s ease-in-out infinite; }
+/* fixed: the lens has a 1px border (js/debugshare.js), and `inset` counts from inside it */
+.ds-indicator .pulse-ring { inset: -6px; }
+.pulse-ring i { position: absolute; inset: 0; }
+.pulse-ring::before, .pulse-ring::after, .pulse-ring i::before, .pulse-ring i::after { content: ''; position: absolute;
+	background: var(--pulse); animation: 1.6s ease-in-out infinite; }
+/* fixed: the pieces' places in the 44px box: bars between the corner centres (13..31), discs r13 on them */
+.pulse-ring::before { left: 0; top: 13px; width: 44px; height: 18px; animation-name: pulse-ring-x; }
+.pulse-ring::after { left: 13px; top: 0; width: 18px; height: 44px; animation-name: pulse-ring-y; }
+.pulse-ring i::before, .pulse-ring i::after { width: 26px; height: 26px; border-radius: 50%; animation-name: pulse-ring-c; }
+.pulse-ring i:first-child::before { left: 0; top: 0; }
+.pulse-ring i:first-child::after { left: 18px; top: 0; }
+.pulse-ring i:last-child::before { left: 0; top: 18px; }
+.pulse-ring i:last-child::after { left: 18px; top: 18px; }
+.ds-indicator .pulse-ring, .sync-ico.on .pulse-ring { display: block; }
 @media (prefers-reduced-motion: reduce) {
-	.ds-indicator, .sync-ico.on { animation: none; box-shadow: 0 0 0 3px var(--pulse-from); }
+	.ds-indicator .pulse-ring, .sync-ico.on .pulse-ring { display: none; }
+	.ds-indicator, .sync-ico.on { box-shadow: 0 0 0 3px var(--pulse-from); }
 }
 /* Sync, at rest, is a quiet muted glyph that does nothing: no pointer, no press,
    no focus stop (it is a picture with a name, like the status dots). While a sync
@@ -194,7 +238,7 @@ svg { display: block; }
 	-webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .sync-ico::after { content: ''; position: absolute; inset: -5px; }
 .sync-ico .ic { width: 20px; height: 20px; stroke-width: 2; }
-.sync-ico.on { color: var(--ok); --pulse-from: color-mix(in srgb, var(--ok) 55%, transparent); --pulse-to: color-mix(in srgb, var(--ok) 0%, transparent); }
+.sync-ico.on { color: var(--ok); --pulse: var(--ok); }
 /* What a tap shows where there is no hover: the same words as the tooltip, under the icon. */
 .sync-tip { position: fixed; z-index: 2000; max-width: min(280px, calc(100vw - 16px)); padding: 7px 10px;
 	border-radius: var(--radius-sm); background: var(--bg-tertiary); color: var(--text-primary);
@@ -612,18 +656,26 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 /* The setup prompt. Until Daimond has a model it cannot answer anything, so the model row is
    the one thing to do — it glows gently, on a slow cycle so it draws the eye without nagging.
    Respects a user who has asked the OS for less motion. */
+/* On the compositor, as `pulse-ring` above is (TAB-MEM-5D): the row rests on --bg-hover and a
+   `::before` holding the glow's peak (--accent-soft and its 2px ring) fades in and out over it,
+   which is the same blend the old background/box-shadow keyframes painted, frame by frame, on
+   the main thread for as long as no model was set. */
 @keyframes astat-pulse {
-	0%, 100% { background: var(--bg-hover); box-shadow: 0 0 0 0 rgba(210, 96, 79, 0.0); }
-	50%      { background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(210, 96, 79, 0.28); }
+	0%, 100% { opacity: 0; }
+	50%      { opacity: 1; }
 }
 /* The Pro row reads its value as a link when there is an upgrade to take, so
    "Upgrade to Pro" invites a click the way a bare status figure would not. */
 .astat-row.astat-pro-upgrade .astat-val { color: var(--accent-text); text-decoration: underline; }
 .astat-row.astat-pro-upgrade:hover .astat-val { filter: brightness(1.1); }
-.astat-row.astat-pulse { animation: astat-pulse 2.2s ease-in-out infinite; }
+.astat-row.astat-pulse { position: relative; isolation: isolate; background: var(--bg-hover); }
+.astat-row.astat-pulse::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+	background: var(--accent-soft); box-shadow: 0 0 0 2px rgba(210, 96, 79, 0.28); pointer-events: none;
+	animation: astat-pulse 2.2s ease-in-out infinite; }
 .astat-row.astat-pulse .astat-val { color: var(--text-primary); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) {
-	.astat-row.astat-pulse { animation: none; background: var(--accent-soft); }
+	.astat-row.astat-pulse { background: var(--accent-soft); }
+	.astat-row.astat-pulse::before { content: none; animation: none; }
 }
 
 /* The Admin panel: an overlay drawer that rises above the Status strip when

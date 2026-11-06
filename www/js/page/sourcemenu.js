@@ -187,6 +187,27 @@ export function seatDrawnRunner(chat) {
 	return deviceLabelFor(sw.runner.deviceId) || sw.runner.label || t('devices.unknown');
 }
 
+/// SEAT-LABEL (owner, 06 Nov, D-20261105-01: "That should be Kimberlite on all devices"). Is
+/// `deviceId` a paired Kimberlite (`kind: 'runner'` on its presence row)?
+export function isKimberliteSeat(deviceId) {
+	try {
+		var dp = window.DaimondPresence;
+		var rec = (dp && dp.snapshot && dp.snapshot() || {})[String(deviceId || '')];
+		return !!(rec && (rec.kind === 'runner' || rec.native === true));
+	} catch (e) { return false; }
+}
+
+/// What a choice of seat reads for `deviceId`, host `host`: `{ text, title }`. A Kimberlite is
+/// named "Kimberlite" however many are paired, its host on the hover ("Kimberlite on argonaut");
+/// any other device by its own name. The one place a seat CHOICE gets its words (the switch, the
+/// Doc panel's buttons); a finished turn's "Ran on argonaut" is history and keeps the host.
+export function seatRunnerLabel(deviceId, host) {
+	if (isKimberliteSeat(deviceId)) {
+		return { text: t('seat.kimberlite'), title: t('seat.kimberlite_on', { host: host }) };
+	}
+	return { text: host, title: host };
+}
+
 /// Put the "ran here" line on a person's message tile.
 export function drawSeatNote(tile, text) {
 	if (!tile || !tile._body || !text) return;
@@ -285,8 +306,10 @@ export function renderSeatSwitch() {
 	var onRunner = sw.choice === 'runner';
 	here.setAttribute('aria-pressed', onRunner ? 'false' : 'true');
 	if (sw.runner) {
-		run.textContent = deviceLabelFor(sw.runner.deviceId) || sw.runner.label || t('devices.unknown');
-		run.title = run.textContent;	// whole, where the row cuts it short
+		var seatTxt = seatRunnerLabel(sw.runner.deviceId,
+			deviceLabelFor(sw.runner.deviceId) || sw.runner.label || t('devices.unknown'));
+		run.textContent = seatTxt.text;
+		run.title = seatTxt.title;	// the host, and whole where the row cuts it short
 		run.dataset.device = sw.runner.deviceId;
 		run.setAttribute('aria-pressed', onRunner ? 'true' : 'false');
 		run.hidden = false;

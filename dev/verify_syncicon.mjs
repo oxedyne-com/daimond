@@ -49,6 +49,10 @@ const probe = () => page.evaluate(() => {
 	const n = document.getElementById('sync-ico');
 	if (!n) return null;
 	const r = n.getBoundingClientRect(), cs = getComputedStyle(n);
+	// The pulse is drawn by the icon's `.pulse-ring` span (css/app.css, TAB-MEM-5D): read its fade there.
+	const ring = n.querySelector('.pulse-ring'), rs = ring && getComputedStyle(ring);
+	const live = n.getAnimations({ subtree: true }).filter((a) => a.animationName === 'pulse-ring' && a.playState === 'running');
+	const look = cs.boxShadow !== 'none' ? cs.boxShadow : live.length ? getComputedStyle(ring, '::before').backgroundColor + ' ' + rs.opacity : 'none';
 	const chip = document.getElementById('sync-chip');
 	const rest = document.getElementById('sync-rest');
 	const shown = !!(chip && chip.style.display !== 'none');
@@ -56,15 +60,17 @@ const probe = () => page.evaluate(() => {
 	const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
 	return {
 		tag: n.tagName, on: n.classList.contains('on'), title: n.title, aria: n.getAttribute('aria-label'),
-		anim: cs.animationName, dur: cs.animationDuration, ease: cs.animationTimingFunction, iter: cs.animationIterationCount,
-		shadow: cs.boxShadow, color: cs.color, cursor: cs.cursor, tab: n.tabIndex, anims: n.getAnimations().length,
+		anim: live.length ? 'pulse-ring' : 'none', dur: rs && rs.animationDuration, ease: rs && rs.animationTimingFunction, iter: rs && rs.animationIterationCount,
+		shadow: look, color: cs.color, cursor: cs.cursor, tab: n.tabIndex, anims: live.length,
 		rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
 		vis: r.width > 0 && r.height > 0 && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight && cs.visibility !== 'hidden' && cs.display !== 'none',
 		hitOk: !!hit && (hit === n || n.contains(hit)), line, shown, home: (document.getElementById('app') || { dataset: {} }).dataset.stack === 'home',
 	};
 });
-// The lens, read the same way. `ring` is the box-shadow's colour as 0-255 numbers, whichever way the
-// engine writes it (rgba() or color(srgb ...)), so a red ring and a green one can be told apart.
+// The lens, read the same way. `shadow` is the ring as drawn: the icon's own static box-shadow under
+// reduced motion, else the `.pulse-ring` fill's colour and its fading opacity (none when no ring runs).
+// `ringRGB` is its colour as 0-255 numbers, whichever way the engine writes it (rgba() or
+// color(srgb ...)), so a red ring and a green one can be told apart.
 const ringRGB = (sh) => {
 	const m = String(sh).match(/(?:rgba?|color)\(([^)]*)\)/);
 	if (!m) return null;
@@ -74,13 +80,18 @@ const ringRGB = (sh) => {
 const redder = (c) => !!c && c[0] > c[1] + 40 && c[0] > c[2] + 40;
 const greener = (c) => !!c && c[1] > c[0] + 40 && c[1] > c[2] + 40;
 const probeBoth = () => page.evaluate(() => {
-	const one = (n) => { const cs = getComputedStyle(n); return { anim: cs.animationName, shadow: cs.boxShadow, anims: n.getAnimations().length }; };
+	const one = (n) => {
+		const cs = getComputedStyle(n), ring = n.querySelector('.pulse-ring');
+		const live = n.getAnimations({ subtree: true }).filter((a) => a.animationName === 'pulse-ring' && a.playState === 'running');
+		const shadow = cs.boxShadow !== 'none' ? cs.boxShadow : live.length ? getComputedStyle(ring, '::before').backgroundColor + ' ' + getComputedStyle(ring).opacity : 'none';
+		return { anim: live.length ? 'pulse-ring' : 'none', shadow, anims: live.length };
+	};
 	return { lens: one(document.querySelector('.ds-indicator')), sync: one(document.getElementById('sync-ico')) };
 });
 // Holds both rings at the same instant of their cycle (25%, the ring half out) for a picture, or lets them run.
 const midPulse = (hold) => page.evaluate((hold) => {
 	for (const n of [document.querySelector('.ds-indicator'), document.getElementById('sync-ico')]) {
-		for (const a of n.getAnimations()) { if (hold) { a.pause(); a.currentTime = 400; } else a.play(); }
+		for (const a of n.getAnimations({ subtree: true })) { if (hold) { a.pause(); a.currentTime = 400; } else a.play(); }
 	}
 }, hold);
 const shot = async (label) => {
@@ -113,6 +124,11 @@ for (const [w, h, touch] of SIZES) {
 	const tag = BROWSER + '-' + w + 'x' + h;
 	s = await open({ touch, route: (pg) => pg.setViewportSize({ width: w, height: h }) });
 	page = s.page;
+	// A phone opens on its home page, which covers the bar and hides its controls under it
+	// (css/phone/home.css, ccp29). The icon is for the rest of the time, so stand on the
+	// conversation page, the rail shut, before anything is measured.
+	await page.evaluate(() => { if (window.DaimondShell && DaimondShell.onHome()) DaimondShell.turn(); });
+	await page.waitForFunction(() => document.getElementById('app').dataset.stack !== 'home', null, { timeout: 5000 });
 	// Lens on, so the icon is measured against it. Off again at the end of the session.
 	await page.evaluate(() => DEBUG_SHARE.setEnabled(true));
 	await page.waitForSelector('.ds-indicator', { timeout: 5000 });
@@ -158,7 +174,7 @@ for (const [w, h, touch] of SIZES) {
 	check(tag + ' without a preference the lens pulses too, in its red, and moves', l2.lens.anim === 'pulse-ring' && l2.lens.anims === 1 && l2.lens.shadow !== l3.lens.shadow && redder(ringRGB(l2.lens.shadow)), l2.lens.anim + ' ' + l2.lens.shadow + ' -> ' + l3.lens.shadow);
 	check(tag + ' during a sync it pulses', a1.on && a1.anims === 1, 'on=' + a1.on + ' animations=' + a1.anims);
 	check(tag + ' it pulses with the lens\'s own animation, in green', await page.evaluate(() => {
-		const l = getComputedStyle(document.querySelector('.ds-indicator')), n = getComputedStyle(document.getElementById('sync-ico'));
+		const l = getComputedStyle(document.querySelector('.ds-indicator .pulse-ring')), n = getComputedStyle(document.querySelector('#sync-ico .pulse-ring'));
 		return l.animationName === 'pulse-ring' && n.animationName === l.animationName && n.animationDuration === l.animationDuration
 			&& n.animationTimingFunction === l.animationTimingFunction && n.animationIterationCount === l.animationIterationCount && l.animationDuration === '1.6s';
 	}), a1.anim + ' ' + a1.dur + ' ' + a1.ease);

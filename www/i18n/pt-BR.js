@@ -3673,6 +3673,8 @@
 	'seat.tile_local_mobile': 'Roda aqui — mantenha aberto',
 	'seat.refused': 'Executando aqui · {name} não conseguiu assumir',
 	'seat.here': 'Aqui',
+	'seat.kimberlite': 'Kimberlite',
+	'seat.kimberlite_on': 'Kimberlite em {host}',
 	'seat.switch': 'Onde o próximo turno roda',
 	'errand.prompt_too_large': 'só o prompt já é maior do que o relay aceita',
 	'errand.session_unsent': 'não foi possível guardar a conversa para a transferência',

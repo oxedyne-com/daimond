@@ -2648,6 +2648,8 @@
 	// is one such refusal a device raises itself, without a round trip.
 	'seat.refused':              'Running here · {name} couldn’t take it',
 	'seat.here':                 'Here',
+	'seat.kimberlite': 'Kimberlite',
+	'seat.kimberlite_on': 'Kimberlite on {host}',
 	'seat.switch':               'Where the next turn runs',
 	'errand.prompt_too_large':   'the prompt alone is larger than the relay accepts',
 	// ERRAND-REF: a session that can go no way, so the turn ends "not run" before any post.

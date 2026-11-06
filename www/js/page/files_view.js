@@ -13,7 +13,7 @@ import { attachedTruly, attachedTrulyAll, bind, clear, closePop, closePreview, c
 	renderFocus, renderMode, machineFolderKept, retireMachineFolder, showLineNos, showModeMsg, showViewedFile, toggleAttach,
 	viewEl } from './files_tree.js';
 import { DaimondPanels } from './layout.js';
-import { placeOpts, selfHoldsHand, toolReason } from './sourcemenu.js';
+import { isKimberliteSeat, placeOpts, selfHoldsHand, toolReason } from './sourcemenu.js';
 import { annotatePresence } from './turns.js';
 import { confirmDialog, promptDialog, runnerAsker } from './consent.js';
 import { versionsPath } from './chats.js';
@@ -337,6 +337,10 @@ function placeText(place) {
 	var nm = place.label || '';
 	var sub = { name: nm || t('devices.unknown'), n: place.n,
 		need: place.needMB, room: place.roomMB };
+	// SEAT-LABEL: the button is a choice of seat, so a Kimberlite reads "Compile on Kimberlite";
+	// the hover's reason keeps the host it is about.
+	var bsub = (place.where === 'runner' && place.deviceId && isKimberliteSeat(place.deviceId))
+		? Object.assign({}, sub, { name: t('seat.kimberlite') }) : sub;
 	// NO NAME, NO REASON. `place.why_needs_hand` names the machine that holds the
 	// hand, and the app's only fallback label is `devices.unknown` -- which reads
 	// "This device", the one machine the sentence is certainly not about. With
@@ -344,7 +348,7 @@ function placeText(place) {
 	// holds" under a button saying no device can do this. Where no machine is
 	// known the answer in `key` stands on its own.
 	return {
-		text:  t(place.key, sub),
+		text:  t(place.key, bsub),
 		title: (place.titleKey && (nm || place.why !== 'needs-hand'))
 			? t(place.titleKey, sub) : '',
 		can:   !!place.can,

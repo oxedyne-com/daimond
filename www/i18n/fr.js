@@ -3689,6 +3689,8 @@
 	'seat.tile_local_mobile': 'S’exécute ici — laissez ouvert',
 	'seat.refused': 'Exécution ici · {name} n’a pas pu le prendre',
 	'seat.here': 'Ici',
+	'seat.kimberlite': 'Kimberlite',
+	'seat.kimberlite_on': 'Kimberlite sur {host}',
 	'seat.switch': 'Où s’exécute le prochain tour',
 	'errand.prompt_too_large': 'l’invite seule dépasse ce que le relais accepte',
 	'errand.session_unsent': 'la conversation n’a pas pu être enregistrée pour le transfert',

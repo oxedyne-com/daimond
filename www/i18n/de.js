@@ -3681,6 +3681,8 @@
 	'seat.tile_local_mobile': 'Läuft hier — lass das geöffnet',
 	'seat.refused': 'Läuft hier · {name} konnte es nicht übernehmen',
 	'seat.here': 'Hier',
+	'seat.kimberlite': 'Kimberlite',
+	'seat.kimberlite_on': 'Kimberlite auf {host}',
 	'seat.switch': 'Wo der nächste Zug läuft',
 	'errand.prompt_too_large': 'Allein die Eingabe ist größer, als das Relay akzeptiert',
 	'errand.session_unsent': 'Das Gespräch konnte für die Übergabe nicht gespeichert werden',

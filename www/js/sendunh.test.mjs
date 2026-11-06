@@ -232,7 +232,7 @@ function lift(name) {
 const NAMES = ['runDispatchFallback', 'leaseDoorRead', 'electProvider', 'electSources', 'dispatchedAnswerPresent', 'maybeAutoDispatch', 'endSendNotRun', 'handOffTurn', 'dispatchToPeer', 'answerUnhanded', 'sayIfUnhanded',
 	'reRunParked', 'markInterrupted', 'isNotRunRow', 'notRunAsk', 'retryTurn', 'lostRetryMid', 'turnMessagesOf',
 	'sendPresenceRead', 'endHandOffNotRun', 'endTurnNotRun', 'withdrawLostHandoffs', 'noteHandBack', 'peerCollectOnReturn',
-	'renderSeatSwitch', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'turnLogState', 'handBackNote', 'seatReason', 'seatWhyKey', 'dropRefusedTiles',
+	'renderSeatSwitch', 'seatRunnerLabel', 'isKimberliteSeat', 'seatDrawnRunner', 'isLostRow', 'drawLostRowRunning', 'peerLeaseHeld', 'peerLeaseClaimed', 'runnerLabel', 'dispatchedTurnSettled', 'handoffLeaseSettled', 'turnLogState', 'handBackNote', 'seatReason', 'seatWhyKey', 'dropRefusedTiles',
 	'notRunCause', 'notRunRecord', 'placeholderNotRun', 'notRunWhyKey', 'drawNotRunReason',
 	'turnLive', 'turnSuperseded', 'opensTurn', 'notRunEnded', 'handoffEnded'];	// a settled turn is a record (UNBLOCK-83)
 

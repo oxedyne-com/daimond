@@ -1686,7 +1686,9 @@
 			// An eye with a dot -- "your data is being watched" -- in an alert frame.
 			b.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
 				+ '<path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12z"/>'
-				+ '<circle cx="12" cy="12" r="3"/></svg>';
+				+ '<circle cx="12" cy="12" r="3"/></svg>'
+				// The pulse's ring (css/app.css `.pulse-ring`): drawn on the compositor, outside the box.
+				+ '<span class="pulse-ring" aria-hidden="true"><i></i><i></i></span>';
 			b.addEventListener('click', function () {
 				// Best-effort nudge toward Settings; harmless if nobody listens.
 				try { window.dispatchEvent(new CustomEvent('daimond:opensettings', { detail: { from: 'debugshare' } })); }

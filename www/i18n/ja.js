@@ -3716,6 +3716,8 @@
 	'seat.tile_local_mobile': 'ここで実行——開いたままにしてください',
 	'seat.refused': 'ここで実行中 · {name} が引き受けられませんでした',
 	'seat.here': 'ここ',
+	'seat.kimberlite': 'Kimberlite',
+	'seat.kimberlite_on': '{host} の Kimberlite',
 	'seat.switch': '次のターンを実行する場所',
 	'errand.prompt_too_large': 'プロンプトだけでリレーが受け入れられるサイズを超えています',
 	'errand.session_unsent': '引き渡しのために会話を保存できませんでした',
