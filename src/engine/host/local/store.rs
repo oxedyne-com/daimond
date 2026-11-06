@@ -133,8 +133,9 @@ impl HostStore for LocalStore {
     fn versionable(&self, _: &str, _: &str) -> bool { true }
     // His, and declined: the values that write nothing (u2_plan §9.2).
     async fn authored_by_user(&self, _: &str, _: &str, _: &[u8], _: Option<u64>) -> bool { true }
-    fn change_refused(&self, _: &str, _: &str) -> bool { true }
-    fn refuse_change(&self, _: &str, _: &str) {}
+    // Nobody here declines anything (FALSE-DECLINE): the ask itself answers that none was put.
+    fn change_refused(&self, _: &str, _: &str) -> Option<bool> { None }
+    fn refuse_change(&self, _: &str, _: &str, _: bool) {}
 
     fn open_delete_room(&self, _: &str, _: &str) -> OpenDelete { OpenDelete::Stopped(0) }
     fn open_delete_answer(&self, _: &str, _: u64, _: bool) {}

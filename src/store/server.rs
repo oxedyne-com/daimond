@@ -1890,7 +1890,8 @@ fn serve_sync(st: &mut State, run: &str, bs: &Bodies, call: StoreCall) -> StoreR
         C::FolderOf { path } => R::FolderOf(diamond::folder_of(&path)),
         C::Versionable { id, path } => R::Versionable(diamond::versionable(&id, &path)),
         C::ChangeRefused { id, path } => R::ChangeRefused(diamond::change_refused(&id, &path)),
-        C::RefuseChange { id, path } => R::RefuseChange(diamond::refuse_change(&id, &path)),
+        C::RefuseChange { id, path, chose } =>
+            R::RefuseChange(diamond::refuse_change(&id, &path, chose)),
         C::OpenDeleteRoom { id, file } => {
             let got = diamond::open_delete_room(&id, &file);
             if matches!(got, OpenDelete::Go(true)) {

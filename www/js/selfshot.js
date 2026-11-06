@@ -251,8 +251,12 @@
 					var k = walk(kids[j], inner);
 					if (!k) continue;
 					if ((sx || sy) && k.nodeType === 1) {
-						k.style.setProperty('transform',
-							'translate(' + (-sx) + 'px,' + (-sy) + 'px) ' + (k.style.transform || ''));
+						// A child with no transform of its own reads `none`, and `translate(..) none`
+						// is not CSS: the move was dropped and a scrolled chat drew its unscrolled
+						// top, emptied boxes only (UNBLOCK-104, the Lens's bars).
+						var own = k.style.transform;
+						k.style.setProperty('transform', 'translate(' + (-sx) + 'px,' + (-sy) + 'px)'
+							+ (own && own !== 'none' ? ' ' + own : ''));
 					}
 					d.appendChild(k);
 				}

@@ -458,9 +458,10 @@ store_calls! {
     wait Meta/Meta AuthoredByUser "authored_by_user" {
         id: String, path: String, now: BodyRef, below: Option<u64>,
     } -> bool;
-    /// Did the person decline a change at `path` this turn (UNBLOCK-26 U3)?
-    sync Meta/Meta ChangeRefused "change_refused" { id: String, path: String } -> bool;
-    sync Meta/Meta RefuseChange "refuse_change" { id: String, path: String } -> ();
+    /// Was a change at `path` declined this turn (UNBLOCK-26 U3): `Some(true)` by the person's
+    /// no, `Some(false)` asked and unanswered (FALSE-DECLINE)?
+    sync Meta/Meta ChangeRefused "change_refused" { id: String, path: String } -> Option<bool>;
+    sync Meta/Meta RefuseChange "refuse_change" { id: String, path: String, chose: bool } -> ();
 
     // Deletes from the open folder
     sync Meta/Meta OpenDeleteRoom "open_delete_room" { id: String, file: String } -> OpenDelete;

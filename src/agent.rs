@@ -2819,7 +2819,7 @@ impl Agent {
             // -- but the event still goes out, because a provider getting the wire wrong is
             // worth measuring whether or not this app could paper over it.
             if let crate::llm::ReplyShape::Malformed(leak) = resp.shape.clone() {
-                let recovered = leak.recovered.is_some();
+                let recovered = !leak.recovered.is_empty();
                 on_event(AgentEvent::Leaked { fragment: leak.fragment.clone(), recovered });
                 if recovered {
                     leaks = 0;

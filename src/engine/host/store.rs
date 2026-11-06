@@ -144,11 +144,13 @@ pub trait HostStore {
     /// unsure, the file is his.  `below` judges a turn kept as that version, by the manifests
     /// before it; `None` is a live act's question.
     async fn authored_by_user(&self, id: &str, path: &str, now: &[u8], below: Option<u64>) -> bool;
-    /// Did the person decline, this turn, a change at `path` or around it
+    /// Was a change at `path` or around it declined this turn: `Some(true)` where the person
+    /// chose no, `Some(false)` where they were asked and did not answer
     /// ([`crate::diamond_versions::ChangeRefusals::refused`])?
-    fn change_refused(&self, id: &str, path: &str) -> bool;
-    /// Record that the person declined a change at `path`, for the rest of the turn.
-    fn refuse_change(&self, id: &str, path: &str);
+    fn change_refused(&self, id: &str, path: &str) -> Option<bool>;
+    /// Record that the person declined a change at `path` (`chose`), or did not answer, for the
+    /// rest of the turn.
+    fn refuse_change(&self, id: &str, path: &str, chose: bool);
 
     // Deletes from the open folder
     fn open_delete_room(&self, id: &str, file: &str) -> OpenDelete;

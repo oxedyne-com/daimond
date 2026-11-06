@@ -219,11 +219,11 @@ impl HostStore for Direct {
     async fn authored_by_user(&self, id: &str, path: &str, now: &[u8], below: Option<u64>) -> bool {
         diamond::authored_by_user(id, path, now, below).await
     }
-    fn change_refused(&self, id: &str, path: &str) -> bool {
+    fn change_refused(&self, id: &str, path: &str) -> Option<bool> {
         diamond::change_refused(id, path)
     }
-    fn refuse_change(&self, id: &str, path: &str) {
-        diamond::refuse_change(id, path)
+    fn refuse_change(&self, id: &str, path: &str, chose: bool) {
+        diamond::refuse_change(id, path, chose)
     }
 
     fn open_delete_room(&self, id: &str, file: &str) -> OpenDelete {

@@ -265,8 +265,9 @@ impl Family {
 	/// wrong" has no way to know WHICH of the things it wrote was the mistake.
 	pub fn leak_hint(&self) -> Option<&'static str> {
 		match self {
-			Self::Glm	=> Some(GLM_LEAK_HINT),
-			_			=> None,
+			Self::Glm		=> Some(GLM_LEAK_HINT),
+			Self::DeepSeek	=> Some(DEEPSEEK_LEAK_HINT),
+			_				=> None,
 		}
 	}
 
@@ -422,6 +423,12 @@ pub const MINIMAX_NOTE: &str =
 /// its call was malformed would have no way to tell which of the things it wrote was meant.
 pub const GLM_LEAK_HINT: &str =
 	"Never write <tool_call>, <arg_key> or <arg_value> into the reply text; \
+	 the call goes in the request's own tool_calls field.";
+
+/// DeepSeek: its own DSML call block, written into the reply text (walk 103, 2026-11-05,
+/// deepseek-v4.1-flash-1017, whose turn ended on `<｜DSML｜ calls>…` as its answer).
+pub const DEEPSEEK_LEAK_HINT: &str =
+	"Never write <｜DSML｜function_calls>, <｜DSML｜invoke> or <｜DSML｜parameter> into the reply text; \
 	 the call goes in the request's own tool_calls field.";
 
 /// Glm: nine writes refused for being under the wrong folder.

@@ -179,7 +179,7 @@ fn a_sync_call_never_awaits() {
         C::FolderOf { path: s("/m/c") },
         C::Versionable { id: s("d"), path: s("/m/c") },
         C::ChangeRefused { id: s("d"), path: s("/m/c") },
-        C::RefuseChange { id: s("d"), path: s("/m/c") },
+        C::RefuseChange { id: s("d"), path: s("/m/c"), chose: true },
         C::OpenDeleteRoom { id: s("d"), file: s("/m/x") },
         C::OpenDeleteAnswer { id: s("d"), ticket: 1, allow: true },
         C::OpenDeleteRelease { id: s("d"), file: s("/m/x") },

@@ -1641,6 +1641,14 @@ pub(super) fn change_declined_refusal(raw: &str) -> String {
         your answer what you would have changed.", raw))
 }
 
+/// A change to a file of the user's they were asked about this turn, or one inside or around it,
+/// and did not answer (FALSE-DECLINE): refused without asking again, and never told as a choice.
+pub(super) fn change_unanswered_refusal(raw: &str) -> String {
+    refusal_line(&fmt!("The user was asked this turn whether to have '{}' changed and did not \
+        answer, so they are not asked again. Nothing was changed. Do not make this change another \
+        way; finish the rest and say in your answer what you would have changed.", raw))
+}
+
 /// The user's file changed while they were asked about changing it: the change they agreed to was
 /// to the file as it was shown, so it is not written over what stands there now.
 pub(super) fn changed_while_asked_refusal(raw: &str) -> String {

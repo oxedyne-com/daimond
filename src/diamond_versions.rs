@@ -309,29 +309,40 @@ pub fn open_file_key(path: &str, copy: &[u8]) -> String {
 }
 
 /// The changes to the user's files a turn was told not to make (UNBLOCK-26 U3): the paths the
-/// person answered "Don't change" for, or left unanswered, while the turn asked.
+/// person answered "Don't change" for, or was asked about and left unanswered.
 ///
 /// **A no is final for the rest of the turn**, as the open folder's stop is ([`OpenTally`]): a
 /// retry, a worker, or the same change by another verb is refused without asking again.  It holds
 /// through a folder both ways -- a no to a folder's move refuses each file in it, and a no to one
 /// file refuses the move of a folder that carries it -- since either is the change he declined,
 /// made another way.
+///
+/// **Only an answer a person gave, or a question put to one, is kept here** (FALSE-DECLINE,
+/// 5 Nov 2026): each path records which it was, so a retry is told the truth.  A seat that asks
+/// nobody, such as Kimberlite's keep, is not a decline: walk 103b's `file_edit` of `DECISIONS.md`
+/// was refused three times as "the user already chose" when nobody had been asked.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ChangeRefusals {
-	paths: BTreeSet<String>,	// as the captures name them: normalised, or absolute on the machine
+	paths: BTreeMap<String, bool>,	// as the captures name them, to whether the person chose no
 }
 
 impl ChangeRefusals {
 
-	pub fn refuse(&mut self, path: &str) {
-		self.paths.insert(path.trim_end_matches('/').to_string());
+	/// Record a change at `path` the person declined (`chose`), or was asked about and did not
+	/// answer.  A no is never softened to a non-answer.
+	pub fn refuse(&mut self, path: &str, chose: bool) {
+		let at = self.paths.entry(path.trim_end_matches('/').to_string()).or_insert(chose);
+		*at = *at || chose;
 	}
 
-	/// Did the person decline a change to `path`, or to a folder it is in, or to a file in it?
-	pub fn refused(&self, path: &str) -> bool {
+	/// Was a change to `path`, or to a folder it is in, or to a file in it, declined this turn:
+	/// `Some(true)` where the person chose no, `Some(false)` where they did not answer, `None`
+	/// where neither.
+	pub fn refused(&self, path: &str) -> Option<bool> {
 		let p = path.trim_end_matches('/');
 		let inside = |a: &str, b: &str| a == b || (a.starts_with(b) && a[b.len()..].starts_with('/'));
-		self.paths.iter().any(|r| inside(p, r) || inside(r, p))
+		self.paths.iter().filter(|(r, _)| inside(p, r) || inside(r, p))
+			.map(|(_, chose)| *chose).reduce(|a, b| a || b)
 	}
 }
 

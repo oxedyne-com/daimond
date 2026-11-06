@@ -1062,12 +1062,14 @@ pub struct ToolCallLeak {
     /// The leaked markup exactly as it arrived, kept verbatim so a reader sees the evidence
     /// rather than a summary of it.
     pub fragment:  String,
-    /// The call rebuilt from the fragment, where the fragment held a whole one.
+    /// The calls rebuilt from the fragment, where the fragment held whole ones.
     ///
-    /// `None` when the head `<tool_call>NAME` was consumed upstream, which is what happened in
+    /// Empty when the head `<tool_call>NAME` was consumed upstream, which is what happened in
     /// the live case: without a name there is nothing to dispatch, and guessing one from the
-    /// surrounding text would be the app inventing a tool call the model never made.
-    pub recovered: Option<ToolCall>,
+    /// surrounding text would be the app inventing a tool call the model never made.  Empty
+    /// too when any one call in the fragment is broken: DeepSeek's DSML block carries several
+    /// calls, and dispatching the readable ones alone would drop the rest without a word.
+    pub recovered: Vec<ToolCall>,
 }
 
 /// What shape a reply arrived in, once it was whole.
@@ -1083,11 +1085,22 @@ pub enum ReplyShape {
     Malformed(ToolCallLeak),
 }
 
-/// The four markers that say a native tool call has been written into the content.
+/// The markers that say a native tool call has been written into the content.
 ///
 /// `<arg_key>` and `</arg_value>` are deliberately absent: a fragment carrying either carries
 /// one of these too, and a shorter list is a shorter thing to keep honest.
-const LEAK_MARKS: [&str; 4] = ["<tool_call>", "</tool_call>", "<arg_value>", "</arg_key>"];
+///
+/// The last four are DeepSeek's DSML (walk 103, 2026-11-05, deepseek-v4.1-flash-1017): its
+/// `<｜DSML｜function_calls>` block arrived in `content` as the turn's final text, and the engine
+/// ended the turn on it as the answer.  The token's bars are FULLWIDTH (U+FF5C), as DeepSeek's
+/// own encoder writes them (`dsml_token = "｜DSML｜"`, DeepSeek-V3.2 `encoding/encoding_dsv32.py`);
+/// the ASCII form is read too, because a renderer or a proxy that folds the bars is a change of
+/// spelling, not of meaning.
+const LEAK_MARKS: [&str; 8] = ["<tool_call>", "</tool_call>", "<arg_value>", "</arg_key>",
+    "<｜DSML｜", "</｜DSML｜", "<|DSML|", "</|DSML|"];
+
+// DeepSeek's DSML token, in the fullwidth spelling its encoder writes.
+const DSML: &str = "｜DSML｜"; // fixed: DeepSeek's tokeniser defines it
 
 /// The leak in `content`, or `None` where the model was only talking.
 ///
@@ -1135,7 +1148,18 @@ pub fn leaked_tool_call(content: &str) -> Option<ToolCallLeak> {
 /// is no name in the bytes at all.  Inferring one from the preceding `think_log` would be the
 /// app dispatching a tool off the model's working rather than off its call, which is the
 /// mistake `dev/CONTRACT_OUTCOME.md` exists to keep out of this tree.
-fn recover_tool_call(fragment: &str) -> Option<ToolCall> {
+fn recover_tool_call(fragment: &str) -> Vec<ToolCall> {
+    if fragment.contains(DSML) || fragment.contains("|DSML|") {
+        return recover_dsml(fragment);
+    }
+    match recover_glm(fragment) {
+        Some(c) => vec![c],
+        None    => Vec::new(),
+    }
+}
+
+/// The GLM/Kimi form: `<tool_call>NAME<arg_key>K</arg_key><arg_value>V</arg_value>…</tool_call>`.
+fn recover_glm(fragment: &str) -> Option<ToolCall> {
     let open = fragment.find("<tool_call>")? + "<tool_call>".len();
     let close = fragment[open..].find("</tool_call>")? + open;
     let body = &fragment[open..close];
@@ -1177,6 +1201,155 @@ fn recover_tool_call(fragment: &str) -> Option<ToolCall> {
         name:      name.to_string(),
         arguments: fmt!("{{{}}}", args.join(",")),
     })
+}
+
+/// One DSML tag: where it starts and ends, whether it closes, its word and its attributes.
+struct DsmlTag<'a> {
+    start:   usize,
+    end:     usize,     // Just past the `>`
+    closing: bool,
+    word:    &'a str,
+    attrs:   &'a str,
+}
+
+/// The next DSML tag in `s` at or after `from`, read leniently about the whitespace between the
+/// token and the word: the walk-103 fragment arrived as `<｜DSML｜ invoke …>`, where the encoder
+/// writes `<｜DSML｜invoke …>`.
+fn dsml_tag(s: &str, from: usize) -> Option<DsmlTag<'_>> {
+    let start = s[from..].find(&fmt!("<{}", DSML)).map(|i| i + from)
+        .into_iter()
+        .chain(s[from..].find(&fmt!("</{}", DSML)).map(|i| i + from))
+        .min()?;
+    let closing = s[start + 1..].starts_with('/');
+    let head = start + 1 + if closing { 1 } else { 0 } + DSML.len();
+    let end = s[head..].find('>')? + head + 1;
+    let inner = s[head..end - 1].trim_start();
+    let (word, attrs) = match inner.find(char::is_whitespace) {
+        Some(i) => (&inner[..i], inner[i..].trim()),
+        None    => (inner, ""),
+    };
+    Some(DsmlTag { start, end, closing, word, attrs })
+}
+
+/// The value of `key="…"` in a tag's attributes.
+fn dsml_attr<'a>(attrs: &'a str, key: &str) -> Option<&'a str> {
+    let pat = fmt!("{}=\"", key);
+    let mut at = 0usize;
+    while let Some(i) = attrs[at..].find(&pat) {
+        let i = at + i;
+        // A whole attribute name, not the tail of a longer one.
+        if i == 0 || attrs[..i].ends_with(char::is_whitespace) {
+            let vs = i + pat.len();
+            let ve = attrs[vs..].find('"')? + vs;
+            return Some(&attrs[vs..ve]);
+        }
+        at = i + pat.len();
+    }
+    None
+}
+
+/// The calls a DeepSeek DSML block holds, ALL or none.
+///
+/// The published shape (DeepSeek-V3.2 `encoding/encoding_dsv32.py`):
+///
+/// ```text
+/// <｜DSML｜function_calls>
+/// <｜DSML｜invoke name="NAME">
+/// <｜DSML｜parameter name="KEY" string="true|false">VALUE</｜DSML｜parameter>
+/// </｜DSML｜invoke>
+/// </｜DSML｜function_calls>
+/// ```
+///
+/// `string="true"` carries the value as raw text; `string="false"` carries it as JSON, and a
+/// value that is not JSON is a broken call rather than one to repair: walk 103's
+/// `["python3", "-c", "import subprocess"]]` had a bracket too many, and guessing which one is
+/// the app writing the model's argument for it.  The wrapper's word is read loosely (anything
+/// ending `calls`), because the same walk wrote it `<｜DSML｜ calls>`.
+fn recover_dsml(fragment: &str) -> Vec<ToolCall> {
+    let t = fragment.replace("<|DSML|", &fmt!("<{}", DSML)).replace("</|DSML|", &fmt!("</{}", DSML));
+    let mut calls: Vec<ToolCall> = Vec::new();
+    // The invoke being read: its name and its argument pairs, already JSON.
+    let mut open: Option<(String, Vec<(String, String)>)> = None;
+    let mut at = 0usize;
+    let mut prev_end: Option<usize> = None;
+    while let Some(tag) = dsml_tag(&t, at) {
+        // Between two tags only whitespace may stand: anything else is a block this reader
+        // does not understand.
+        if let Some(pe) = prev_end {
+            if !t[pe..tag.start].trim().is_empty() {
+                return Vec::new();
+            }
+        }
+        at = tag.end;
+        prev_end = Some(tag.end);
+        match (tag.closing, tag.word, open.is_some()) {
+            (_, w, false) if w.ends_with("calls") => {}
+            (false, "invoke", false) => {
+                let name = match dsml_attr(tag.attrs, "name") {
+                    Some(n) => n.trim(),
+                    None    => return Vec::new(),
+                };
+                if name.is_empty() || name.contains('<') || name.contains('>')
+                    || name.contains(char::is_whitespace)
+                {
+                    return Vec::new();
+                }
+                open = Some((name.to_string(), Vec::new()));
+            }
+            (false, "parameter", true) => {
+                let key = match dsml_attr(tag.attrs, "name") {
+                    Some(k) if !k.trim().is_empty() => k.trim().to_string(),
+                    _                               => return Vec::new(),
+                };
+                // The value runs to the parameter's own closing tag, verbatim.
+                let close = match dsml_tag(&t, tag.end) {
+                    Some(c) if c.closing && c.word == "parameter" => c,
+                    _                                             => return Vec::new(),
+                };
+                let raw = &t[tag.end..close.start];
+                let value = match dsml_attr(tag.attrs, "string") {
+                    Some("true")  => fmt!("\"{}\"", json_escape(raw)),
+                    Some("false") => {
+                        let cfg = oxedyne_fe2o3_jdat::string::dec::DecoderConfig::<(), ()>::json(None);
+                        if Dat::decode_string_with_config(raw.trim(), &cfg).is_err() {
+                            return Vec::new();
+                        }
+                        raw.trim().to_string()
+                    }
+                    // No `string` at all: read it as the untyped GLM values are read.
+                    _             => json_literal(raw),
+                };
+                if let Some((_, pairs)) = open.as_mut() {
+                    if pairs.iter().any(|(k, _)| *k == key) {
+                        return Vec::new();
+                    }
+                    pairs.push((key, value));
+                }
+                at = close.end;
+                prev_end = Some(close.end);
+            }
+            (true, "invoke", true) => {
+                if let Some((name, pairs)) = open.take() {
+                    let args: Vec<String> = pairs.iter()
+                        .map(|(k, v)| fmt!("\"{}\":{}", json_escape(k), v))
+                        .collect();
+                    calls.push(ToolCall {
+                        // Marked as recovered, as `recover_glm`'s are, and numbered: a DSML
+                        // block may call the same tool twice.
+                        id:        fmt!("leak_{}_{}", calls.len(), name),
+                        name,
+                        arguments: fmt!("{{{}}}", args.join(",")),
+                    });
+                }
+            }
+            _ => return Vec::new(),
+        }
+    }
+    // An invoke left open is a call cut short.
+    if open.is_some() {
+        return Vec::new();
+    }
+    calls
 }
 
 /// One leaked argument value as JSON.
@@ -1310,9 +1483,9 @@ impl ChatOnceResponse {
             Some(l) => l,
             None    => return self,
         };
-        if let Some(call) = leak.recovered.clone() {
+        if !leak.recovered.is_empty() {
             self.content = self.content.replace(&leak.fragment, "").trim().to_string();
-            self.tool_calls.push(call);
+            self.tool_calls.extend(leak.recovered.iter().cloned());
         }
         self.shape = ReplyShape::Malformed(leak);
         self

@@ -1023,12 +1023,15 @@ impl<L: StoreLink> HostStore for RemoteStore<L> {
         let call = StoreCall::AuthoredByUser { id: s(id), path: s(path), now: BodyRef::of(now), below };
         answer!(self.send(id, call, &[now]).await, AuthoredByUser).unwrap_or(true)
     }
-    fn change_refused(&self, id: &str, path: &str) -> bool {
+    // A link that fails is no answer of his (FALSE-DECLINE): the ask still stands before any
+    // write, so it is put, and its own answer is what the turn is told.
+    fn change_refused(&self, id: &str, path: &str) -> Option<bool> {
         answer!(self.link.call_blocking(&StoreCall::ChangeRefused { id: s(id), path: s(path) }),
-            ChangeRefused).unwrap_or(true)
+            ChangeRefused).unwrap_or(None)
     }
-    fn refuse_change(&self, id: &str, path: &str) {
-        let _ = self.link.call_blocking(&StoreCall::RefuseChange { id: s(id), path: s(path) });
+    fn refuse_change(&self, id: &str, path: &str, chose: bool) {
+        let _ = self.link.call_blocking(&StoreCall::RefuseChange { id: s(id), path: s(path),
+            chose });
     }
 
     // Deletes from the open folder

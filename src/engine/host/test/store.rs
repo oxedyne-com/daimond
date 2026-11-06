@@ -281,11 +281,11 @@ impl HostStore for TestStore {
     async fn authored_by_user(&self, _: &str, path: &str, _: &[u8], _: Option<u64>) -> bool {
         !self.gate.borrow().mine.contains(path)
     }
-    fn change_refused(&self, _: &str, path: &str) -> bool {
+    fn change_refused(&self, _: &str, path: &str) -> Option<bool> {
         self.gate.borrow().refusals.refused(path)
     }
-    fn refuse_change(&self, _: &str, path: &str) {
-        self.gate.borrow_mut().refusals.refuse(path);
+    fn refuse_change(&self, _: &str, path: &str, chose: bool) {
+        self.gate.borrow_mut().refusals.refuse(path, chose);
     }
 
     fn open_delete_room(&self, _: &str, _: &str) -> OpenDelete { OpenDelete::Stopped(0) }

@@ -2245,9 +2245,11 @@ impl Tool {
     /// `before` and the change (the host's `ask_change`), and wait.  Nothing is written before
     /// this answers; `Err` is the sentence for the model where nothing may be.
     ///
-    /// **Every answer but Apply is final for the rest of the turn** at that path and around it
-    /// ([`crate::diamond_versions::ChangeRefusals`]), so a retry, a worker or another verb is
-    /// refused unasked rather than asked again.  An Apply binds only the bytes shown: the caller
+    /// **His no, and a question he left unanswered, are final for the rest of the turn** at that
+    /// path and around it ([`crate::diamond_versions::ChangeRefusals`]), so a retry, a worker or
+    /// another verb is refused unasked rather than asked again, each in its own words.  A seat
+    /// that asks nobody and could not keep a copy (`Answer::Unkept`) is no answer of his, and is
+    /// tried again.  An Apply binds only the bytes shown: the caller
     /// lands the change re-licensed and over those bytes alone.
     ///
     /// # Arguments
@@ -2256,14 +2258,25 @@ impl Tool {
         before: &[u8], change: crate::held_change::Change<'_>)
         -> Result<(), String>
     {
-        if ctx.host().store().change_refused(dia, key) {
-            return Err(change_declined_refusal(raw));
+        match ctx.host().store().change_refused(dia, key) {
+            Some(true)  => return Err(change_declined_refusal(raw)),
+            Some(false) => return Err(change_unanswered_refusal(raw)),
+            None        => {},
         }
         let answer = ctx.host().ui().ask_change(dia, key, before, change, &ctx.turn_tag()).await;
+        // Only a question put to him is booked (FALSE-DECLINE): a keep that failed asked nobody,
+        // so the retry tries it again and is told its own reason.
+        let booked = match &answer {
+            crate::held_change::Answer::Refused    => Some(true),
+            crate::held_change::Answer::Unanswered => Some(false),
+            _                                      => None,
+        };
         match answer.told(raw) {
             None       => Ok(()),
             Some(told) => {
-                ctx.host().store().refuse_change(dia, key);
+                if let Some(chose) = booked {
+                    ctx.host().store().refuse_change(dia, key, chose);
+                }
                 Err(told)
             },
         }

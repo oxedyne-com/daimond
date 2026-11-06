@@ -4252,15 +4252,17 @@ pub fn end_turn_counts(id: &str) {
     CHANGES_REFUSED.with(|c| { c.borrow_mut().remove(&turn_key(id)); });
 }
 
-/// Did the person decline, this turn, a change a turn keeping into `id`'s store wants to make at
-/// `path` ([`versions::ChangeRefusals::refused`])?
-pub fn change_refused(id: &str, path: &str) -> bool {
-    CHANGES_REFUSED.with(|c| c.borrow().get(&turn_key(id)).map(|r| r.refused(path)).unwrap_or(false))
+/// Was a change a turn keeping into `id`'s store wants to make at `path` declined this turn:
+/// `Some(true)` by the person's no, `Some(false)` asked and unanswered
+/// ([`versions::ChangeRefusals::refused`])?
+pub fn change_refused(id: &str, path: &str) -> Option<bool> {
+    CHANGES_REFUSED.with(|c| c.borrow().get(&turn_key(id)).and_then(|r| r.refused(path)))
 }
 
-/// Record that the person declined a change at `path`, for the rest of the turn.
-pub fn refuse_change(id: &str, path: &str) {
-    CHANGES_REFUSED.with(|c| c.borrow_mut().entry(turn_key(id)).or_default().refuse(path));
+/// Record that the person declined a change at `path` (`chose`), or did not answer, for the
+/// rest of the turn.
+pub fn refuse_change(id: &str, path: &str, chose: bool) {
+    CHANGES_REFUSED.with(|c| c.borrow_mut().entry(turn_key(id)).or_default().refuse(path, chose));
 }
 
 // ── The copy on disk before the act ──────────────────────────────────────
