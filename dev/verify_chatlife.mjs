@@ -26,7 +26,8 @@
 //      and as a link, or the act has quietly lost the thing it was for.
 //
 //   5. A CHAT PAST ITS WINDOW IS TRASHED BY THE APP ITSELF, and one inside its
-//      window is not. Driven through `DaimondExpiryTick`, the same function the
+//      window is not; and a chat he WROTE IN is never trashed by the clock,
+//      however stale. Only a chat with nothing he sent is throw-away. Driven through `DaimondExpiryTick`, the same function the
 //      hourly clock calls, so what is exercised is the shipped path and not a
 //      re-implementation of it in this file.
 //
@@ -53,6 +54,7 @@
 //   node dev/verify_chatlife.mjs --break noexpiry    # 5: nothing ever expires
 //   node dev/verify_chatlife.mjs --break expireall   # 5: everything expires, window or not
 //   node dev/verify_chatlife.mjs --break takeslive   # 6: a chat with a live run expires anyway
+//   node dev/verify_chatlife.mjs --break expirewritten # 5: a chat he wrote in expires on the clock
 //   node dev/verify_chatlife.mjs --break halflive    # 6: a queued run holds a chat, a RUNNING one does not
 //   node dev/verify_chatlife.mjs --break sweepnow    # 7: the boot sweep destroys before it has heard
 //   node dev/verify_chatlife.mjs                     # and then, clean
@@ -152,6 +154,12 @@ const BREAKS = {
 		find: '\tvar SWEEP_WAIT_MS = 20000;',
 		with: '\tvar SWEEP_WAIT_MS = 0;',
 	}],
+	// A chat he wrote in goes to the trash on the clock, like a blank one.
+	expirewritten: [{
+		file: 'js/page/chatstore.js',
+		find: "\tif (chatWrittenIn(c)) return 0;",
+		with: '',
+	}],
 	// A chat expires even with work still running under it.
 	takeslive: [{
 		file: 'js/daimond.js',
@@ -219,10 +227,11 @@ function damagedFiles() {
 // `startOfDay` is computed IN THE PAGE, in the browser's own zone, for the same
 // reason: this script and the browser can disagree about the offset.
 function seedRecords(anchors) {
+	// No opening: a chat he never sent anything in, the only kind the clock takes.
 	const mk = (id, at, opening) => ({
 		id,
 		name: '',
-		messages: [{ role: 'user', content: opening, mid: id + '-m1', ts: at }],
+		messages: opening ? [{ role: 'user', content: opening, mid: id + '-m1', ts: at }] : [],
 		model: 'mock/fast', provider: 'mock', status: 'active',
 		promptTokens: 1, completionTokens: 1, cachedTokens: 0, costUsd: 0,
 		prevPrompt: 0, prevCompletion: 0, prevCached: 0, prevCost: 0, lastPrompt: 0,
@@ -230,8 +239,9 @@ function seedRecords(anchors) {
 	});
 	return [
 		mk('c-today', anchors.today, 'the pump seal on the boat'),
-		mk('c-yest',  anchors.yest,  'a letter to the council about the verge'),
+		mk('c-yest',  anchors.yest,  ''),
 		mk('c-old',   anchors.old,   'quotes for the retaining wall'),
+		mk('c-blank', anchors.old,   ''),
 	];
 }
 
@@ -318,9 +328,9 @@ try {
 	// ── 0. The gate ────────────────────────────────────────────────
 	let rows = await railRows(page);
 	let tiles = rows.filter((r) => r.kind === 'tile');
-	check('all three seeded chats reached the rail', tiles.length === 3,
+	check('all four seeded chats reached the rail', tiles.length === 4,
 		`${tiles.length}: ${tiles.map((t) => t.id).join(', ')}`);
-	if (tiles.length !== 3) {
+	if (tiles.length !== 4) {
 		console.log('\nnothing to test against — refusing to report a vacuous pass.');
 		await s.close();
 		process.exit(1);
@@ -346,7 +356,7 @@ try {
 		req.onsuccess = () => {
 			const all = req.result.transaction('chats', 'readonly').objectStore('chats').getAll();
 			all.onsuccess = () => {
-				const seeded = ['c-today', 'c-yest', 'c-old'];
+				const seeded = ['c-today', 'c-yest', 'c-old', 'c-blank'];
 				res((all.result || []).filter((c) => seeded.indexOf(c.id) === -1)
 					.map((c) => ({ id: c.id, name: c.name })));
 			};
@@ -640,14 +650,17 @@ try {
 
 	// ── 5. Expiry, at the boundary, through the shipped tick ──────
 	//
-	// The window is set to three days and the fixture has a four-day-old chat
-	// and a two-hour-old one, so one must go and the other must stay. A check
-	// that only asserted the first would pass against code that trashed the lot.
+	// The window is set to three days and the fixture has a four-day-old blank
+	// chat and a two-hour-old one, so one must go and the other must stay. A
+	// check that only asserted the first would pass against code that trashed
+	// the lot. Beside the blank one sits `c-old`, as stale but WRITTEN IN, which
+	// must stay: the clock takes only a chat with nothing he sent.
 	const before = await page.evaluate(() => ({
+		blank: DaimondTrash.has('c-blank'),
 		old:   DaimondTrash.has('c-old'),
 		today: DaimondTrash.has('c-today'),
 	}));
-	check('neither chat is in the trash before the tick', !before.old && !before.today,
+	check('no chat is in the trash before the tick', !before.blank && !before.old && !before.today,
 		JSON.stringify(before));
 
 	// The tick is published by `startExpiryClock`, which runs as one step of the
@@ -667,29 +680,33 @@ try {
 	await page.waitForTimeout(600);
 
 	const after = await page.evaluate(() => ({
+		blank:  DaimondTrash.has('c-blank'),
 		old:    DaimondTrash.has('c-old'),
 		yest:   DaimondTrash.has('c-yest'),
 		today:  DaimondTrash.has('c-today'),
-		oldAuto: DaimondTrash.isAuto('c-old'),
+		blankAuto: DaimondTrash.isAuto('c-blank'),
+		oldDue: window.DaimondCore.chatDueAt('c-old'),
 	}));
-	check('the four-day-old chat, past a three-day window, is in the trash',
-		after.old === true);
+	check('the four-day-old blank chat, past a three-day window, is in the trash',
+		after.blank === true);
+	check('the four-day-old chat he WROTE IN is NOT, and has no deadline at all',
+		after.old === false && after.oldDue === 0, JSON.stringify({ old: after.old, due: after.oldDue }));
 	check('the two-hour-old chat is NOT', after.today === false);
 	check('nor is the day-old one, which is also inside the window',
 		after.yest === false);
 	check('and the trashed one is marked as the clock\'s doing, not a person\'s',
-		after.oldAuto === true);
+		after.blankAuto === true);
 
 	// It has left the rail, which is the visible half of the same fact.
 	rows = await railRows(page);
-	check('the expired chat is off the rail', !rows.some((r) => r.id === 'c-old'),
+	check('the expired chat is off the rail', !rows.some((r) => r.id === 'c-blank'),
 		rows.filter((r) => r.kind === 'tile').map((r) => r.id).join(', '));
 
 	// AND IT IS STILL PROMOTABLE. The Trash panel offers Keep beside Restore,
 	// because the trash is where somebody meets a chat they had forgotten.
 	const trashRow = await page.evaluate(async () => {
 		const items = await window.DaimondCore.trashList();
-		const it = items.find((x) => x.id === 'c-old');
+		const it = items.find((x) => x.id === 'c-blank');
 		return it ? { found: true, kind: it.kind, auto: !!it.auto } : { found: false };
 	});
 	check('the expired chat is listed in the trash, as a chat, marked automatic',
@@ -701,8 +718,8 @@ try {
 	// opening line. Same pure function, so the two cannot drift apart again.
 	const railVsTrash = await page.evaluate(async () => {
 		const items = await window.DaimondCore.trashList();
-		const it = items.find((x) => x.id === 'c-old');
-		return { trash: it ? it.name : null, rail: window.DaimondCore.railTitle('c-old') };
+		const it = items.find((x) => x.id === 'c-blank');
+		return { trash: it ? it.name : null, rail: window.DaimondCore.railTitle('c-blank') };
 	});
 	check('the Trash panel names the chat exactly as the rail did',
 		!!railVsTrash.trash && railVsTrash.trash === railVsTrash.rail,
@@ -835,8 +852,8 @@ try {
 	// must then go when the pull is announced.
 	const gate = await page.evaluate(() => {
 		const raw = JSON.parse(localStorage.getItem('daimond-trash') || '{}');
-		if (!raw.items || !raw.items['c-old']) return 'no record to age';
-		raw.items['c-old'].at = Date.now() - 400 * 24 * 3600 * 1000;
+		if (!raw.items || !raw.items['c-blank']) return 'no record to age';
+		raw.items['c-blank'].at = Date.now() - 400 * 24 * 3600 * 1000;
 		localStorage.setItem('daimond-trash', JSON.stringify(raw));
 		return 'aged';
 	});
@@ -844,13 +861,13 @@ try {
 	await page.reload({ waitUntil: 'domcontentloaded' });
 	await signInAs(s, 'chatlife');
 	await page.waitForTimeout(1500);
-	const early = await page.evaluate(() => DaimondTrash.has('c-old'));
+	const early = await page.evaluate(() => DaimondTrash.has('c-blank'));
 	check('it is STILL THERE moments after the boot — the sweep has not run yet',
 		early === true, 'it was destroyed before this device had heard from any other');
 	const afterPull = await page.evaluate(async () => {
 		window.dispatchEvent(new Event('daimond:pulled'));
 		await new Promise((r) => setTimeout(r, 1500));
-		return DaimondTrash.has('c-old');
+		return DaimondTrash.has('c-blank');
 	});
 	check('and once a pull has landed, the sweep destroys it',
 		afterPull === false, 'the sweep never ran, so nothing is ever destroyed');

@@ -845,9 +845,13 @@ function chatHasLiveWork(chatId) {
 ///     turn the user is paying for.
 ///   * THE CHAT ON SCREEN. Whatever the clock says, nothing vanishes from
 ///     under somebody who is looking at it.
+///   * A CHAT HE WROTE IN. Only a chat with nothing he sent (empty, or never
+///     sent) is throw-away; a conversation he had is his work, and the clock
+///     alone must never put it on the way to being destroyed.
 export function chatDueAt(c) {
 	if (!c || !c.id) return 0;
 	if (c.diamondId) return 0;
+	if (chatWrittenIn(c)) return 0;
 	if (c._generating) return 0;
 	if ((c._queue && c._queue.length) || (c._interject && c._interject.length)) return 0;
 	if (pg.current && pg.current.id === c.id) return 0;
@@ -858,6 +862,18 @@ export function chatDueAt(c) {
 	try { win = DaimondPolicy.chatExpireMs(); }
 	catch (e) { return 0; }			// no policy module: nothing expires
 	return touched + win;
+}
+
+/// Does the chat hold a message he sent? Read off the transcript when it is
+/// wholly resident; otherwise off the summary, whose `opening` is his first
+/// line. Messages with no opening (an attachment-only turn, a row saved before
+/// `opening` existed, a transcript only partly read) count as written: nothing
+/// in hand says otherwise, and guessing wrong destroys his words.
+function chatWrittenIn(c) {
+	var msgs = Array.isArray(c.messages) ? c.messages : [];
+	if (msgs.length && !c._short) return msgs.some(function (m) { return !!m && m.role === 'user'; });
+	if (c.opening) return true;
+	return chatMsgCount(c) > 0;
 }
 
 /// Move every chat whose time is up into the trash, and take back any that
