@@ -52,7 +52,7 @@ const probe = () => page.evaluate(() => {
 	// The pulse is drawn by the icon's `.pulse-ring` span (css/app.css, TAB-MEM-5D): read its fade there.
 	const ring = n.querySelector('.pulse-ring'), rs = ring && getComputedStyle(ring);
 	const live = n.getAnimations({ subtree: true }).filter((a) => a.animationName === 'pulse-ring' && a.playState === 'running');
-	const look = cs.boxShadow !== 'none' ? cs.boxShadow : live.length ? getComputedStyle(ring, '::before').backgroundColor + ' ' + rs.opacity : 'none';
+	const look = cs.boxShadow !== 'none' ? cs.boxShadow : live.length ? getComputedStyle(ring.querySelector('i'), '::before').backgroundColor + ' ' + rs.opacity : 'none';
 	const chip = document.getElementById('sync-chip');
 	const rest = document.getElementById('sync-rest');
 	const shown = !!(chip && chip.style.display !== 'none');
@@ -68,7 +68,7 @@ const probe = () => page.evaluate(() => {
 	};
 });
 // The lens, read the same way. `shadow` is the ring as drawn: the icon's own static box-shadow under
-// reduced motion, else the `.pulse-ring` fill's colour and its fading opacity (none when no ring runs).
+// reduced motion, else the colour of the `.pulse-ring` pieces (`i::before`) and the ring's fading opacity (none when no ring runs).
 // `ringRGB` is its colour as 0-255 numbers, whichever way the engine writes it (rgba() or
 // color(srgb ...)), so a red ring and a green one can be told apart.
 const ringRGB = (sh) => {
@@ -83,7 +83,7 @@ const probeBoth = () => page.evaluate(() => {
 	const one = (n) => {
 		const cs = getComputedStyle(n), ring = n.querySelector('.pulse-ring');
 		const live = n.getAnimations({ subtree: true }).filter((a) => a.animationName === 'pulse-ring' && a.playState === 'running');
-		const shadow = cs.boxShadow !== 'none' ? cs.boxShadow : live.length ? getComputedStyle(ring, '::before').backgroundColor + ' ' + getComputedStyle(ring).opacity : 'none';
+		const shadow = cs.boxShadow !== 'none' ? cs.boxShadow : live.length ? getComputedStyle(ring.querySelector('i'), '::before').backgroundColor + ' ' + getComputedStyle(ring).opacity : 'none';
 		return { anim: live.length ? 'pulse-ring' : 'none', shadow, anims: live.length };
 	};
 	return { lens: one(document.querySelector('.ds-indicator')), sync: one(document.getElementById('sync-ico')) };

@@ -473,8 +473,7 @@ impl StoreEnv for NativeBackend {
     fn folder_known(id: &str) -> bool { run::current(|e| e.known.contains(id)).unwrap_or(false) }
     fn folder_open() -> bool { Self::folder_id().is_some() }
     fn this_page() -> String { run::current(|e| e.page.clone()).unwrap_or_default() }
-    fn page_is_live(page: &str) -> bool { run::page_is_live(page, &Self::this_page()) }
-    async fn page_is_running(page: &str) -> bool { Self::page_is_live(page) }
+    async fn page_is_running(page: &str) -> bool { run::page_is_live(page, &Self::this_page()) }
     fn now_ms() -> f64 {
         match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
             Ok(d)  => d.as_millis() as f64,

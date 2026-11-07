@@ -155,11 +155,17 @@ impl StoreEnv for OpfsBackend {
     fn folder_known(_id: &str) -> bool { false }
     fn folder_open() -> bool { false }
     fn this_page() -> String { PAGE.with(|p| p.clone()) }
-    fn page_is_live(page: &str) -> bool { PAGE.with(|p| p == page) }
     /// A browser that cannot say keeps the file: a crash's leftover is small, a live tab's line
     /// is his History.
+    ///
+    /// LIMIT (no lock query): no page that can write a note lacks `navigator.locks.query`.  A note
+    /// is written through `createWritable` ([`opfs`]), which arrived after `query` in every engine
+    /// (MDN browser-compat-data, api/FileSystemFileHandle.json and api/LockManager.json: Chrome 86
+    /// against 69, Firefox 111 against 96, Safari 26 against 15.4), and both are secure-context
+    /// only.  So "cannot say" is a query refused for an opaque origin or a detached document, where
+    /// OPFS is refused too and this page reads no note to keep.
     async fn page_is_running(page: &str) -> bool {
-        Self::page_is_live(page) || web_lock_named(&writer_lock(page)).await != Some(false)
+        PAGE.with(|p| p == page) || web_lock_named(&writer_lock(page)).await != Some(false)
     }
     fn now_ms() -> f64 { oxedyne_fe2o3_core::wasm::now_ms() }
     fn today() -> String {

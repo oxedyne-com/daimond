@@ -7,6 +7,7 @@
 use crate::tools::CallOutcome;
 
 use oxedyne_fe2o3_core::prelude::*;
+use oxedyne_fe2o3_core::rand::Rand;
 use oxedyne_fe2o3_jdat::prelude::*;
 use oxedyne_fe2o3_sbj::share;
 
@@ -1983,13 +1984,18 @@ pub fn user_config_key(username: &str) -> Dat {
     Dat::Str(fmt!("daimond:user:{}", username))
 }
 
-/// Generate a unique session ID (8 hex chars from timestamp + counter).
+/// A fresh id, lower-case hex: the millisecond, this process's count, then 64 random bits.
+///
+/// The count only separates ids minted by one process (one tab); two tabs loaded in the same
+/// millisecond count from the same zero, so without the random part they mint the same id and
+/// each takes the other's page lock and notes for its own.  The millisecond leads, so ids still
+/// sort by when they were minted.
 pub fn generate_session_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let ts = now_millis();
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    fmt!("{:x}{:x}", ts, n)
+    fmt!("{:x}{:x}{:016x}", ts, n, Rand::rand_u64())
 }
 
 
@@ -2374,7 +2380,7 @@ pub fn retarget(
 
 // How many ids are tried before an import gives up.
 //
-// A collision needs two ids minted in the same millisecond by the same counter, so one retry would
+// A collision needs two ids with the same millisecond, count and 64 random bits, so one retry would
 // almost certainly do.  The figure is what turns "almost certainly" into a bounded loop that fails
 // loudly, rather than a guess that fails silently over somebody's Diamond.
 const FRESH_ID_TRIES: usize = 32;

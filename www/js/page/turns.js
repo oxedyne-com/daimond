@@ -3641,9 +3641,15 @@ function opensTurn(m) {
 function undoNoteShown(m) {
 	var u = m.undone;
 	if (!u) return String(m.content || '');
-	var list = (u.restored || []).concat(u.removed || []).join(', ');
-	var key = u.how === 'redo' ? 'chat.redo_note' : u.how === 'restore' ? 'chat.restore_note' : 'chat.undo_note';
-	var said = t(key, { ask: u.ask || '', list: list });
+	// Each file named by what was done to it, from the lists `undoNoteText` reads for the model.
+	var acts = [], redo = u.how === 'redo';
+	if ((u.restored || []).length) acts.push(t(redo ? 'chat.redone_restored' : 'chat.undone_restored', { list: u.restored.join(', ') }));
+	if ((u.removed || []).length) acts.push(t(redo ? 'chat.redone_removed' : 'chat.undone_removed', { list: u.removed.join(', ') }));
+	var key = redo ? 'chat.redo_note' : u.how === 'restore' ? 'chat.restore_note' : 'chat.undo_note';
+	// `{}` so the bare separator is not recorded as a string `mark` may trace back.
+	// Every file left alone: the head alone, not a colon over an empty list.
+	var said = acts.length ? t(key, { ask: u.ask || '', list: acts.join(t('chat.undone_sep', {})) })
+		: t(redo ? 'chat.redo_note_none' : u.how === 'restore' ? 'chat.restore_note_none' : 'chat.undo_note_none', { ask: u.ask || '' });
 	if ((u.skipped || []).length) said += ' ' + t('chat.undo_note_left', { list: u.skipped.map(function (x) { return x.path; }).join(', ') });
 	return said;
 }

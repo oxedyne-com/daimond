@@ -4755,13 +4755,14 @@ async fn drain_turn_held<S: StandingSource>(hold: &VersionHold, id: &str, src: &
     let notes = pending_notes(id).await;
     let mut settle_list: Vec<String> = Vec::new();
     let mut broken: Vec<(String, Change)> = Vec::new();    // (the note, the run it began)
-    // A LIVE PAGE'S NOTE IS ITS OWN ([`own::page_is_live`]): in the tab only this page is live;
-    // natively, so is every run still running on the store.
+    // A LIVE PAGE'S NOTE IS ITS OWN ([`own::page_is_running`]): this page, another tab still
+    // holding its writer lock, or a run the store has bound and not yet dropped.
     let this = own::this_page();
     for note in notes.into_iter() {
-        // ANOTHER LIVE RUN'S NOTE IS ITS OWN, whatever it is: its own turn end settles it.  Never
-        // in the tab, where only this page is live.
-        if note.page != this && own::page_is_live(&note.page) {
+        let live = own::page_is_running(&note.page).await;
+        // ANOTHER LIVE RUN'S NOTE IS ITS OWN, whatever it is: its own turn end settles it.  Past
+        // here a note is this page's or a gone page's, so `live` is "this page's".
+        if note.page != this && live {
             continue;
         }
         // A RESTORE'S COPY IS ITS OWN RECORD'S while the restore is open on this page: its close
@@ -4770,13 +4771,13 @@ async fn drain_turn_held<S: StandingSource>(hold: &VersionHold, id: &str, src: &
         // life's note is, so the copy is a row whoever records it.
         let restoring = note.restore.is_some();
         if let Some(t) = note.restore {
-            if restore_holds_note(t) || (own::page_is_live(&note.page) && restore_is_open(t)) {
+            if restore_holds_note(t) || (live && restore_is_open(t)) {
                 continue;
             }
             // Another tab's restore, still open while it holds its lock (U3): its close records it.
             // A close settles its notes before it lets the lock go, so a note that is gone by the
             // time the lock reads free was the close's, and is not adopted either.
-            if !own::page_is_live(&note.page) {
+            if !live {
                 if own::lock_held(&restore_lock_name(&note.page, t)).await == Some(true) {
                     continue;
                 }
@@ -4804,7 +4805,7 @@ async fn drain_turn_held<S: StandingSource>(hold: &VersionHold, id: &str, src: &
             // ITS COPY IS A ROW ONCE, never twice (QA1-D, lead ruling): bytes some version of the
             // path already holds, before or after, add none; only a copy held nowhere does.
             // A test's red: off("unnamed_once").
-            let earlier = !own::page_is_live(&note.page) || restoring;
+            let earlier = !live || restoring;
             if !earlier && unnamed && !off("unnamed_once")
                 && held_as_version(id, &note.path, note.folder.as_deref(), &note.was).await
             {
@@ -4840,9 +4841,7 @@ async fn drain_turn_held<S: StandingSource>(hold: &VersionHold, id: &str, src: &
             settle_list.push(note.name);
             continue;
         }
-        let live = own::page_is_live(&note.page) && !restoring
-            && reserved_by(&note.page, id, &note.path);
-        if live {
+        if live && !restoring && reserved_by(&note.page, id, &note.path) {
             continue;
         }
         let before = match own::read_file(&body_path(id, &note.was)).await {
@@ -5073,7 +5072,7 @@ pub async fn turn_wants(id: &str) -> Wants {
         {
             continue;
         }
-        let live = own::page_is_live(&note.page);
+        let live = own::page_is_running(&note.page).await;
         match note.restore {
             Some(t) if restore_holds_note(t) || (live && restore_is_open(t)) => continue,
             None if live && reserved_by(&note.page, id, &note.path) => continue,

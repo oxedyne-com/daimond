@@ -39,6 +39,9 @@
 //      lock left there; live with the same set-up refuses, output and call log equal to base's.
 //   9. Trap 14 under a net (tn-U1d): the kit names a net's unit dk-<NAME>-<suffix>-<net>, so a
 //      test run in dk-x-real-test (and -rollback-test) passes; live there refuses; live in dk-x-real passes.
+//  11. A real release, live and test, leaves the net's live gateway record (NET_GW_LIVE_RECORD, in
+//      the fixture) as `live=running` and the host's gateway.provenance verbatim; a dry one writes
+//      none. Arm 1 leaves that record's one read of jarrah out of its comparison with the base.
 //
 //   node dev/verify_deploynet.mjs                  # this tree's deploy.sh
 //   node dev/verify_deploynet.mjs --deploy PATH    # another deploy.sh as "new" (a red proof)
@@ -95,14 +98,15 @@ const git = (cwd, ...a) => {
 // ── The shims: jarrah, played by a state directory ─────────────────────────
 //
 // One script under six names. It logs `name argv… | stdin <sha>` with any YYYYMMDD_HHMMSS
-// stamp normalised, then answers by what the remote command asks. The gateway's record is
+// stamp and the gateway_tree id normalised (the base reads HEAD:gateway, the new deploy.sh
+// dev/gw_tree.sh; arm 11 checks the id itself), then answers by what the remote command asks. The gateway's record is
 // kept across calls, so the swap, the confirm and the served-builds append all see what a
 // real jarrah would.
 const SHIM = String.raw`#!/bin/bash
 me="$(basename "$0")"
 norm() { sed -E 's/[0-9]{8}_[0-9]{6}/STAMP/g'; }
 in="$(cat)"
-sum="$(printf '%s' "$in" | norm | sha256sum | cut -c1-16)"
+sum="$(printf '%s' "$in" | norm | sed -E 's/^gateway_tree=[0-9a-f]+$/gateway_tree=TREE/' | sha256sum | cut -c1-16)"
 { printf '%s' "$me"; for a in "$@"; do printf ' «%s»' "$a"; done; printf ' | stdin %s\n' "$sum"; } | norm >> "$SHIM_LOG"
 S="$SHIM_STATE"; last="${'$'}{!#}"
 # The gateway's name on the host is the net's NET_EXE: read it off the command that asks.
@@ -113,6 +117,7 @@ sums() { if [ -f "$S/prov" ]; then for n in $gw daimond_ctl app.jdat; do
 case "$me" in
 ssh)
 	case "$last" in
+	*__GW_LIVE_SUMS__*) echo __GW_LIVE_SUMS__; sums; echo __GW_LIVE_PROV__; [ ! -f "$S/prov" ] || cat "$S/prov" ;;
 	*__GW_PROVENANCE__*) sums; echo __GW_PROVENANCE__; if [ -f "$S/prov" ]; then cat "$S/prov"; else echo __GW_PROVENANCE_ABSENT__; fi ;;
 	*'sha256sum '*' daimond_ctl'*) sums ;;
 	*'cat > '*'gateway.provenance.new && mv '*) printf '%s\n' "$in" > "$S/prov" ;;
@@ -214,8 +219,10 @@ function fixture(deploySrc, liveEnv) {
 		write(bin + '.d', `${bin}: ${path.join(T, 'gateway', 'src', 'main.rs')} ${path.join(F, 'fe2o3_core', 'src', 'lib.rs')}\n`);
 		fs.utimesSync(bin + '.d', old, old);
 	}
-	// What is under test, untracked.
+	// What is under test, untracked, with the gateway scripts it calls.
 	write(path.join(T, 'dev', 'deploy.sh'), deploySrc, 0o755);
+	for (const n of ['gw_tree.sh', 'gw_live_record.sh'])
+		write(path.join(T, 'dev', n), fs.readFileSync(path.join(REPO, 'dev', n), 'utf8'), 0o755);
 	for (const n of ['live.env', 'test.env']) {
 		const src = path.join(REPO, 'deploy', 'net', n);
 		if (fs.existsSync(src)) write(path.join(T, 'deploy', 'net', n), fs.readFileSync(src, 'utf8'));
@@ -252,6 +259,16 @@ function release(deploySrc, mode, net, liveEnv, www = '', extra = {}) {
 		for (const e of fs.readdirSync(M)) fs.chmodSync(path.join(M, e), 0o000);
 		fs.chmodSync(M, 0o100);
 	}
+	// A release writes the live gateway record under the net lock: the fixture's, never this machine's.
+	// The base predates those two keys, and its profile parse refuses a key it does not know.
+	for (const n of ['live.env', 'test.env']) {
+		const p = path.join(T, 'deploy', 'net', n);
+		if (fs.existsSync(p) && !/NET_GW_LIVE_RECORD/.test(deploySrc))
+			fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(/^(NET_LOCK|NET_GW_LIVE_RECORD)=.*\n/gm, ''));
+		else if (fs.existsSync(p)) fs.writeFileSync(p, fs.readFileSync(p, 'utf8')
+			.replace(/^NET_LOCK=.*$/m, `NET_LOCK='${path.join(FX, 'state', n + '.lock')}'`)
+			.replace(/^NET_GW_LIVE_RECORD=.*$/m, `NET_GW_LIVE_RECORD='${path.join(FX, 'state', n + '.gw_live_record')}'`));
+	}
 	const log = path.join(FX, 'calls.log');
 	fs.writeFileSync(log, '');
 	const env = {
@@ -277,7 +294,9 @@ function release(deploySrc, mode, net, liveEnv, www = '', extra = {}) {
 	}
 	if (extra.FX_MIRROR_OFF) { fs.chmodSync(M, 0o755); for (const e of fs.readdirSync(M)) fs.chmodSync(path.join(M, e), 0o755); }
 	const out = (r.stdout || '') + (r.stderr || '');
-	return { rc: r.status, out, calls: fs.readFileSync(log, 'utf8'), M };
+	const calls = fs.readFileSync(log, 'utf8');
+	// The live gateway record's one read of jarrah is arm 11's; arm 1 compares the rest with a base that has none.
+	return { rc: r.status, out, calls: calls.split('\n').filter(l => !l.includes('__GW_LIVE_SUMS__')).join('\n'), allCalls: calls, M, FX, S };
 }
 
 const firstDiff = (a, b) => {
@@ -399,6 +418,8 @@ NET_URL=https://daimond.oxedyne.com
 NET_HEALTH=public
 NET_SEAL=full
 NET_EXE=daimond_gateway
+NET_LOCK=~/.local/state/daimond-ship/net-live.lock
+NET_GW_LIVE_RECORD=~/.local/state/kimberlite/live_gateway_provenance
 `;
 	const TEST = `NET=test
 NET_HOST=jarrah
@@ -411,6 +432,8 @@ NET_URL=https://test.daimond.oxedyne.com
 NET_HEALTH=loopback:9003
 NET_SEAL=none
 NET_EXE=daimond_gw_test
+NET_LOCK=~/.local/state/daimond-ship/net-test.lock
+NET_GW_LIVE_RECORD=~/.local/state/kimberlite-test/live_gateway_provenance
 `;
 	const { T } = fixture(newSrc);
 	const cn = (net, extra = {}) => {
@@ -588,6 +611,26 @@ if (want(10)) {
 		const o = r => r.out.replace(/pid \d+/g, 'pid N').replace(/\d{8}_\d{6}/g, 'STAMP').replace(/deploy\.sh: line \d+:/g, 'deploy.sh: line N:') + r.calls;
 		check(`10 live ${mode}: refuses`, lv.rc !== 0 && /deploy FAILED/.test(lv.out), `rc ${lv.rc}\n${lv.out.slice(-600)}`);
 		check(`10 live ${mode}: output and call log identical to base`, lv.rc === lb.rc && o(lv) === o(lb), firstDiff(o(lb), o(lv)));
+	}
+}
+
+// ── 11. The live gateway record, written from what the host holds ──────────
+if (want(11)) {
+	console.log('\n11. A real release leaves the net\'s live gateway record naming the shipped gateway; a dry one writes none');
+	for (const net of ['test', undefined]) {
+		const tag = `11 ${net ?? 'live'}`, n = release(newSrc, 'real', net);
+		const rec = path.join(n.FX, 'state', `${net ?? 'live'}.env.gw_live_record`);
+		const prov = fs.existsSync(path.join(n.S, 'prov')) ? fs.readFileSync(path.join(n.S, 'prov'), 'utf8').replace(/\n+$/, '') : '';
+		check(`${tag} real: completes`, ran(n), n.out.slice(-1500));
+		check(`${tag} real: the record is live=running and the host's gateway.provenance verbatim`,
+			prov !== '' && fs.existsSync(rec) && fs.readFileSync(rec, 'utf8') === `live=running\n${prov}\n`,
+			fs.existsSync(rec) ? fs.readFileSync(rec, 'utf8').slice(0, 300) : `no record at ${rec}`);
+		const tree = sh('bash', [path.join(n.FX, 'tree', 'dev', 'gw_tree.sh'), '-C', path.join(n.FX, 'tree'), 'HEAD']).stdout.trim();
+		check(`${tag} real: the shipped gateway.provenance names dev/gw_tree.sh's gateway_tree`,
+			tree !== '' && prov.split('\n').includes(`gateway_tree=${tree}`), `gw_tree.sh ${tree || 'refused'}; record ${prov.split('\n').find(l => l.startsWith('gateway_tree=')) ?? 'names no gateway_tree'}`);
+		check(`${tag} real: the record read jarrah once more after the swap`, /__GW_LIVE_SUMS__/.test(n.allCalls), 'no record read in the call log');
+		const d = release(newSrc, 'dry', net);
+		check(`${tag} dry: no record written`, ran(d) && !fs.existsSync(path.join(d.FX, 'state', `${net ?? 'live'}.env.gw_live_record`)), d.out.slice(-800));
 	}
 }
 

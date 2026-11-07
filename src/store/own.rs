@@ -2,7 +2,7 @@
 //!
 //! A call `opfs::read_file(FileRoot::Opfs, &p)` is `own::read_file(&p)` here; a read or write on a
 //! user root is `own::user_*` with its root; the page's environment is [`folder_id`],
-//! [`folder_known`], [`folder_open`], [`this_page`] and [`page_is_live`].
+//! [`folder_known`], [`folder_open`], [`this_page`] and [`page_is_running`].
 
 use crate::{
     diamond_versions::Seen,
@@ -106,8 +106,6 @@ pub fn folder_known(id: &str) -> bool { Backend::folder_known(id) }
 pub fn folder_open() -> bool { Backend::folder_open() }
 
 pub fn this_page() -> String { Backend::this_page() }
-
-pub fn page_is_live(page: &str) -> bool { Backend::page_is_live(page) }
 
 pub async fn page_is_running(page: &str) -> bool { Backend::page_is_running(page).await }
 

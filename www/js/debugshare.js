@@ -1657,8 +1657,8 @@
 			s.id = 'ds-style';
 			s.textContent =
 				'.ds-indicator{display:inline-flex;align-items:center;justify-content:center;'
-				+ 'width:34px;height:34px;margin:0 2px;border-radius:8px;cursor:pointer;'
-				+ 'border:1px solid #ef4444;background:#fee2e2;color:#b91c1c;}'
+				+ 'width:34px;height:34px;margin:0 2px;--ico-r:8px;--ico-b:1px;border-radius:var(--ico-r);cursor:pointer;'
+				+ 'border:var(--ico-b) solid #ef4444;background:#fee2e2;color:#b91c1c;}'
 				+ '.ds-indicator:hover{background:#fecaca;}'
 				+ '.ds-indicator .ic{width:20px;height:20px;stroke:currentColor;stroke-width:2;'
 				+ 'fill:none;stroke-linecap:round;stroke-linejoin:round;}'
@@ -1688,7 +1688,7 @@
 				+ '<path d="M1.5 12S5 5.5 12 5.5 22.5 12 22.5 12 19 18.5 12 18.5 1.5 12 1.5 12z"/>'
 				+ '<circle cx="12" cy="12" r="3"/></svg>'
 				// The pulse's ring (css/app.css `.pulse-ring`): drawn on the compositor, outside the box.
-				+ '<span class="pulse-ring" aria-hidden="true"><i></i><i></i></span>';
+				+ '<span class="pulse-ring" aria-hidden="true"><i></i><i></i><i></i><i></i></span>';
 			b.addEventListener('click', function () {
 				// Best-effort nudge toward Settings; harmless if nobody listens.
 				try { window.dispatchEvent(new CustomEvent('daimond:opensettings', { detail: { from: 'debugshare' } })); }

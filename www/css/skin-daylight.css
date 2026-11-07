@@ -282,7 +282,7 @@
 :root[data-skin="daylight"] .files-view-head > span > button,
 :root[data-skin="daylight"] .pptw-head .pptw-act {
 	height: 30px; min-height: 30px; box-sizing: border-box; align-self: center;
-	border-color: transparent; border-radius: var(--radius); color: var(--text-secondary); font-size: var(--dl-xs);
+	border-color: transparent; --ico-r: var(--radius); border-radius: var(--ico-r); color: var(--text-secondary); font-size: var(--dl-xs);
 }
 :root[data-skin="daylight"] :is(.chead-right, .railhead, .railhead-acts, .files-actions, .mail-actions, .spend-actions,
 	.trash-actions, .pending-actions, .files-view-head, .top-actions, .pptw-head) > button :is(svg, .ic),

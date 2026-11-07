@@ -3118,7 +3118,9 @@ function histMetaRow(m) {
 	var note = document.createElement('div');
 	note.className = 'hist-note';
 	note.textContent = t('versions.meta_row', {   // escaped via textContent
-		field: m.field, old: m.old || none, 'new': m['new'] || none,
+		field: t('versions.meta_field_' + (['name', 'tags', 'builtin', 'no_progress_rounds'].indexOf(m.field) >= 0
+			? m.field : 'other'), { key: m.field }),
+		old: m.old || none, 'new': m['new'] || none,
 		by: t('versions.meta_by_' + (['user', 'daimon', 'sync', 'rebuild', 'app'].indexOf(m.by) >= 0 ? m.by : 'user')),
 		device: dev,
 	});

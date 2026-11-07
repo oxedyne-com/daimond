@@ -180,50 +180,65 @@ svg { display: block; }
    lens was on (all day, with debug sharing on) every frame re-ran style, pre-paint and a
    repaint of the WHOLE document around it: 42 frames a second at ~18 ms each, 88% of a core,
    on a tab doing nothing. So each icon holds a `.pulse-ring` span (debugshare.js builds the
-   lens's, index.html carries the sync icon's): a 44px box, 5px out from the icon's border
-   edge, clipped by a STATIC path to exactly the band the old shadow could reach (outside the
-   34px r8 icon, inside its full 5px spread, r13), so nothing is ever drawn inside the icon.
-   In it the old shadow's shape is built from pieces that each only SCALE: a shadow of
-   spread d is the icon's rounded square grown by d on every side, which is two crossed
-   bars (44px long, 18px wide, between the corners) and four corner discs (each about its
-   corner's centre, radius 8+d). Each bar scales along its length (34/44 -> 1) and each disc
-   about its own centre (8/13 -> 1), so at every instant they draw spread d = 5t exactly, and
-   the span fades the union as one (.55 -> 0, the colour's old alpha), so overlaps never
-   darken. Same stops, same easing as the old box-shadow keyframes: frame for frame the old
-   look. Only `transform` and `opacity` move, which the compositor animates with no
-   main-thread frame at all. dev/verify_idleframes.mjs holds it: an idle page draws no
-   main-thread frames. Never animate a paint property (box-shadow, background, width...) on
-   an infinite loop; www/js/paintloop.test.mjs refuses one anywhere in www. */
+   lens's, index.html carries the sync icon's) whose box is the icon's border box grown by the
+   spread on every side, with a transparent border as wide as the spread, masked to that
+   border: exactly the band the old shadow could reach, outside the icon and never inside it.
+   Its padding box is therefore the icon's own border box, so the pieces below are placed on
+   the icon's edges and corners whatever its size. In it the old shadow's shape is built from
+   pieces that only MOVE or SCALE: a shadow of spread d is the icon's rounded square grown by
+   d on every side, which is four half-bars (each slides out by the spread, between the corner
+   centres) and four corner discs (each about its corner's centre, radius r+d, scaled from
+   r/(r+d)), so at every instant they draw spread d = 5t exactly; the span fades the union as
+   one (.55 -> 0, the colour's old alpha), so overlaps never darken. Same stops, same easing
+   as the old box-shadow keyframes. Only `transform` and `opacity` move, which the compositor
+   animates with no main-thread frame at all. dev/verify_idleframes.mjs holds that: an idle
+   page draws no main-thread frames; dev/verify_pulsering.mjs holds the shape on both icons.
+   Never animate a paint property (box-shadow, background, width...) on an infinite loop;
+   www/js/paintloop.test.mjs refuses one anywhere in www.
+   THE ICON'S SHAPE COMES FROM THE ICON. Width and height are its box; its corner radius and
+   border width are `--ico-r` and `--ico-b`, which each icon's own rules set and draw its
+   border with, so the ring cannot disagree with the icon (the lens is 34x30 under the
+   daylight skin's head row, not the 34x34 the ring was first cut for). */
 @keyframes pulse-ring {
 	/* fixed: .55, the alpha the old ring started at */
 	0%, 100% { opacity: .55; }
 	50%      { opacity: 0; }
 }
-/* fixed: 34/44, a 44px bar (the 34px icon plus 5px a side) shrunk onto the icon's edge */
-@keyframes pulse-ring-x { 0%, 100% { transform: scaleX(.772727); } 50% { transform: scaleX(1); } }
-@keyframes pulse-ring-y { 0%, 100% { transform: scaleY(.772727); } 50% { transform: scaleY(1); } }
-/* fixed: 8/13, the icon's corner radius over the radius at the full 5px spread */
-@keyframes pulse-ring-c { 0%, 100% { transform: scale(.615385); } 50% { transform: scale(1); } }
+@keyframes pulse-ring-l { 0%, 100% { transform: translateX(var(--ring)); }	50% { transform: translateX(0); } }
+@keyframes pulse-ring-r { 0%, 100% { transform: translateX(calc(-1 * var(--ring))); }	50% { transform: translateX(0); } }
+@keyframes pulse-ring-t { 0%, 100% { transform: translateY(var(--ring)); }	50% { transform: translateY(0); } }
+@keyframes pulse-ring-b { 0%, 100% { transform: translateY(calc(-1 * var(--ring))); }	50% { transform: translateY(0); } }
+@keyframes pulse-ring-c { 0%, 100% { transform: scale(calc(var(--ico-r) / (var(--ico-r) + var(--ring)))); }	50% { transform: scale(1); } }
 .ds-indicator { --pulse: rgb(239, 68, 68); position: relative; }
 .ds-indicator, .sync-ico.on { --pulse-from: color-mix(in srgb, var(--pulse) 55%, transparent); }
-.pulse-ring { display: none; position: absolute; inset: -5px; pointer-events: none;
-	/* fixed: the old shadow's reach for a 34px r8 icon: 44px r13 minus the icon itself */
-	clip-path: path(evenodd, 'M13 0H31A13 13 0 0 1 44 13V31A13 13 0 0 1 31 44H13A13 13 0 0 1 0 31V13A13 13 0 0 1 13 0ZM13 5H31A8 8 0 0 1 39 13V31A8 8 0 0 1 31 39H13A8 8 0 0 1 5 31V13A8 8 0 0 1 13 5Z');
+/* fixed: 5px, the old box-shadow's full spread */
+.pulse-ring { --ring: 5px; display: none; position: absolute; inset: calc(-1 * (var(--ring) + var(--ico-b, 0px)));
+	box-sizing: border-box; border: var(--ring) solid transparent; border-radius: calc(var(--ico-r) + var(--ring));
+	pointer-events: none;
+	-webkit-mask: linear-gradient(#000 0 0) border-box, linear-gradient(#000 0 0) padding-box;
+	-webkit-mask-composite: xor; mask-composite: exclude;
 	animation: pulse-ring 1.6s ease-in-out infinite; }
-/* fixed: the lens has a 1px border (js/debugshare.js), and `inset` counts from inside it */
-.ds-indicator .pulse-ring { inset: -6px; }
 .pulse-ring i { position: absolute; inset: 0; }
-.pulse-ring::before, .pulse-ring::after, .pulse-ring i::before, .pulse-ring i::after { content: ''; position: absolute;
+.pulse-ring i::before, .pulse-ring i::after { content: ''; position: absolute;
 	background: var(--pulse); animation: 1.6s ease-in-out infinite; }
-/* fixed: the pieces' places in the 44px box: bars between the corner centres (13..31), discs r13 on them */
-.pulse-ring::before { left: 0; top: 13px; width: 44px; height: 18px; animation-name: pulse-ring-x; }
-.pulse-ring::after { left: 13px; top: 0; width: 18px; height: 44px; animation-name: pulse-ring-y; }
-.pulse-ring i::before, .pulse-ring i::after { width: 26px; height: 26px; border-radius: 50%; animation-name: pulse-ring-c; }
-.pulse-ring i:first-child::before { left: 0; top: 0; }
-.pulse-ring i:first-child::after { left: 18px; top: 0; }
-.pulse-ring i:last-child::before { left: 0; top: 18px; }
-.pulse-ring i:last-child::after { left: 18px; top: 18px; }
+/* Half-bars between the corner centres, each from the middle out past its edge. */
+.pulse-ring i:nth-child(1)::before { left: calc(-1 * var(--ring)); right: 50%; top: var(--ico-r); bottom: var(--ico-r); animation-name: pulse-ring-l; }
+.pulse-ring i:nth-child(1)::after  { left: 50%; right: calc(-1 * var(--ring)); top: var(--ico-r); bottom: var(--ico-r); animation-name: pulse-ring-r; }
+.pulse-ring i:nth-child(2)::before { top: calc(-1 * var(--ring)); bottom: 50%; left: var(--ico-r); right: var(--ico-r); animation-name: pulse-ring-t; }
+.pulse-ring i:nth-child(2)::after  { top: 50%; bottom: calc(-1 * var(--ring)); left: var(--ico-r); right: var(--ico-r); animation-name: pulse-ring-b; }
+/* Corner discs, each centred on its corner's centre. */
+.pulse-ring i:nth-child(n+3)::before, .pulse-ring i:nth-child(n+3)::after { width: calc(2 * (var(--ico-r) + var(--ring)));
+	height: calc(2 * (var(--ico-r) + var(--ring))); border-radius: 50%; animation-name: pulse-ring-c; }
+.pulse-ring i:nth-child(3)::before { left: calc(-1 * var(--ring)); top: calc(-1 * var(--ring)); }
+.pulse-ring i:nth-child(3)::after  { right: calc(-1 * var(--ring)); top: calc(-1 * var(--ring)); }
+.pulse-ring i:nth-child(4)::before { left: calc(-1 * var(--ring)); bottom: calc(-1 * var(--ring)); }
+.pulse-ring i:nth-child(4)::after  { right: calc(-1 * var(--ring)); bottom: calc(-1 * var(--ring)); }
 .ds-indicator .pulse-ring, .sync-ico.on .pulse-ring { display: block; }
+/* A browser without length division in calc() (the discs' scale) gets the still ring, not a misdrawn one. */
+@supports not (scale: calc(1px / 2px)) {
+	.ds-indicator .pulse-ring, .sync-ico.on .pulse-ring { display: none; }
+	.ds-indicator, .sync-ico.on { box-shadow: 0 0 0 3px var(--pulse-from); }
+}
 @media (prefers-reduced-motion: reduce) {
 	.ds-indicator .pulse-ring, .sync-ico.on .pulse-ring { display: none; }
 	.ds-indicator, .sync-ico.on { box-shadow: 0 0 0 3px var(--pulse-from); }
@@ -234,7 +249,7 @@ svg { display: block; }
    reduced-motion rule are above, shared with the lens). The `::after` is a 44px
    touch target for the tap that shows its words. */
 .sync-ico { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center;
-	width: 34px; height: 34px; margin: 0 2px; border-radius: 8px; color: var(--text-muted); cursor: default;
+	--ico-r: 8px; width: 34px; height: 34px; margin: 0 2px; border-radius: var(--ico-r); color: var(--text-muted); cursor: default;
 	-webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .sync-ico::after { content: ''; position: absolute; inset: -5px; }
 .sync-ico .ic { width: 20px; height: 20px; stroke-width: 2; }
