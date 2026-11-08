@@ -67,6 +67,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { loadStore } from './storefixture.mjs';
+import { enc, dec, cmp, inRange, isRange } from './test/idbkeys.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0;
@@ -193,6 +194,8 @@ function makeChunksTab() {
 // fires oncomplete/onabort a tick later, so the async commit is modelled honestly.
 // `setFailWrites` makes every put abort, as a full disk does — the case that proves
 // migrate() loses nothing and the durability gate still bites.
+const KeyRange = { bound: (lower, upper, lo, uo) => ({ lower, upper, lowerOpen: !!lo, upperOpen: !!uo }) };
+const Policy = { storePieceBytes: () => 32768, storeWaitMs: () => 20000 };
 function makeIndexedDB() {
 	const dbs = new Map();		// name -> Map(store -> Map(key -> val))
 	let failWrites = false;
@@ -213,7 +216,7 @@ function makeIndexedDB() {
 				// writes) belongs to the same transaction.
 				let open = 0, over = false;
 				const request = (work) => {
-					const rq = { onsuccess: null, onerror: null, result: undefined };
+					const rq = { ls: [], addEventListener(e, f) { if (e === 'success') this.ls.push(f); }, onsuccess: null, onerror: null, result: undefined };
 					open++;
 					soon(() => {
 						if (over) return;
@@ -224,15 +227,28 @@ function makeIndexedDB() {
 							if (tx.onabort) tx.onabort();
 							return;
 						}
-						if (rq.onsuccess) rq.onsuccess();
+						if (rq.onsuccess) rq.onsuccess(); rq.ls.forEach((f) => f());
 						soon(() => { if (!over && open === 0) { over = true; if (tx.oncomplete) tx.oncomplete(); } });
 					});
 					return rq;
 				};
 				const os = {
-					get: (k) => request((rq) => { rq.result = data.has(k) ? data.get(k) : undefined; }),
-					put: (v, k) => request(() => { if (failWrites) return false; data.set(k, v); }),
-					delete: (k) => request(() => { data.delete(k); }),
+					get: (k) => request((rq) => { rq.result = data.has(enc(k)) ? data.get(enc(k)) : undefined; }),
+					put: (v, k) => request(() => { if (failWrites) return false; data.set(enc(k), v); }),
+					// A key range is durable.js's `IDBKeyRange.bound` below; a cursor reads the store as it
+					// stands at each step, so it sees the writes its transaction issued before it.
+					delete: (k) => request(() => { if (isRange(k)) { for (const x of [...data.keys()]) if (inRange(k, dec(x))) data.delete(x); } else data.delete(enc(k)); }),
+					openCursor: (r) => {
+						const rq = { ls: [], addEventListener(e, f) { if (e === 'success') this.ls.push(f); }, onsuccess: null, result: null };
+						let last;
+						const step = () => { const q = request((q1) => {
+							const k = [...data.keys()].map(dec).filter((x) => inRange(r, x) && (last === undefined || cmp(x, last) > 0)).sort(cmp)[0];
+							last = k;
+							q1.result = k === undefined ? null : { key: k, value: data.get(enc(k)), continue: step };
+						}); q.onsuccess = () => { rq.result = q.result; if (rq.onsuccess) rq.onsuccess(); rq.ls.forEach((f) => f()); }; };
+						step();
+						return rq;
+					},
 				};
 				tx.objectStore = () => os;
 				return tx;
@@ -247,7 +263,7 @@ function makeIndexedDB() {
 					const fresh = !dbs.has(name) || dbs.get(name).size === 0;
 					req.result = makeDb(name);
 					lastDb = req.result;	// remember the live connection so a test can drop it
-					if (fresh && req.onupgradeneeded) req.onupgradeneeded();
+					if (fresh && req.onupgradeneeded) req.onupgradeneeded({ oldVersion: 0 });
 					if (req.onsuccess) req.onsuccess();
 				});
 				return req;
@@ -310,7 +326,7 @@ function patchDurable(body) {
 /// for daimond.js's storage alarm, so a test can watch it raised and cleared.
 function makeDurableCloudTab(storage, idbApi, core) {
 	const win = { addEventListener: () => {}, dispatchEvent: () => true,
-		indexedDB: idbApi, DaimondCore: core };
+		indexedDB: idbApi, IDBKeyRange: KeyRange, DaimondPolicy: Policy, DaimondCore: core };
 	const nav = { storage: {} };
 	const run = (src) => {
 		const fn = new Function('window', 'localStorage', 'navigator', 'setTimeout', 'clearTimeout', 'console',
@@ -318,6 +334,7 @@ function makeDurableCloudTab(storage, idbApi, core) {
 		fn(win, storage.api, nav, setTimeout, clearTimeout, QUIET);
 	};
 	run(readPage(join(HERE, 'store.js'), 'utf8'));
+	run(readPage(join(HERE, 'storewait.js'), 'utf8'));
 	run(patchDurable(readPage(join(HERE, 'durable.js'), 'utf8')));
 	run(patchCloud(readPage(join(HERE, 'cloud.js'), 'utf8')));
 	return win.DaimondCloud;

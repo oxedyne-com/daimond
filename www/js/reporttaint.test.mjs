@@ -61,6 +61,7 @@ console.log('\n(b) take: the asker marks, saves and tells the engine\n');
 {
 	const page = (recs) => {
 		const w = makeWindow({ now: NOW });
+		loadScript(w, 'storewait.js');	// as index.html loads it before the page
 		const saved = { n: 0 };
 		let F = null;
 		try {

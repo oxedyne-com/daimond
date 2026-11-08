@@ -43,7 +43,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createHash, webcrypto } from 'node:crypto';
-import { makeWindow } from '../../dev/syncprobe.mjs';
+import { makeWindow, loadScript } from '../../dev/syncprobe.mjs';
 import { loadPage } from './test/page.mjs';
 import { fakeIdb } from './test/fakeidb.mjs';
 
@@ -93,6 +93,8 @@ function tab(data, ls, fx, cloud) {
 	}
 	w.indexedDB = fakeIdb(data, fx); w.IDBKeyRange = { bound: (lower, upper) => ({ lower, upper }) };
 	w.setTimeout = setTimeout; w.clearTimeout = clearTimeout;
+	loadScript(w, 'trash.js');	// DaimondPolicy: storewait.js bounds each wait by its storeWaitMs
+	loadScript(w, 'storewait.js');	// ChatStore opens through it, as index.html loads it before the page
 	w.DaimondTime = { fmtLocal: () => '' };	// the re-read's re-render formats times
 	const P = loadPage({ window: w, want: ['ChatStore', 'storedChats', 'collectChatsRefs', 'mayCommitChunks', 'offloadBlockedReason', 'pg'],
 		stub: { noteCloudIndexStuck: () => {}, t: (k) => k, tOr: (k, d) => d,

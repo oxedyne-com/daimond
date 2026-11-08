@@ -44,7 +44,7 @@ function makeWriteSyncFile() {
 	const stub = {
 		storageAlarm:      (why, src) => { alarms.push({ why: String(why || ''), src: src || 'store' }); },
 		storageAlarmClear: (src) => { clears.push(src || 'store'); },
-		tOr:               (key, fallback) => fallback,
+		tOr:               (key, fallback, v) => String(fallback).replace(/\{(\w+)\}/g, (m, n) => (v && n in v ? v[n] : m)),
 		syncFileAt:        async () => null,	// the merge's compare-and-swap read; not asked here (no `was`)
 	};
 	// `--break noquotacheck` reverts to the release 5.1.1 body: answer `!!r && r.outcome ===
@@ -98,8 +98,8 @@ console.log('writesyncalarm: a refused OPFS write raises the standing files alar
 		// EXISTING storage-full wording, not lane H's bespoke `store.files_full` prose --
 		// one message for one condition. `store.full` (2026-08-02, `storeReason`'s own
 		// fallback) is that existing string, so the check matches it rather than "full".
-		check('QUOTA: the alarm names the browser\'s storage, out of room',
-			alarms.length === 1 && /storage/i.test(alarms[0].why) && /no room left/i.test(alarms[0].why),
+		check('QUOTA: the alarm names the browser\'s file storage, out of room',
+			alarms.length === 1 && /file storage \(OPFS\)/.test(alarms[0].why) && /no room left/i.test(alarms[0].why),
 			JSON.stringify(alarms));
 	}
 	check('QUOTA: nothing is cleared on a failed write', clears.length === 0, JSON.stringify(clears));

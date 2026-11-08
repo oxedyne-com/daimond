@@ -2899,8 +2899,10 @@ export function install() { // page-split: install
 		// And when a file's deletion or return could not be recorded durably (cloud.js's
 		// record set): said, never swallowed (A5, DEL-4), as the old file tomb store said it.
 		noteDeletionUnrecorded: function () {
+			var db = !!(window.DaimondDurable && window.DaimondDurable.durable());
 			storageAlarm(tOr('store.delete_unrecorded',
-				'a deletion could not be recorded — this browser’s storage is full'));
+				'a deletion could not be recorded — this browser’s {store} for this site is full',
+				{ store: db ? tOr('store.where_db', 'database (IndexedDB)') : tOr('store.where_box', 'local storage (localStorage)') }));
 		},
 		// This device's own line in the roster `devices` section of the parcel.
 		// sync.js masks that line's `seen` stamp out of the push-skip comparison --

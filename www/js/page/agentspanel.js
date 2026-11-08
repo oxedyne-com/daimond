@@ -1150,7 +1150,7 @@ export async function destroyDiamond(id) {
 	var _dat = Date.now(), _dobj = {}; _dobj[id] = _dat;
 	if (!(await ChatStore.putTombs(DIAMOND_TOMBS_KEY, _dobj))) {
 		storageAlarm(tOr('store.delete_unrecorded',
-			'a deletion could not be recorded — this browser’s storage is full'));
+			'a deletion could not be recorded — this browser’s {store} for this site is full', { store: tOr('store.where_db', 'database (IndexedDB)') }));
 		return false;
 	}
 	tombMark(DIAMOND_TOMBS_KEY, [id], _dat);   // durable now: safe to overlay and delete

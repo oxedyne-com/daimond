@@ -52,7 +52,7 @@
 
    Run:  node www/js/mergetaint.test.mjs
    ============================================================ */
-const { makeWindow } = await import('../../dev/syncprobe.mjs');
+const { makeWindow, loadScript } = await import('../../dev/syncprobe.mjs');
 const { loadPage } = await import('./test/page.mjs');
 const { fakeIdb } = await import('./test/fakeidb.mjs');
 
@@ -197,6 +197,8 @@ function storeTab(data) {
 	const w = makeWindow({ now: NOW });
 	w.indexedDB = fakeIdb(data, { n: 0, open: 0 }); w.IDBKeyRange = { bound: (lower, upper) => ({ lower, upper }) };
 	w.setTimeout = setTimeout; w.clearTimeout = clearTimeout;
+	loadScript(w, 'trash.js');	// DaimondPolicy: storewait.js bounds each wait by its storeWaitMs
+	loadScript(w, 'storewait.js');	// ChatStore opens through it, as index.html loads it before the page
 	return loadPage({ window: w, want: ['ChatStore'], stub: { t: (k) => k, tOr: (k, d) => d,
 		noteCloudIndexStuck() {}, storageAlarm() {}, storageAlarmClear() {} } }).ChatStore;
 }
@@ -396,6 +398,8 @@ console.log('\nM16: a fold of outside words into a Diamond holds it before the c
 function storePage(data, w) {
 	w.indexedDB = fakeIdb(data, { n: 0, open: 0 }); w.IDBKeyRange = { bound: (lower, upper) => ({ lower, upper }) };
 	w.setTimeout = setTimeout; w.clearTimeout = clearTimeout;
+	loadScript(w, 'trash.js');	// DaimondPolicy: storewait.js bounds each wait by its storeWaitMs
+	loadScript(w, 'storewait.js');	// ChatStore opens through it, as index.html loads it before the page
 	return loadPage({ window: w, want: WANT2.concat(['ChatStore']), stub: Object.assign({}, STUB, {
 		tOr: (k, d) => d, noteCloudIndexStuck() {}, storageAlarm() {}, storageAlarmClear() {}, renderHistory() {} }) });
 }

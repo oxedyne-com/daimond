@@ -202,6 +202,17 @@
 	// see the header above for why the term is retention PLUS this and not the
 	// retention alone.
 	var GRACE_DAYS = 7;
+	// How long the page waits on its own store (IndexedDB) before it calls the store
+	// stalled, tells him and lets go of what was waiting (Q1108-045). The gateway's
+	// fallback says the same figure.
+	var STORE_WAIT_SECS = 20;
+	// The most bytes the page puts in one stored record. Kept well under the size at which
+	// Chrome sends a value down its blob path (kIDBWrapThreshold, 64 KiB), the path whose
+	// commit never called back (Q1108-045). The gateway's fallback says the same figure.
+	var STORE_PIECE_BYTES = 32768;
+	// The fewest bytes a stored record may be cut to, whatever figure arrives: a piece of
+	// one byte is one row per character. The gateway's fallback says the same figure.
+	var STORE_PIECE_MIN_BYTES = 4096;
 
 	var DAY = 24 * 3600 * 1000;
 	var _cache = null;
@@ -211,10 +222,11 @@
 		catch (e) { /* no console */ }
 	}
 
-	/// A whole number of days, or `dflt`. A policy that arrived as nonsense is
-	/// not obeyed: these two numbers decide when somebody's work is destroyed,
-	/// and the shipped figure is a better answer than whatever was parsed.
-	function days(v, dflt) {
+	/// A whole count (days, seconds, bytes) of at least one, or `dflt`. A policy
+	/// that arrived as nonsense is not obeyed: some of these figures decide when
+	/// somebody's work is destroyed, and the shipped figure is a better answer
+	/// than whatever was parsed.
+	function wholeCount(v, dflt) {
 		var n = (typeof v === 'string') ? parseInt(v, 10) : v;
 		if (typeof n !== 'number' || !isFinite(n) || n < 1) return dflt;
 		return Math.floor(n);
@@ -222,20 +234,24 @@
 
 	function load() {
 		if (_cache) return _cache;
-		_cache = { expire: CHAT_EXPIRE_DAYS, retain: TRASH_RETAIN_DAYS, high: TRASH_RETAIN_DAYS };
+		_cache = { expire: CHAT_EXPIRE_DAYS, retain: TRASH_RETAIN_DAYS, high: TRASH_RETAIN_DAYS, wait: STORE_WAIT_SECS,
+			piece: STORE_PIECE_BYTES, pieceMin: STORE_PIECE_MIN_BYTES };
 		try {
 			var raw = JSON.parse(localStorage.getItem(KEY) || '{}') || {};
-			_cache.expire = days(raw.expire, CHAT_EXPIRE_DAYS);
-			_cache.retain = days(raw.retain, TRASH_RETAIN_DAYS);
-			_cache.high   = Math.max(_cache.retain, days(raw.high, TRASH_RETAIN_DAYS));
+			_cache.expire = wholeCount(raw.expire, CHAT_EXPIRE_DAYS);
+			_cache.retain = wholeCount(raw.retain, TRASH_RETAIN_DAYS);
+			_cache.high   = Math.max(_cache.retain, wholeCount(raw.high, TRASH_RETAIN_DAYS));
 			_cache.ocr    = ocrOf(raw.ocr);
+			_cache.wait   = wholeCount(raw.wait, STORE_WAIT_SECS);
+			_cache.piece  = wholeCount(raw.piece, STORE_PIECE_BYTES);
+			_cache.pieceMin = wholeCount(raw.pieceMin, STORE_PIECE_MIN_BYTES);
 		} catch (e) { /* nothing cached: the shipped figures stand */ }
 		return _cache;
 	}
 
 	function save(p) {
 		try { localStorage.setItem(KEY, JSON.stringify({ v: 1, expire: p.expire, retain: p.retain, high: p.high,
-			ocr: p.ocr || null })); }
+			ocr: p.ocr || null, wait: p.wait, piece: p.piece, pieceMin: p.pieceMin })); }
 		catch (err) { log('could not cache the policy', err); }
 	}
 
@@ -259,13 +275,41 @@
 		return true;
 	}
 
+	/// Adopt the gateway's store wait, in seconds. True when it moved.
+	function setWait(secs) {
+		var p = load(), n = wholeCount(secs, p.wait);
+		if (n === p.wait) return false;
+		p.wait = n;
+		save(p);
+		return true;
+	}
+
+	/// Adopt the gateway's stored-record size, in bytes. True when it moved.
+	function setPiece(bytes) {
+		var p = load(), n = wholeCount(bytes, p.piece);
+		if (n === p.piece) return false;
+		p.piece = n;
+		save(p);
+		return true;
+	}
+
+	/// Adopt the gateway's floor on the stored-record size, in bytes. True when it moved.
+	function setPieceMin(bytes) {
+		var p = load(), n = wholeCount(bytes, p.pieceMin);
+		if (n === p.pieceMin) return false;
+		p.pieceMin = n;
+		save(p);
+		return true;
+	}
+
 	/// Adopt a policy, from the gateway or from a test. True when it moved,
 	/// which is what tells the trash to redraw the dates it has already drawn.
 	function set(expireDays, retainDays) {
-		var was = load(), e = days(expireDays, was.expire), r = days(retainDays, was.retain);
+		var was = load(), e = wholeCount(expireDays, was.expire), r = wholeCount(retainDays, was.retain);
 		var h = Math.max(was.high, r);
 		if (e === was.expire && r === was.retain && h === was.high) return false;
-		_cache = { expire: e, retain: r, high: h, ocr: was.ocr || null };
+		_cache = { expire: e, retain: r, high: h, ocr: was.ocr || null, wait: was.wait, piece: was.piece,
+			pieceMin: was.pieceMin };
 		save(_cache);
 		return true;
 	}
@@ -279,7 +323,7 @@
 	/// of how far. Monotone: it never comes back down, because the peer that
 	/// needed the longer term does not stop needing it when the parcel is over.
 	function noteRetain(d) {
-		var p = load(), n = days(d, 0);
+		var p = load(), n = wholeCount(d, 0);
 		if (!n || n <= p.high) return false;
 		p.high = n;
 		save(p);
@@ -298,6 +342,9 @@
 	function adopt(j) {
 		if (!j || j.ok !== true) return false;
 		setOcr(j.ocr);
+		setWait(j.store_wait_secs);
+		setPiece(j.store_piece_bytes);
+		setPieceMin(j.store_piece_min_bytes);
 		return set(j.chat_expire_days, j.trash_retain_days);
 	}
 	async function refresh() {
@@ -317,6 +364,13 @@
 		/// enough to outlive the longest-lived peer this device knows of. See
 		/// the header on why this is a high-water and not the current figure.
 		tombTtlMs:     function () { return (load().high + GRACE_DAYS) * DAY; },
+		/// How long a wait on the page's own store may run, in ms.
+		storeWaitMs:   function () { return load().wait * 1000; },
+		setWait:       setWait,
+		/// The most bytes the page puts in one stored record, never under the floor.
+		storePieceBytes: function () { var p = load(); return Math.max(p.piece, p.pieceMin); },
+		setPiece:      setPiece,
+		setPieceMin:   setPieceMin,
 		noteRetain:    noteRetain,
 		/// The two figures in days, for the sentences that quote them.
 		days:          function () { var p = load(); return { expire: p.expire, retain: p.retain }; },

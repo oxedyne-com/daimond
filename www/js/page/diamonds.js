@@ -1223,6 +1223,7 @@ export function daimonChat(f) {
 			prevPrompt: 0, prevCompletion: 0, prevCached: 0, prevCost: 0,
 			lastPrompt: 0,
 			updatedAt: 0,
+			_loaded: true,             // a new id: the empty transcript in hand is the whole of it
 		};
 		if (diamondTaintOf(f.id)) rec.taintedAt = diamondTaintOf(f.id);
 		pg.chats.push(rec);

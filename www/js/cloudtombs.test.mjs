@@ -51,10 +51,10 @@ const Stamp = {
 function device() {
 	const kv = new Map(), subs = new Set();
 	const Durable = {
-		ready: async () => {}, durable: () => true, migrate: async () => true,
+		ready: async () => {}, durable: () => true, tookOver: () => true, migrate: async () => true,
 		get: async (k) => clone(kv.has(k) ? kv.get(k) : null),
 		set: async (k, v) => { kv.set(k, clone(v)); return true; },
-		update: async (k, fn) => { const v = fn(clone(kv.has(k) ? kv.get(k) : null)); kv.set(k, clone(v)); return { ok: true, value: v }; },
+		update: async (k, ops) => { const v = clone(kv.get(k) || {}); for (const e of Object.keys(ops || {})) { if (ops[e].del) delete v[e]; else v[e] = ops[e].v; } kv.set(k, clone(v)); return { ok: true, value: v }; },
 	};
 	class Channel {
 		constructor() { this.onmessage = null; this.open = true; subs.add(this); }

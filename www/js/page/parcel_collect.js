@@ -1433,7 +1433,7 @@ function writeOldFileTombs(want) {
 	if (back.length) ChatStore.dropTombs(SYNC_FILE_TOMBS_KEY, back);
 	if (Object.keys(fresh).length) ChatStore.putTombs(SYNC_FILE_TOMBS_KEY, fresh).then(function (ok) {
 		if (!ok) storageAlarm(tOr('store.delete_unrecorded',
-			'a deletion could not be recorded — this browser’s storage is full'));
+			'a deletion could not be recorded — this browser’s {store} for this site is full', { store: tOr('store.where_db', 'database (IndexedDB)') }));
 	});
 }
 
@@ -2344,8 +2344,8 @@ async function writeSyncFile(app, path, content, was, plan) {
 			// The same wording every other source of this alarm falls back to
 			// (owner ruling, 2026-09-25: the existing banner, not a bespoke one
 			// naming the sync consequence) -- one message for one condition.
-			storageAlarm(tOr('store.full',
-				'there is no room left in this browser’s storage for this site'), 'files');
+			storageAlarm(tOr('store.full', 'there is no room left in this browser’s {store} for this site',
+				{ store: tOr('store.where_files', 'file storage (OPFS)') }), 'files');
 		}
 		return done;
 	} catch (e) { return false; }
@@ -3632,6 +3632,9 @@ export async function applyChunked(remoteChunked, base, fromDevice, remoteTombs)
 	// index names paths in ITS workspace, and on this device that is somebody's disk, which
 	// a mark no longer grants to the account.
 	if (!filesSyncable()) return;
+	// An index this page never read is not this device's: the peer refs below and the merge
+	// would weigh the remote against it (cloud.js `merge`). The section stays owed.
+	if (DaimondCloud.indexRead && !DaimondCloud.indexRead()) throw new Error('the cloud index has not been read from its store');
 	var plan = _sharePlan;
 	if (!plan) plan = await syncWalkPlan();
 	if (!plan) return;

@@ -97,8 +97,11 @@ function sourceGuards() {
 
 	console.log('tombdurable: source -- the tomb store, seeded and migrated at boot');
 	check('a `tombs` object store is created, keyed on (map, id)',
-		d.includes("d.createObjectStore(TOMBS_STORE, { keyPath: ['map', 'id'] });"), 'no tombs store');
-	check('the DB version was bumped for it', d.includes('var CHATS_DB_VERSION = 3;'), 'version not bumped');
+		d.includes("d.create(TOMBS_STORE, { keyPath: ['map', 'id'] });"), 'no tombs store');
+	{
+		const v = Number((d.match(/var CHATS_DB_VERSION = (\d+);/) || [])[1]);
+		check('the DB version was bumped for it', v >= 3, `version ${v}`);	// 3 brought tombs; a later fence may raise it
+	}
 	check('ChatStore.putTombs lands a map durably and returns truth',
 		d.includes('putTombs: async function (mapKey, obj) {') && d.includes('return await writeTombRows(rows);'),
 		'no durable putTombs');

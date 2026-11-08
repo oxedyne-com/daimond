@@ -33,6 +33,7 @@ function world() {
 		pg, persisted: 0,
 		localStorage: { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) },
 		t: k => k, tabViewSet() {}, newChatId: (() => { let n = 0; return () => 'c' + (++n); })(),
+		diamondTaintOf: () => 0,	// a clean Diamond: daimonChat stamps a new chat with its Diamond's taint (DIAMOND-TAINT)
 	};
 	ctx.readJson = (k, d) => { const v = store.get(k); return v == null ? d : JSON.parse(v); };
 	ctx.persistChats = () => { ctx.persisted++; };

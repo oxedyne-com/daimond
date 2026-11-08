@@ -315,7 +315,7 @@ try {
 		const durable = !!(window.DaimondDurable && DaimondDurable.durable && DaimondDurable.durable());
 		let bit = '';
 		if (durable) {
-			const r = await DaimondDurable.update('daimond-cloud-index', (v) => v || {});
+			const r = await DaimondDurable.update('daimond-cloud-index', {});
 			bit = (r && r.ok === false) ? 'refused' : 'landed';
 		} else {
 			try { localStorage.setItem('daimond-cloud-index', '{}'); bit = 'landed'; }

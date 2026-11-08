@@ -88,7 +88,7 @@ export function persistTombs(key, ids, at) {
 	(ids || []).forEach(function (id) { if (id) obj[id] = at; });
 	return ChatStore.putTombs(key, obj).then(function (ok) {
 		if (!ok) storageAlarm(tOr('store.delete_unrecorded',
-			'a deletion could not be recorded — this browser’s storage is full'));
+			'a deletion could not be recorded — this browser’s {store} for this site is full', { store: tOr('store.where_db', 'database (IndexedDB)') }));
 		return ok;
 	});
 }
@@ -561,7 +561,8 @@ export function taintChatById(chatId, at) {
 	catch (e) { /* cache only; the durable row is the `tombs` store's */ }
 	ChatStore.putTombs(TAINT_PENDING_KEY, obj).then(function (ok) {
 		if (!ok) storageAlarm(tOr('store.taint_unrecorded',
-			'a conversation’s outside-content mark could not be recorded — this browser’s storage is full'));
+			'a conversation’s outside-content mark could not be recorded — this browser’s {store} for this site is full',
+			{ store: tOr('store.where_db', 'database (IndexedDB)') }));
 	});
 	return false;
 }
@@ -1162,9 +1163,19 @@ var CHATS_STORE   = 'chats';
 var MSGCHUNK_STORE   = 'msgchunks';
 var CHATSUM_STORE    = 'chatsum';
 var TOMBS_STORE      = 'tombs';                 // durable tombstone rows: { map, id, at } keyed by (map, id)
-var CHATS_DB_VERSION = 3;                       // v1: chats only. v2: + msgchunks + chatsum. v3: + tombs (S-SYNC #6).
+// v4 (PAGESTORE B) adds no store: it fences the bounded-record layout (message fragments
+// and session pieces in `msgchunks`, slimmed `chats` rows) from any build that would misread
+// it. Such a build asks for v3 and gets VersionError, so it boots on its fallback with the
+// alarm up rather than read a chat short and compact away its fragments; an open older tab
+// is sent `versionchange` by the upgrade and closes. A rollback below v4 therefore cannot
+// read the chats store at all: the `chats` rows are no longer a rollback shadow.
+var CHATS_DB_VERSION = 4;                       // v1: chats only. v2: + msgchunks + chatsum. v3: + tombs (S-SYNC #6). v4: bounded records.
 var SHADOW_V         = 1;                        // the summary row's own format version
 var CHUNK_MSGS       = 128;                      // messages per append-only chunk
+// fixed: Chrome's kIDBWrapThreshold (third_party/blink/public/mojom/indexeddb/indexeddb.mojom).
+// A value whose wire form is over it goes down the blob path, whose commit never called
+// back (Q1108-045), so no record the page stores may reach it.
+var IDB_WRAP_BYTES   = 65536;
 var CHATS_REV     = 'daimond-chats-rev';       // the cross-tab nonce
 export var CHATS_LEGACY  = 'daimond-chats-legacy';    // what localStorage held before the move
 var CHATS_LEGACY_AT = 'daimond-chats-legacy-at'; // when the move stamped that archive
@@ -1189,9 +1200,7 @@ function storeReason(e) {
 	var name = (e && e.name) || '';
 	var msg  = String((e && e.message) || e || 'unknown');
 	if (name === 'QuotaExceededError' || /quota/i.test(msg)) {
-		return t('store.full') === 'store.full'
-			? 'there is no room left in this browser’s storage for this site'
-			: t('store.full');
+		return tOr('store.full_db', 'this browser’s database for this site (IndexedDB) has no room left');
 	}
 	return msg;
 }
@@ -1216,9 +1225,40 @@ function bumpChats() {
 // in IndexedDB says nothing about a localStorage record still owed, and taking the
 // warning down on it left a full box with no warning one turn later. The line shown
 // is the latest reason still standing.
+//
+// WHAT IS NOT SAVED IS SAID BY ITS SOURCE. The chat store's sources stand for the
+// conversations; the others are kept elsewhere, so a full localStorage box must not say
+// "Your conversations are not being saved" while their database has room. A source names
+// its own head, and while no conversation source stands the advice says the
+// conversations are still being saved.
 var storageAlarmEl = null;
+var storageAlarmLines = null;	// [head, why, advice] of the warning drawn
 var storageAlarmWhy = '';
 var storageAlarmWhys = {};		// source -> reason, in the order raised
+var ALARM_ASIDE = {				// source -> its head, for a source that is not the conversations
+	owed:	['store.alarm_box',   'Some changes made on this device are not being saved.'],
+	index:	['store.alarm_sync',  'Cross-device sync is paused.'],
+	files:	['store.alarm_files', 'Files written on this device are not being saved.'],
+};
+
+/// The warning's head and advice, for the reasons standing.
+function storageAlarmWords() {
+	var srcs = Object.keys(storageAlarmWhys);
+	if (srcs.some(function (s) { return !ALARM_ASIDE[s]; })) return [
+		tOr('store.alarm', 'Your conversations are not being saved.'),
+		tOr('store.alarm_advice', 'Everything on screen is still here, but a reload would lose it. Download a copy now.'),
+	];
+	var aside = ALARM_ASIDE[srcs[srcs.length - 1]];
+	return [tOr(aside[0], aside[1]),
+		tOr('store.alarm_convos_kept', 'Your conversations are still being saved, in this browser’s database (IndexedDB).')];
+}
+
+function storageAlarmDraw() {
+	var words = storageAlarmWords();
+	storageAlarmLines[0].textContent = words[0];
+	storageAlarmLines[1].textContent = storageAlarmWhy;
+	storageAlarmLines[2].textContent = words[1];
+}
 
 /// Raise the standing warning that conversations are not being saved.
 export function storageAlarm(why, src) {
@@ -1226,12 +1266,8 @@ export function storageAlarm(why, src) {
 	delete storageAlarmWhys[src];
 	storageAlarmWhys[src] = String(why || '');
 	storageAlarmWhy = storageAlarmWhys[src];
-	try { console.error('Daimond: conversations are not being saved — ' + storageAlarmWhy); } catch (e) {}
-	if (storageAlarmEl) {
-		var line = storageAlarmEl.querySelector('.storage-alarm-why');
-		if (line) line.textContent = storageAlarmWhy;
-		return;
-	}
+	try { console.error('Daimond: storage refused (' + src + ') — ' + storageAlarmWhy); } catch (e) {}
+	if (storageAlarmEl) { storageAlarmDraw(); return; }
 	var box = document.createElement('div');
 	box.className = 'storage-alarm';
 	box.setAttribute('role', 'alert');
@@ -1242,15 +1278,13 @@ export function storageAlarm(why, src) {
 	var text = document.createElement('div');
 	text.style.cssText = 'flex:1 1 auto;';
 	var head = document.createElement('strong');
-	head.textContent = tOr('store.alarm', 'Your conversations are not being saved.');
+	head.className = 'storage-alarm-head';
 	var why = document.createElement('div');
 	why.className = 'storage-alarm-why';
 	why.style.cssText = 'margin-top:4px;opacity:.85;';
-	why.textContent = storageAlarmWhy;
 	var advice = document.createElement('div');
+	advice.className = 'storage-alarm-advice';
 	advice.style.cssText = 'margin-top:4px;';
-	advice.textContent = tOr('store.alarm_advice',
-		'Everything on screen is still here, but a reload would lose it. Download a copy now.');
 	text.appendChild(head); text.appendChild(why); text.appendChild(advice);
 	var acts = document.createElement('div');
 	acts.style.cssText = 'display:flex;flex-direction:column;gap:6px;flex:0 0 auto;';
@@ -1268,6 +1302,8 @@ export function storageAlarm(why, src) {
 	box.appendChild(text); box.appendChild(acts);
 	document.body.appendChild(box);
 	storageAlarmEl = box;
+	storageAlarmLines = [head, why, advice];
+	storageAlarmDraw();
 }
 
 /// Clear one source's reason, because its own save has landed; the warning
@@ -1279,14 +1315,14 @@ export function storageAlarmClear(src) {
 	var left = Object.keys(storageAlarmWhys);
 	if (left.length) {
 		storageAlarmWhy = storageAlarmWhys[left[left.length - 1]];
-		var line = storageAlarmEl && storageAlarmEl.querySelector('.storage-alarm-why');
-		if (line) line.textContent = storageAlarmWhy;
+		if (storageAlarmEl) storageAlarmDraw();
 		return;
 	}
 	storageAlarmWhy = '';
 	if (!storageAlarmEl) return;
 	if (storageAlarmEl.parentNode) storageAlarmEl.parentNode.removeChild(storageAlarmEl);
 	storageAlarmEl = null;
+	storageAlarmLines = null;
 }
 
 // A synced record the box refused is held owed on this page (`DaimondStore`), so
@@ -1306,9 +1342,11 @@ var storeOwedBefore = false;
 /// either -- the same storage-full failure the alarm exists for, so it is the
 /// same alarm. The `why` line names the cloud index rather than the chat store.
 export function noteCloudIndexStuck() {
+	var db = !!(window.DaimondDurable && window.DaimondDurable.durable());
 	storageAlarm(tOr('store.cloud_index_full',
-		'This device is out of browser storage, so cross-device sync is paused. '
-		+ 'Free some space, and your work will travel again.'), 'index');
+		'This browser’s {store} for this site is full, so the index cross-device sync works from cannot be saved. '
+		+ 'Free some space, and your work will travel again.',
+		{ store: db ? tOr('store.where_db', 'database (IndexedDB)') : tOr('store.where_box', 'local storage (localStorage)') }), 'index');
 }
 
 /// Write every chat this tab holds to a file, right now.
@@ -2554,7 +2592,21 @@ export function install() { // page-split: install
 		var rereading = null;    // the re-read run once an unread store answers again
 		var bootPromise = null;  // the one-and-only first read, memoised; see boot/booted
 		var shadowDone = Promise.resolve();   // resolves when the last transcript-shadow pass settled
+		var slimDone   = Promise.resolve();   // resolves when the boot's pass over old fat rows settled
 		var skipNoted = {};      // id|why of each chat a write left alone, trailed once per page
+		DaimondStoreWait.tell({
+			stalled: function (what, ms) {
+				diag('store STALLED', what + ' (' + ms + ' ms)');
+				storageAlarm(tOr('store.stalled', 'This browser\'s storage stopped answering while {what}. Restart this browser to clear it.',
+					{ what: what }), 'stall');
+			},
+			answered: function () { storageAlarmClear('stall'); },
+			blocked: function (what) {
+				diag('store BLOCKED', what);
+				storageAlarm(tOr('store.blocked', 'Another Daimond tab is holding this browser\'s storage at an older version, so it was refused while {what}. Close the other Daimond tabs and reload.',
+					{ what: what }), 'blocked');
+			},
+		});
 
 		/// Say that a write left one chat as it was on disk, and why. Once per chat and
 		/// reason in the durable trail, so a chat skipped on every save does not flood it.
@@ -2599,6 +2651,131 @@ export function install() { // page-split: install
 		// message; a COLLIDING key would cost a message, which is why the suffix is here.
 		function chunkTag() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
+		// ── Bounded pieces (PAGESTORE B) ────────────────────────────────────────
+		//
+		// Every record put in the msgchunks store stays under the policy's piece size, and
+		// that under Chrome's wrap threshold: a chunk row closes at CHUNK_MSGS messages or
+		// at the size, a single message over the size is stored as fragments of its JSON
+		// (`{ k: base.part, part, parts, frag }`), and the model session is stored the same
+		// way under `chatId$` keys ('$' sorts above every `chatId#` key, so it is outside
+		// every transcript range). The `chats` row keeps the scalars only (`rowOf`).
+		var sessionFp = {};		// chatId -> fingerprint of the session stored in pieces ('' none)
+
+		/// An upper bound on the bytes V8's serialiser writes for `v`: a string at two
+		/// bytes a character, as a two-byte string is written, plus every tag and length.
+		function wireBound(v) {
+			if (typeof v === 'string') return 7 + 2 * v.length;
+			if (typeof v === 'number') return 9;
+			if (v === null || v === undefined || typeof v === 'boolean') return 1;
+			if (Array.isArray(v)) {
+				var a = 17;
+				for (var i = 0; i < v.length; i++) a += wireBound(v[i]);
+				return a;
+			}
+			if (typeof v === 'object') {
+				var o = 7;
+				for (var key in v) {
+					if (Object.prototype.hasOwnProperty.call(v, key)) o += wireBound(key) + wireBound(v[key]);
+				}
+				return o;
+			}
+			return wireBound(String(v));
+		}
+		function pieceMax() {
+			// fixed: 64 bytes for Blink's envelope and V8's header around the value.
+			return Math.min(DaimondPolicy.storePieceBytes(), IDB_WRAP_BYTES - 64);
+		}
+
+		/// `json` cut into rows of `extra` plus `{ k: key + part, part, parts, frag }`, each
+		/// under the piece size.
+		function fragments(key, extra, json) {
+			var env = wireBound(Object.assign({ k: key + pad12(0), part: 0, parts: 0, frag: '' }, extra));
+			var step = Math.max(1, Math.floor((pieceMax() - env) / 2)), rows = [];
+			var parts = Math.max(1, Math.ceil(json.length / step));
+			for (var p = 0; p < parts; p++) {
+				rows.push(Object.assign({ k: key + pad12(p), part: p, parts: parts,
+					frag: json.slice(p * step, (p + 1) * step) }, extra));
+			}
+			return rows;
+		}
+
+		/// The value the fragment rows of one record stand for, or undefined when a part
+		/// is missing.
+		function joinFrags(rows) {
+			rows.sort(function (a, b) { return (a.part | 0) - (b.part | 0); });
+			var n = rows[0].parts;
+			for (var i = 0; i < rows.length; i++) { if (rows[i].part !== i || rows[i].parts !== n) return undefined; }
+			if (rows.length !== n) return undefined;
+			try { return JSON.parse(rows.map(function (r) { return r.frag; }).join('')); }
+			catch (e) { return undefined; }
+		}
+
+		/// `msgs` as chunk rows from `seq` on: a row closes at CHUNK_MSGS messages or at
+		/// the piece size, and a message alone over it becomes fragment rows. At least one
+		/// row, so an empty transcript still has its seq-0 chunk.
+		function packRows(chatId, seq, msgs) {
+			var max = pieceMax(), rows = [], row = null, size = 0;
+			function open() {
+				row = { k: chatId + '#' + pad12(seq) + '-' + chunkTag(), chatId: chatId, seq: seq, msgs: [] };
+				seq += 1;
+				size = wireBound(row);
+				rows.push(row);
+			}
+			msgs.forEach(function (m) {
+				var b = wireBound(m);
+				if (row && row.msgs.length && (row.msgs.length >= CHUNK_MSGS || size + b > max)) row = null;
+				if (!row) open();
+				if (size + b <= max) { row.msgs.push(m); size += b; return; }
+				// Over the size alone: this row's key and seq carry its fragments instead.
+				rows.pop();
+				fragments(row.k + '.', { chatId: chatId, seq: row.seq }, JSON.stringify(m))
+					.forEach(function (f) { rows.push(f); });
+				row = null;
+			});
+			if (!rows.length) open();
+			return { rows: rows, seq: seq };
+		}
+
+		/// The messages a chat's chunk rows hold, fragments joined.
+		function rowsMsgs(rows) {
+			var out = [], frags = {};
+			rows.forEach(function (r) {
+				if (!r) return;
+				if (Array.isArray(r.msgs)) { out = out.concat(r.msgs); return; }
+				if (typeof r.frag !== 'string') return;
+				var base = String(r.k).slice(0, String(r.k).lastIndexOf('.'));
+				(frags[base] = frags[base] || []).push(r);
+			});
+			Object.keys(frags).forEach(function (b) {
+				var m = joinFrags(frags[b]);
+				if (m !== undefined) out.push(m);
+			});
+			return out;
+		}
+
+		function sessionRange(chatId) { return IDBKeyRange.bound(chatId + '$', chatId + '$\uffff'); }
+
+		/// Queue the model session's pieces on `store` (msgchunks, in a live readwrite
+		/// transaction) when it is not the one stored. A null session clears the pieces
+		/// only when some are known to be stored.
+		function saveSession(store, chatId, session) {
+			var json = session ? JSON.stringify(session) : '';
+			var fp = json ? fileHash(json) : '';
+			if (sessionFp[chatId] === fp || (!json && sessionFp[chatId] === undefined)) return;
+			store['delete'](sessionRange(chatId));
+			if (json) fragments(chatId + '$', { chatId: chatId }, json).forEach(function (r) { store.put(r); });
+			sessionFp[chatId] = fp;
+		}
+
+		/// The `chats` row for a record: its scalars, no transcript and no session.
+		function rowOf(rec) {
+			var row = Object.assign({}, rec);
+			delete row.messages;
+			delete row.session;
+			return row;
+		}
+		function fatRow(row) { return !!row && (row.messages !== undefined || row.session !== undefined); }
+
 		/// How many records this account had at the last write that landed.
 		function watermark() {
 			var n = parseInt(readJson(CHATS_COUNT, 0), 10);
@@ -2615,33 +2792,25 @@ export function install() { // page-split: install
 		}
 
 		function open(name) {
-			return new Promise(function (resolve, reject) {
-				if (!window.indexedDB) { reject(new Error('this browser offers no IndexedDB')); return; }
-				var req = indexedDB.open(name, CHATS_DB_VERSION);
-				req.onupgradeneeded = function () {
-					var d = req.result;
-					// Guarded and additive: a store already present is left exactly as it
-					// is, with every row intact -- see the shadow-store note above. The
-					// three run in order from any starting version (0, 1 or 2).
-					if (!d.objectStoreNames.contains(CHATS_STORE)) {
-						d.createObjectStore(CHATS_STORE, { keyPath: 'id' });
+		return DaimondStoreWait.open(name, CHATS_DB_VERSION, function (d) {
+				// Guarded and additive: a store already present is left exactly as it
+				// is, with every row intact -- see the shadow-store note above. The
+				// three run in order from any starting version (0, 1 or 2).
+				if (!d.has(CHATS_STORE)) {
+					d.create(CHATS_STORE, { keyPath: 'id' });
+				}
+				if (!d.has(MSGCHUNK_STORE)) {
+					d.create(MSGCHUNK_STORE, { keyPath: 'k' });
+				}
+				if (!d.has(CHATSUM_STORE)) {
+					d.create(CHATSUM_STORE, { keyPath: 'id' });
+				}
+				// Durable tombstones (S-SYNC #6). Keyed on the (map, id) pair so one
+				// row is one deletion in one map; additive and guarded like the two above.
+				if (!d.has(TOMBS_STORE)) {
+					d.create(TOMBS_STORE, { keyPath: ['map', 'id'] });
 					}
-					if (!d.objectStoreNames.contains(MSGCHUNK_STORE)) {
-						d.createObjectStore(MSGCHUNK_STORE, { keyPath: 'k' });
-					}
-					if (!d.objectStoreNames.contains(CHATSUM_STORE)) {
-						d.createObjectStore(CHATSUM_STORE, { keyPath: 'id' });
-					}
-					// Durable tombstones (S-SYNC #6). Keyed on the (map, id) pair so one
-					// row is one deletion in one map; additive and guarded like the two above.
-					if (!d.objectStoreNames.contains(TOMBS_STORE)) {
-						d.createObjectStore(TOMBS_STORE, { keyPath: ['map', 'id'] });
-					}
-				};
-				req.onsuccess = function () { resolve(req.result); };
-				req.onerror   = function () { reject(req.error || new Error('the store would not open')); };
-				req.onblocked = function () { reject(new Error('another tab is holding the store open')); };
-			});
+			}, 'opening the store');
 		}
 
 		/// The open connection, reopening when the account has changed under us.
@@ -2651,29 +2820,20 @@ export function install() { // page-split: install
 			if (db) { try { db.close(); } catch (e) { /* already */ } db = null; disk = {}; }
 			db = await open(want);
 			dbOpen = want;
-			db.onclose        = function () { db = null; dbOpen = null; };
-			db.onversionchange = function () { try { db.close(); } catch (e) { /* already */ } db = null; dbOpen = null; };
+			db.ended(function () { db = null; dbOpen = null; });
 			return db;
 		}
 
-		function tx(mode) {
-			var t = db.transaction(CHATS_STORE, mode);
-			return { store: t.objectStore(CHATS_STORE), done: new Promise(function (res, rej) {
-				t.oncomplete = res;
-				t.onerror    = function () { rej(t.error || new Error('the write failed')); };
-				t.onabort    = function () { rej(t.error || new Error('the write was aborted')); };
-			}) };
+		function tx(what) {
+			var w = db.watch(CHATS_STORE, 'readonly', what);
+			return { store: w.store(CHATS_STORE), done: w.done };
 		}
 
 		async function readAll() {
 			await conn();
-			var t = tx('readonly'), rows = [];
-			await new Promise(function (res, rej) {
-				var cur = t.store.openCursor();
-				cur.onsuccess = function () { var c = cur.result; if (c) { rows.push(c.value); c.continue(); } else res(); };
-				cur.onerror   = function () { rej(cur.error || new Error('the store would not be read')); };
-			});
-			await t.done;
+			var t = tx('reading the chats'), rows = [];
+			await t.store.walk(null, function (v) { rows.push(v); });
+			await t.done();
 			return rows;
 		}
 
@@ -2686,13 +2846,10 @@ export function install() { // page-split: install
 		/// Every tomb row on disk, TTL untouched (`bootTombs` prunes on read).
 		async function readAllTombs() {
 			await conn();
-			if (!db.objectStoreNames.contains(TOMBS_STORE)) return [];
-			var t = db.transaction(TOMBS_STORE, 'readonly'), rows = [];
-			await new Promise(function (res, rej) {
-				var cur = t.objectStore(TOMBS_STORE).openCursor();
-				cur.onsuccess = function () { var c = cur.result; if (c) { rows.push(c.value); c.continue(); } else res(); };
-				cur.onerror   = function () { rej(cur.error || new Error('the tombs would not be read')); };
-			});
+			if (!db.has(TOMBS_STORE)) return [];
+			var w = db.watch(TOMBS_STORE, 'readonly', 'reading the deletions'), rows = [];
+			w.store(TOMBS_STORE).walk(null, function (v) { rows.push(v); });
+			await w.done();
 			return rows;
 		}
 
@@ -2701,15 +2858,9 @@ export function install() { // page-split: install
 		async function writeTombRows(rows) {
 			if (!rows || !rows.length) return true;
 			if (!db || dbOpen !== dbName()) await conn();
-			if (!db.objectStoreNames.contains(TOMBS_STORE)) return false;
-			var t = db.transaction(TOMBS_STORE, 'readwrite'), st = t.objectStore(TOMBS_STORE);
-			var done = new Promise(function (res, rej) {
-				t.oncomplete = res;
-				t.onerror    = function () { rej(t.error || new Error('the tomb write failed')); };
-				t.onabort    = function () { rej(t.error || new Error('the tomb write was aborted')); };
-			});
-			rows.forEach(function (r) { st.put({ map: r.map, id: r.id, at: r.at || Date.now() }); });
-			await done;
+			if (!db.has(TOMBS_STORE)) return false;
+			var w = db.watch(TOMBS_STORE, 'readwrite', 'saving the deletions');
+			await w.run(function (store) { var st = store(TOMBS_STORE); rows.forEach(function (r) { st.put({ map: r.map, id: r.id, at: r.at || Date.now() }); }); });
 			return true;
 		}
 
@@ -2718,15 +2869,9 @@ export function install() { // page-split: install
 		async function dropTombRows(map, ids) {
 			if (!ids || !ids.length) return true;
 			if (!db || dbOpen !== dbName()) await conn();
-			if (!db.objectStoreNames.contains(TOMBS_STORE)) return true;
-			var t = db.transaction(TOMBS_STORE, 'readwrite'), st = t.objectStore(TOMBS_STORE);
-			var done = new Promise(function (res, rej) {
-				t.oncomplete = res;
-				t.onerror    = function () { rej(t.error || new Error('the tomb drop failed')); };
-				t.onabort    = function () { rej(t.error || new Error('the tomb drop was aborted')); };
-			});
-			ids.forEach(function (id) { st.delete([map, id]); });
-			await done;
+			if (!db.has(TOMBS_STORE)) return true;
+			var w = db.watch(TOMBS_STORE, 'readwrite', 'dropping deletions');
+			await w.run(function (store) { var st = store(TOMBS_STORE); ids.forEach(function (id) { st.delete([map, id]); }); });
 			return true;
 		}
 
@@ -2878,179 +3023,199 @@ export function install() { // page-split: install
 				// The write spans all three stores: the authoritative `chats` row, the
 				// `chatsum` SUMMARY the rail is built from, and (on deletion) the chat's
 				// msgchunks. See the never-shorten note in the loop.
-				var t3 = db.transaction([CHATS_STORE, CHATSUM_STORE, MSGCHUNK_STORE], 'readwrite');
-				var csS = t3.objectStore(CHATS_STORE), suS = t3.objectStore(CHATSUM_STORE), mcS = t3.objectStore(MSGCHUNK_STORE);
-				var done = new Promise(function (res, rej) {
-					t3.oncomplete = res;
-					t3.onerror    = function () { rej(t3.error || new Error('the write failed')); };
-					t3.onabort    = function () { rej(t3.error || new Error('the write was aborted')); };
-				});
-				var seen = {}, put = {}, compactIds = [];
-				var mtombs = loadMsgTombs();		// parse the message tombstones once for this pass
-				// ONE CHAT THAT CANNOT BE WRITTEN IS LEFT AS IT IS ON DISK, and the rest of
-				// the list is written (DL-2, 2026-09-27). A throw here used to end the loop,
-				// so every chat after it went unsaved; a throw inside the `get` handler below
-				// aborted the transaction, so NONE were. What was on disk for a chat left
-				// out keeps its stamp, so a later save of it is tried again.
-				//
-				// TWO KINDS, and only one is quiet. A transcript that is not one
-				// (`transcriptOk`) is that chat's fault: it is skipped and trailed, and the
-				// store is fine. Anything else that throws is the STORE refusing (a full box,
-				// a record it cannot clone): the other chats are still written, and the alarm
-				// is raised as it always was, because this write did not all land.
-				var failure = null;
-				var skip = function (id, why) {
-					noteSkipped(id, why);
-					if (disk[id] !== undefined) put[id] = disk[id]; else delete put[id];
-				};
-				var fail = function (id, e) {
-					failure = failure || e;
-					diag('store chat FAILED', id + ': ' + storeReason(e));
-					if (disk[id] !== undefined) put[id] = disk[id]; else delete put[id];
-				};
-				list.forEach(function (c) {
-					if (!c || !c.id) return;
-					seen[c.id] = true;
-					try {
-						// STAMPED AS IT IS AT THIS MOMENT. For a non-resident chat the stamp
-						// comes from its summary counts, not its empty `messages` array -- see
-						// `stampOf` -- so an un-opened chat's stamp matches what is on disk and
-						// it is SKIPPED here rather than needlessly rewritten.
-						var stamp = stampOf(c);
-						put[c.id] = stamp;
-						if (disk[c.id] !== undefined && disk[c.id] === stamp && !txPending(c)) return;
-						// A WRITE NEVER SHORTENS OR EMPTIES A TRANSCRIPT (audit B1), now under
-						// append (seq 214, Stage 2). The msgchunks are the source of truth and
-						// only ever GROW here -- and only for THIS chat -- so a save of one chat
-						// cannot touch another, and transcripts shrink only via tombstone
-						// (dropped on read, removed from disk by compaction below).
-						//
-						//   - A RESIDENT chat carries its authoritative transcript. Its NEW TAIL
-						//     is appended to the chunks (`appendChunks` skips any mid already on
-						//     disk, so a re-save appends nothing); the whole is written to the
-						//     legacy `chats` row as a FALLBACK SHADOW (a direct put -- the read
-						//     Stage 1 paid to union is gone, because the chunks, not this row,
-						//     are now read back). If a tombstone has left dead weight in the
-						//     chunks, this chat is queued for compaction after the commit.
-						//   - A NON-RESIDENT chat contributes an EMPTY transcript, so it appends
-						//     nothing and its chunks are left exactly as they are. Its rare
-						//     scalar change (a rename, a fold, an attachment) still has to reach
-						//     the legacy shadow WITHOUT shortening it, so that one row is unioned
-						//     against disk the way Stage 1 did -- the cost that path saved is on
-						//     the resident hot path, not here.
-						//
-						// The chatsum SUMMARY is refreshed alongside either way, so the rail
-						// (built from summaries at the next boot) does not go stale.
-						//
-						// THE APPEND RUNS FOR EVERY SAVE, resident or not. The chunks are the
-						// source of truth, so any transcript a save carries must reach them --
-						// `appendChunks` is idempotent (it fingerprint-skips a copy already on
-						// disk) and never shortens, so it is a no-op for the empty transcript a
-						// non-resident scalar change carries and appends the tail for a merge
-						// (e.g. a sync into a chat this tab has never opened) that carries one.
-						// `_loaded` then governs ONLY the legacy shadow: a direct put of the
-						// resident-full transcript, or a union against disk that cannot shorten
-						// the row when the transcript in hand is empty.
-						appendChunks(mcS, c.id, c.messages);
-						// A transcript in hand that is not one (`transcriptOk`) never reaches the
-						// row or the summary. Its readable messages went to the chunks just now
-						// (`appendChunks` takes only records with a mid), which is where the reader
-						// looks; what is not a message is not stored anywhere.
-						if (!transcriptOk(c.messages)) {
-							skip(c.id, 'its transcript is ' + transcriptShape(c.messages));
+				var w = db.watch([CHATS_STORE, CHATSUM_STORE, MSGCHUNK_STORE], 'readwrite', 'saving the chats');
+				var seen = {}, put = {}, compactIds = [], failure = null, kept = {}, keptN = 0;
+				await w.run(function (store) {
+					var csS = store(CHATS_STORE), suS = store(CHATSUM_STORE), mcS = store(MSGCHUNK_STORE);
+					var mtombs = loadMsgTombs();		// parse the message tombstones once for this pass
+					// ONE CHAT THAT CANNOT BE WRITTEN IS LEFT AS IT IS ON DISK, and the rest of
+					// the list is written (DL-2, 2026-09-27). A throw here used to end the loop,
+					// so every chat after it went unsaved; a throw inside the `get` handler below
+					// aborted the transaction, so NONE were. What was on disk for a chat left
+					// out keeps its stamp, so a later save of it is tried again.
+					//
+					// TWO KINDS, and only one is quiet. A transcript that is not one
+					// (`transcriptOk`) is that chat's fault: it is skipped and trailed, and the
+					// store is fine. Anything else that throws is the STORE refusing (a full box,
+					// a record it cannot clone): the other chats are still written, and the alarm
+					// is raised as it always was, because this write did not all land.
+					var skip = function (id, why) {
+						noteSkipped(id, why);
+						if (disk[id] !== undefined) put[id] = disk[id]; else delete put[id];
+					};
+					var fail = function (id, e) {
+						failure = failure || e;
+						diag('store chat FAILED', id + ': ' + storeReason(e));
+						if (disk[id] !== undefined) put[id] = disk[id]; else delete put[id];
+					};
+					list.forEach(function (c) {
+						if (!c || !c.id) return;
+						seen[c.id] = true;
+						try {
+							// STAMPED AS IT IS AT THIS MOMENT. For a non-resident chat the stamp
+							// comes from its summary counts, not its empty `messages` array -- see
+							// `stampOf` -- so an un-opened chat's stamp matches what is on disk and
+							// it is SKIPPED here rather than needlessly rewritten.
+							var stamp = stampOf(c);
+							put[c.id] = stamp;
+							if (disk[c.id] !== undefined && disk[c.id] === stamp && !txPending(c)) return;
+							// A WRITE NEVER SHORTENS OR EMPTIES A TRANSCRIPT (audit B1), now under
+							// append (seq 214, Stage 2). The msgchunks are the source of truth and
+							// only ever GROW here -- and only for THIS chat -- so a save of one chat
+							// cannot touch another, and transcripts shrink only via tombstone
+							// (dropped on read, removed from disk by compaction below).
+							//
+							//   - A RESIDENT chat carries its authoritative transcript. Its NEW TAIL
+							//     is appended to the chunks (`appendChunks` skips any mid already on
+							//     disk, so a re-save appends nothing); the whole is written to the
+							//     legacy `chats` row as a FALLBACK SHADOW (a direct put -- the read
+							//     Stage 1 paid to union is gone, because the chunks, not this row,
+							//     are now read back). If a tombstone has left dead weight in the
+							//     chunks, this chat is queued for compaction after the commit.
+							//   - A NON-RESIDENT chat contributes an EMPTY transcript, so it appends
+							//     nothing and its chunks are left exactly as they are. Its rare
+							//     scalar change (a rename, a fold, an attachment) still has to reach
+							//     the legacy shadow WITHOUT shortening it, so that one row is unioned
+							//     against disk the way Stage 1 did -- the cost that path saved is on
+							//     the resident hot path, not here.
+							//
+							// The chatsum SUMMARY is refreshed alongside either way, so the rail
+							// (built from summaries at the next boot) does not go stale.
+							//
+							// THE APPEND RUNS FOR EVERY SAVE, resident or not. The chunks are the
+							// source of truth, so any transcript a save carries must reach them --
+							// `appendChunks` is idempotent (it fingerprint-skips a copy already on
+							// disk) and never shortens, so it is a no-op for the empty transcript a
+							// non-resident scalar change carries and appends the tail for a merge
+							// (e.g. a sync into a chat this tab has never opened) that carries one.
+							// `_loaded` then governs ONLY the legacy shadow: a direct put of the
+							// resident-full transcript, or a union against disk that cannot shorten
+							// the row when the transcript in hand is empty.
+							appendChunks(mcS, c.id, c.messages);
+							// A transcript in hand that is not one (`transcriptOk`) never reaches the
+							// row or the summary. Its readable messages went to the chunks just now
+							// (`appendChunks` takes only records with a mid), which is where the reader
+							// looks; what is not a message is not stored anywhere.
+							if (!transcriptOk(c.messages)) {
+								skip(c.id, 'its transcript is ' + transcriptShape(c.messages));
+								return;
+							}
+							if (c._loaded === false || !(c.messages || []).length) {
+								// UNIONED AGAINST DISK, so a short transcript in hand cannot shorten the
+								// legacy shadow or its summary. Two callers land here:
+								//   - a NON-RESIDENT save (`_loaded === false`) carries an empty
+								//     transcript for a scalar change (a rename, a fold, an attachment),
+								//     which must reach the shadow WITHOUT touching the messages it holds;
+								//   - a RESIDENT save whose transcript is EMPTY (Fix, same family as the
+								//     tag-loss incident): a cold IndexedDB read can leave a chat marked
+								//     resident yet empty, and the blind put below would then BLANK a
+								//     legacy row that is the sole home of a pre-seq-214 transcript. The
+								//     union honours the tombstones, so a chat whose messages were
+								//     genuinely all deleted still empties (its mids are tombstoned and
+								//     dropped), while a cold-empty read cannot shorten a row whose mids
+								//     are NOT tombstoned.
+								(function (rec, id) {
+									var resident = rec._loaded !== false;
+									// NOTHING MAY LEAVE THIS HANDLER BY A THROW: an exception out of an
+									// IndexedDB request handler aborts the transaction, and this one
+									// carries every chat in the save. A stored row whose transcript is
+									// not one is not unioned and not overwritten -- the union would
+									// throw on it, and a put would drop whatever of it is readable.
+									csS.get(id).then(function (old) {
+										try {
+											if (old && !transcriptOk(old.messages)) {
+												skip(id, 'the stored transcript is ' + transcriptShape(old.messages));
+												return;
+											}
+											rec = slimChat(rec);
+											// A row from before PAGESTORE B still holding a transcript: it is
+											// folded into the chunks here, and its session into pieces.
+											if (old && (old.messages || []).length) {
+												rec.messages = slimMessages(mergeMessages(old.messages, rec.messages, id, mtombs));
+												appendChunks(mcS, id, rec.messages);
+												put[id] = stampOf(rec);         // the stamp of what ACTUALLY lands
+											}
+											if (resident && rec.session) {
+												saveSession(mcS, id, rec.session);
+											} else if (old && old.session) {
+												// Pieces already stored were written after this row was: they stand.
+												var any = false;
+												mcS.walk(sessionRange(id), function () { any = true; }).then(function () {
+													try { if (!any) saveSession(mcS, id, old.session); } catch (e) { fail(id, e); }
+												}, function () { /* the save's done() answers for it */ });
+											}
+											csS.put(rowOf(rec));
+											if ((rec.messages || []).length) { suS.put(summaryLite(rec)); return; }
+											// No transcript in hand: the stored summary's account of it stands.
+											suS.get(id).then(function (was) {
+												try {
+													var sum = summaryLite(rec);
+													if (was) {
+														['msgCount', 'standing', 'opening', 'chunks', 'iturns', 'bgOwed', 'fp', 'seed', 'bytes']
+															.forEach(function (f) { sum[f] = was[f]; });
+														if (!rec.session) { sum.hasSession = was.hasSession; sum.sessionMsgs = was.sessionMsgs; }
+													}
+													suS.put(sum);
+												} catch (e) {
+													fail(id, e);
+												}
+											}, function () { /* the save's done() answers for it */ });
+										} catch (e) {
+											fail(id, e);
+										}
+									}, function () { /* the save's done() answers for it */ });
+								})(c, c.id);
+							} else {
+								var rec = slimChat(c);
+								csS.put(rowOf(rec));
+								suS.put(summaryLite(rec));
+								saveSession(mcS, c.id, rec.session);
+								// Dead weight is gauged against the RESIDENT transcript only -- a
+								// non-resident save carries an empty one, which is no measure of it.
+								if ((chunkPhysical[c.id] || 0) > (c.messages || []).length) compactIds.push(c.id);
+							}
+						} catch (e) {
+							fail(c.id, e);
+						}
+					});
+					// A DELETION IS A TOMBSTONE, NOT AN ABSENCE.
+					//
+					// This used to delete every id the list did not mention, which made a
+					// short list — for any reason, from any caller — a permanent, silent
+					// deletion of the chats it happened to leave out. Everything else in
+					// this app deletes on a tombstone and nothing else, and there was one
+					// reason for the asymmetry: with `localStorage.setItem` of the whole
+					// array there was no gap in which a list could be short. IndexedDB is
+					// asynchronous, so there is.
+					//
+					// `removeChat` is the only path that removes a chat, and it writes the
+					// tombstone before it saves, so every intended deletion still happens
+					// here. What no longer happens is the unintended one. A chat left out
+					// by accident stays on disk and comes back on the next read, which is
+					// the right way round: a resurrected chat is a nuisance, a deleted one
+					// is gone. The same rule that came out of the tag-loss incident.
+					var tombs = loadTombs();
+					Object.keys(disk).forEach(function (id) {
+						if (seen[id]) return;
+						if (tombs[id]) {
+							// The chat's summary and its transcript shadow go with it, and its
+							// append cursor with them, or a re-created id would append onto a
+							// stranger's leftover count.
+							csS['delete'](id);
+							suS['delete'](id);
+							mcS['delete'](IDBKeyRange.bound(id + '#', id + '#\uffff'));
+							mcS['delete'](sessionRange(id));
+							delete chunkedMids[id]; delete chunkPhysical[id]; delete chunkNextSeq[id]; delete sessionFp[id];
 							return;
 						}
-						if (c._loaded === false || !(c.messages || []).length) {
-							// UNIONED AGAINST DISK, so a short transcript in hand cannot shorten the
-							// legacy shadow or its summary. Two callers land here:
-							//   - a NON-RESIDENT save (`_loaded === false`) carries an empty
-							//     transcript for a scalar change (a rename, a fold, an attachment),
-							//     which must reach the shadow WITHOUT touching the messages it holds;
-							//   - a RESIDENT save whose transcript is EMPTY (Fix, same family as the
-							//     tag-loss incident): a cold IndexedDB read can leave a chat marked
-							//     resident yet empty, and the blind put below would then BLANK a
-							//     legacy row that is the sole home of a pre-seq-214 transcript. The
-							//     union honours the tombstones, so a chat whose messages were
-							//     genuinely all deleted still empties (its mids are tombstoned and
-							//     dropped), while a cold-empty read cannot shorten a row whose mids
-							//     are NOT tombstoned.
-							(function (rec, id) {
-								var g = csS.get(id);
-								// NOTHING MAY LEAVE THIS HANDLER BY A THROW: an exception out of an
-								// IndexedDB request handler aborts the transaction, and this one
-								// carries every chat in the save. A stored row whose transcript is
-								// not one is not unioned and not overwritten -- the union would
-								// throw on it, and a put would drop whatever of it is readable.
-								g.onsuccess = function () {
-									try {
-										var old = g.result;
-										if (old && !transcriptOk(old.messages)) {
-											skip(id, 'the stored transcript is ' + transcriptShape(old.messages));
-											return;
-										}
-										rec = slimChat(rec);
-										if (old && ((old.messages || []).length || old.session)) {
-											rec.messages = slimMessages(mergeMessages(old.messages, rec.messages, id, mtombs));
-											if (!rec.session && old.session) rec.session = old.session;
-											put[id] = stampOf(rec);         // the stamp of what ACTUALLY lands
-										}
-										csS.put(rec);
-										suS.put(summaryLite(rec));
-									} catch (e) {
-										fail(id, e);
-									}
-								};
-							})(c, c.id);
-						} else {
-							var rec = slimChat(c);
-							csS.put(rec);
-							suS.put(summaryLite(rec));
-							// Dead weight is gauged against the RESIDENT transcript only -- a
-							// non-resident save carries an empty one, which is no measure of it.
-							if ((chunkPhysical[c.id] || 0) > (c.messages || []).length) compactIds.push(c.id);
-						}
-					} catch (e) {
-						fail(c.id, e);
+						kept[id] = disk[id];
+					});
+					keptN = Object.keys(kept).length;
+					if (keptN) {
+						try { console.warn('Daimond: ' + keptN + ' chat(s) were left out of a save without a tombstone; kept on disk.'); }
+						catch (e) { /* no console */ }
 					}
 				});
-				// A DELETION IS A TOMBSTONE, NOT AN ABSENCE.
-				//
-				// This used to delete every id the list did not mention, which made a
-				// short list — for any reason, from any caller — a permanent, silent
-				// deletion of the chats it happened to leave out. Everything else in
-				// this app deletes on a tombstone and nothing else, and there was one
-				// reason for the asymmetry: with `localStorage.setItem` of the whole
-				// array there was no gap in which a list could be short. IndexedDB is
-				// asynchronous, so there is.
-				//
-				// `removeChat` is the only path that removes a chat, and it writes the
-				// tombstone before it saves, so every intended deletion still happens
-				// here. What no longer happens is the unintended one. A chat left out
-				// by accident stays on disk and comes back on the next read, which is
-				// the right way round: a resurrected chat is a nuisance, a deleted one
-				// is gone. The same rule that came out of the tag-loss incident.
-				var tombs = loadTombs();
-				var kept = {};
-				Object.keys(disk).forEach(function (id) {
-					if (seen[id]) return;
-					if (tombs[id]) {
-						// The chat's summary and its transcript shadow go with it, and its
-						// append cursor with them, or a re-created id would append onto a
-						// stranger's leftover count.
-						csS['delete'](id);
-						suS['delete'](id);
-						mcS['delete'](IDBKeyRange.bound(id + '#', id + '#\uffff'));
-						delete chunkedMids[id]; delete chunkPhysical[id]; delete chunkNextSeq[id];
-						return;
-					}
-					kept[id] = disk[id];
-				});
-				var keptN = Object.keys(kept).length;
-				if (keptN) {
-					try { console.warn('Daimond: ' + keptN + ' chat(s) were left out of a save without a tombstone; kept on disk.'); }
-					catch (e) { /* no console */ }
-				}
-				await done;
 				diag('store write', 'wrote=' + Object.keys(put).length
 					+ ' kept=' + keptN + ' compact=' + compactIds.length);
 				// A kept row is still IN the database, so it stays in the store's
@@ -3174,16 +3339,14 @@ export function install() { // page-split: install
 		// of it touches `chats` or sits on any behaviour path this stage. It is the
 		// scaffolding the lazy read and append-only write paths will grow onto.
 
-		/// A transaction over one or more shadow stores. Separate from `tx()`, which is
-		/// scoped to `chats` alone.
-		function shadowTx(names, mode) {
-			var t = db.transaction(names, mode), stores = {};
-			names.forEach(function (n) { stores[n] = t.objectStore(n); });
-			return { stores: stores, done: new Promise(function (res, rej) {
-				t.oncomplete = res;
-				t.onerror    = function () { rej(t.error || new Error('the shadow write failed')); };
-				t.onabort    = function () { rej(t.error || new Error('the shadow write was aborted')); };
-			}) };
+		/// A write over one or more shadow stores. Separate from `tx()`, which reads
+		/// `chats` alone.
+		function shadowTx(names, what, work) {
+			return db.watch(names, 'readwrite', what).run(function (store) {
+				var stores = {};
+				names.forEach(function (n) { stores[n] = store(n); });
+				return work(stores);
+			});
 		}
 
 		/// This chat's chunk rows, in seq order. The key range is `chatId#` ..
@@ -3191,16 +3354,34 @@ export function install() { // page-split: install
 		/// continue with ('-', digits, letters), so a longer id sharing this one as a
 		/// prefix falls OUTSIDE the range and cannot be picked up.
 		function readChunks(chatId) {
-			return new Promise(function (res, rej) {
-				var t = db.transaction(MSGCHUNK_STORE, 'readonly'), rows = [];
-				var range = IDBKeyRange.bound(chatId + '#', chatId + '#\uffff');
-				var cur = t.objectStore(MSGCHUNK_STORE).openCursor(range);
-				cur.onsuccess = function () {
-					var c = cur.result;
-					if (c) { rows.push(c.value); c.continue(); }
-					else { rows.sort(function (a, b) { return (a.seq | 0) - (b.seq | 0); }); res(rows); }
-				};
-				cur.onerror = function () { rej(cur.error || new Error('the chunks would not be read')); };
+			return readRange(IDBKeyRange.bound(chatId + '#', chatId + '#\uffff'), 'reading a transcript').then(function (rows) {
+				return rows.sort(function (a, b) { return (a.seq | 0) - (b.seq | 0); });
+			});
+		}
+		async function readRange(range, what) {
+			var w = db.watch(MSGCHUNK_STORE, 'readonly', what), rows = [];
+			w.store(MSGCHUNK_STORE).walk(range, function (v) { rows.push(v); });
+			await w.done();
+			return rows;
+		}
+
+		/// The model session stored in pieces, as `{ session }`, or null when none is.
+		async function readSession(chatId) {
+			var rows = await readRange(sessionRange(chatId), 'reading a session');
+			var got = rows.length ? joinFrags(rows) : undefined;
+			if (got === undefined) return null;
+			sessionFp[chatId] = fileHash(JSON.stringify(got));
+			return { session: got };
+		}
+
+		/// Put a chat's row back without its transcript and session, moving the session
+		/// to pieces unless `pieces` (what `readSession` found) says they stand already.
+		/// The caller has its transcript in the chunks first.
+		async function slimRow(chatId, row, pieces) {
+			var w = db.watch([CHATS_STORE, MSGCHUNK_STORE], 'readwrite', 'slimming a chat');
+			await w.run(function (store) {
+				if (!pieces && row.session) saveSession(store(MSGCHUNK_STORE), chatId, row.session);
+				store(CHATS_STORE).put(rowOf(row));
 			});
 		}
 
@@ -3252,9 +3433,8 @@ export function install() { // page-split: install
 		/// is PHYSICALLY on disk, so the next save appends only what changed and a build-up
 		/// of dead weight can be noticed for compaction.
 		async function readChunkState(chatId) {
-			var rows = await readChunks(chatId), all = [], maxSeq = -1;
+			var rows = await readChunks(chatId), all = rowsMsgs(rows), maxSeq = -1;
 			rows.forEach(function (r) {
-				if (r && Array.isArray(r.msgs)) all = all.concat(r.msgs);
 				var sq = (r && isFinite(r.seq)) ? (r.seq | 0) : -1;
 				if (sq > maxSeq) maxSeq = sq;
 			});
@@ -3308,13 +3488,9 @@ export function install() { // page-split: install
 				fresh.push(m);
 			});
 			if (!fresh.length) return 0;
-			var seq = (typeof chunkNextSeq[chatId] === 'number') ? chunkNextSeq[chatId] : 0;
-			for (var i = 0; i < fresh.length; i += CHUNK_MSGS) {
-				store.put({ k: chatId + '#' + pad12(seq) + '-' + chunkTag(), chatId: chatId, seq: seq,
-					msgs: fresh.slice(i, i + CHUNK_MSGS) });
-				seq += 1;
-			}
-			chunkNextSeq[chatId]  = seq;
+			var packed = packRows(chatId, (typeof chunkNextSeq[chatId] === 'number') ? chunkNextSeq[chatId] : 0, fresh);
+			packed.rows.forEach(function (r) { store.put(r); });
+			chunkNextSeq[chatId]  = packed.seq;
 			chunkPhysical[chatId] = (chunkPhysical[chatId] || 0) + fresh.length;
 			return fresh.length;
 		}
@@ -3340,45 +3516,31 @@ export function install() { // page-split: install
 		/// keeping the empty tool log and dropping the filled one, made permanent).
 		async function compactChunks(chatId) {
 			await conn();
-			var rows = await readChunks(chatId), concat = [], keys = [];
-			rows.forEach(function (r) {
-				if (!r) return;
-				if (r.k != null) keys.push(r.k);
-				if (Array.isArray(r.msgs)) concat = concat.concat(r.msgs);
-			});
+			var rows = await readChunks(chatId), concat = rowsMsgs(rows), keys = [];
+			rows.forEach(function (r) { if (r && r.k != null) keys.push(r.k); });
 			var live = reduceChunks(concat, chatId, loadMsgTombs());
 			// Nothing physical to drop: record the true count and leave the rows be.
 			if (live.length >= concat.length) { chunkPhysical[chatId] = concat.length; return; }
-			var t = db.transaction(MSGCHUNK_STORE, 'readwrite'), store = t.objectStore(MSGCHUNK_STORE);
-			var done = new Promise(function (res, rej) {
-				t.oncomplete = res;
-				t.onerror    = function () { rej(t.error || new Error('compaction failed')); };
-				t.onabort    = function () { rej(t.error || new Error('compaction aborted')); };
+			var w = db.watch(MSGCHUNK_STORE, 'readwrite', 'compacting a transcript');
+			var fps = {}, packed = packRows(chatId, 0, live);
+			live.forEach(function (m) { if (m && m.mid) fps[m.mid] = msgFp(m); });
+			await w.run(function (store) {
+				var st = store(MSGCHUNK_STORE);
+				keys.forEach(function (k) { st['delete'](k); });
+				packed.rows.forEach(function (r) { st.put(r); });
 			});
-			keys.forEach(function (k) { store['delete'](k); });
-			var chunks = [];
-			for (var i = 0; i < live.length; i += CHUNK_MSGS) chunks.push(live.slice(i, i + CHUNK_MSGS));
-			if (!chunks.length) chunks.push([]);          // an empty transcript still gets a seq-0 chunk
-			var seq = 0, fps = {};
-			chunks.forEach(function (batch) {
-				batch.forEach(function (m) { if (m && m.mid) fps[m.mid] = msgFp(m); });
-				store.put({ k: chatId + '#' + pad12(seq) + '-' + chunkTag(), chatId: chatId, seq: seq, msgs: batch });
-				seq += 1;
-			});
-			await done;
+			var seq = packed.seq;
 			chunkedMids[chatId]   = fps;
 			chunkPhysical[chatId] = live.length;
 			chunkNextSeq[chatId]  = seq;
 		}
 
 		/// A chat's stored summary row, or null.
-		function readSummary(chatId) {
-			return new Promise(function (res, rej) {
-				var t = db.transaction(CHATSUM_STORE, 'readonly');
-				var g = t.objectStore(CHATSUM_STORE).get(chatId);
-				g.onsuccess = function () { res(g.result || null); };
-				g.onerror   = function () { rej(g.error || new Error('the summary would not be read')); };
-			});
+		async function readSummary(chatId) {
+			var w = db.watch(CHATSUM_STORE, 'readonly', 'reading a summary');
+			var g = w.store(CHATSUM_STORE).get(chatId);
+			await w.done();
+			return (await g) || null;
 		}
 
 		/// The dispatched-turn iturns in a transcript -- what blocker B3 needs in the
@@ -3437,7 +3599,7 @@ export function install() { // page-split: install
 				// takes from it.
 				opening: chatOpening({ messages: c.messages }).slice(0, 300),
 				chunks: chunks,                                   // how many chunk rows this transcript spans
-				hasSession: !!(c.session),                        // session-ref: the bytes stay in the legacy row this stage
+				hasSession: !!(c.session),                        // session-ref: the bytes are pieces in msgchunks
 				sessionMsgs: (c.session && c.session.msgs) ? c.session.msgs.length : 0,
 				iturns: dispatchedIturns(c.messages),
 				bgOwed: bgOwedCount(c.messages),		// absent when none: `wakeBgEnds` reads a chat not resident in
@@ -3500,9 +3662,10 @@ export function install() { // page-split: install
 				if (mirror[i] && mirror[i].id === chatId) { mirror[i].fp = ''; break; }
 			}
 			try {
-				var t = db.transaction(CHATSUM_STORE, 'readwrite');
-				var st = t.objectStore(CHATSUM_STORE), g = st.get(chatId);
-				g.onsuccess = function () { var s = g.result; if (s) { s.fp = ''; st.put(s); } };
+				db.watch(CHATSUM_STORE, 'readwrite', 'clearing a summary mark').run(function (store) {
+					var st = store(CHATSUM_STORE);
+					return st.get(chatId).then(function (s) { if (s) { s.fp = ''; st.put(s); } });
+				}).catch(function () { /* the mirror clear covers this session */ });
 			} catch (e) { /* the mirror clear already covers this session */ }
 		}
 
@@ -3510,23 +3673,13 @@ export function install() { // page-split: install
 		/// Stage 1 -- the chunk store lags it within a session, so a lazy load reads HERE,
 		/// not from `reconstruct` (that becomes the reader in Stage 2).
 		function getRow(id) {
-			return new Promise(function (res, rej) {
-				var t = tx('readonly');
-				var g = t.store.get(id);
-				g.onsuccess = function () { res(g.result || null); };
-				g.onerror   = function () { rej(g.error || new Error('the row would not be read')); };
-			});
+			return tx('reading a chat').store.get(id).then(function (r) { return r || null; });
 		}
 
 		/// The ids in the legacy `chats` store -- keys only, no transcript loaded. This is
 		/// the authoritative set of chats, against which the summaries are reconciled.
 		function getAllChatKeys() {
-			return new Promise(function (res, rej) {
-				var t = tx('readonly');
-				var r = t.store.getAllKeys();
-				r.onsuccess = function () { res(r.result || []); };
-				r.onerror   = function () { rej(r.error || new Error('the keys would not be read')); };
-			});
+			return tx('listing the chats').store.getAllKeys().then(function (r) { return r || []; });
 		}
 
 		/// The session mirror as SUMMARIES (seq 213, Stage 1): one small row per chat,
@@ -3542,21 +3695,24 @@ export function install() { // page-split: install
 		///     is the authority on existence.
 		async function readSummaries() {
 			await conn();
-			var sums = await new Promise(function (res, rej) {
-				var t = db.transaction(CHATSUM_STORE, 'readonly'), rows = [];
-				var cur = t.objectStore(CHATSUM_STORE).openCursor();
-				cur.onsuccess = function () { var c = cur.result; if (c) { rows.push(c.value); c.continue(); } else res(rows); };
-				cur.onerror   = function () { rej(cur.error || new Error('the summaries would not be read')); };
-			});
+			var w = db.watch(CHATSUM_STORE, 'readonly', 'reading the summaries'), sums = [];
+			w.store(CHATSUM_STORE).walk(null, function (v) { sums.push(v); });
+			await w.done();
 			var byId = {};
 			sums.forEach(function (s) { if (s && s.id) byId[s.id] = s; });
 			var keys = await getAllChatKeys();
-			var out = [], missingRows = [];
+			var out = [], missingRows = [], keep = {};
 			for (var i = 0; i < keys.length; i++) {
 				var id = keys[i];
 				if (byId[id]) { out.push(byId[id]); continue; }
 				var row = await getRow(id);
 				if (!row || !row.id) continue;
+				if (!fatRow(row)) {
+					// A slim row's transcript and session are in the chunks.
+					var ses = await readSession(id);
+					row = Object.assign({}, row, { messages: await reconstruct(id), session: ses ? ses.session : null });
+					keep[id] = true;
+				}
 				// Summarised from the records the row holds and nothing else: a row whose
 				// transcript is not one (`transcriptOk`) would otherwise throw here
 				// (`dispatchedIturns` walks it) and take the whole boot, and so every chat,
@@ -3571,8 +3727,18 @@ export function install() { // page-split: install
 					Math.max(1, Math.ceil((rm || []).length / CHUNK_MSGS))));
 				missingRows.push(row);
 			}
-			if (missingRows.length) { shadowDone = writeShadow(missingRows); }
+			if (missingRows.length) { shadowDone = writeShadow(missingRows, keep); }
 			return out;
+		}
+
+		/// Move every row from before PAGESTORE B off the `chats` store's whole-chat form,
+		/// one chat at a time: `loadMessages` folds its transcript into the chunks, its
+		/// session into pieces, and puts the row back slim.
+		async function slimRows() {
+			var keys = await getAllChatKeys();
+			for (var i = 0; i < keys.length; i++) {
+				if (fatRow(await getRow(keys[i]))) await loadMessages(keys[i]);
+			}
 		}
 
 		/// The transcript and model session of ONE chat, read from its authoritative legacy
@@ -3646,26 +3812,20 @@ export function install() { // page-split: install
 				// recovery is paid once and every read after is the pure chunk path. Both
 				// heals compare and write this form: a heal judged against uncut text would
 				// rewrite on every read.
-				var toStore = slimMessages(full);
+				var toStore = slimMessages(full), healed = true;
 				if (!readOnly && !sameTranscript(toStore, chunkMsgs)) {
-					try { await rewriteChunks(chatId, toStore); } catch (e) { /* served from `toStore` regardless */ }
+					try { await rewriteChunks(chatId, toStore); } catch (e) { healed = false; /* served from `toStore` regardless */ }
 				}
-				// Heal the fallback ROW when it has drifted from what the reader serves: a mid
-				// it holds un-elided that the chunks elided (a pre-seq-211 log -- the write-
-				// amplification regression), or a tombstoned mid it still physically holds
-				// (which would RESURRECT once the tombstone ages out, since the reader unions
-				// the row back in). Both converge the row onto the served transcript, once,
-				// so a read is also a sweep. Bounded: nothing is written when the row already
-				// matches, which is every ordinary chat. GUARDED on a non-empty `full`: a
-				// cold-empty read must never blank a legacy row that is the sole home of a
-				// pre-seq-214 transcript (Fix, the tag-loss family).
-				if (!readOnly && row && full.length && !sameTranscript(toStore, legacyMsgs)) {
-					try {
-						row.messages = toStore;
-						var tt = tx('readwrite'); tt.store.put(row); await tt.done;
-					} catch (e) { /* the reader already served the truth; the row heals next time */ }
+				// A row from before PAGESTORE B still holding the transcript or the session is
+				// slimmed once its transcript is in the chunks: the chunks hold the join just
+				// served, and the session goes to pieces unless pieces already stand.
+				var pieces = await readSession(chatId);
+				if (!pieces && !(row && row.session)) sessionFp[chatId] = '';
+				if (!readOnly && fatRow(row) && healed) {
+					try { await slimRow(chatId, row, pieces); }
+					catch (e) { /* the reader already served the truth; the row is slimmed next time */ }
 				}
-				var res = { messages: toStore, session: (row && row.session) || null };
+				var res = { messages: toStore, session: pieces ? pieces.session : ((row && row.session) || null) };
 				if (cold) { res.failed = true; }
 				// The taint the row and summary held when read, AFTER the chunks: the writer commits
 				// all three in one transaction, so any word served here is covered by it. A caller
@@ -3688,23 +3848,15 @@ export function install() { // page-split: install
 			await conn();
 			var rows = await readChunks(chatId), keys = [];
 			rows.forEach(function (r) { if (r && r.k != null) keys.push(r.k); });
-			var t = db.transaction(MSGCHUNK_STORE, 'readwrite'), store = t.objectStore(MSGCHUNK_STORE);
-			var done = new Promise(function (res, rej) {
-				t.oncomplete = res;
-				t.onerror    = function () { rej(t.error || new Error('the chunk rewrite failed')); };
-				t.onabort    = function () { rej(t.error || new Error('the chunk rewrite was aborted')); };
+			var w = db.watch(MSGCHUNK_STORE, 'readwrite', 'rewriting a transcript');
+			var fps = {}, packed = packRows(chatId, 0, msgs);
+			msgs.forEach(function (m) { if (m && m.mid) fps[m.mid] = msgFp(m); });
+			await w.run(function (store) {
+				var st = store(MSGCHUNK_STORE);
+				keys.forEach(function (k) { st['delete'](k); });
+				packed.rows.forEach(function (r) { st.put(r); });
 			});
-			keys.forEach(function (k) { store['delete'](k); });
-			var chunks = [];
-			for (var i = 0; i < msgs.length; i += CHUNK_MSGS) chunks.push(msgs.slice(i, i + CHUNK_MSGS));
-			if (!chunks.length) chunks.push([]);
-			var seq = 0, fps = {};
-			chunks.forEach(function (batch) {
-				batch.forEach(function (m) { if (m && m.mid) fps[m.mid] = msgFp(m); });
-				store.put({ k: chatId + '#' + pad12(seq) + '-' + chunkTag(), chatId: chatId, seq: seq, msgs: batch });
-				seq += 1;
-			});
-			await done;
+			var seq = packed.seq;
 			chunkedMids[chatId]   = fps;
 			chunkPhysical[chatId] = msgs.length;
 			chunkNextSeq[chatId]  = seq;
@@ -3728,21 +3880,19 @@ export function install() { // page-split: install
 			await conn();
 			var tombs = loadMsgTombs();
 			if (!chatId) return false;
-			var rows = await readChunks(chatId), concat = [];
-			rows.forEach(function (r) { if (r && Array.isArray(r.msgs)) concat = concat.concat(r.msgs); });
+			var rows = await readChunks(chatId), concat = rowsMsgs(rows);
 			var row = await getRow(chatId);
 			var legacyMsgs = (row && Array.isArray(row.messages)) ? row.messages : [];
 			var hitChunk  = concat.some(function (m) { return m && m.mid && tombs[m.mid]; });
 			var hitLegacy = legacyMsgs.some(function (m) { return m && m.mid && tombs[m.mid]; });
 			if (!hitChunk && !hitLegacy) return false;         // nothing tombstoned is physically here
-			if (hitChunk) {
-				await rewriteChunks(chatId, reduceChunks(concat, chatId, tombs));
-			}
 			if (hitLegacy && row) {
-				row.messages = slimMessages(mergeMessages(legacyMsgs, [], chatId, tombs));
-				var lt = tx('readwrite');
-				lt.store.put(row);
-				await lt.done;
+				// A row from before PAGESTORE B: its transcript is folded into the chunks and
+				// the row slimmed, which removes its physical copies.
+				await rewriteChunks(chatId, slimMessages(reduceChunks(concat.concat(legacyMsgs), chatId, tombs)));
+				await slimRow(chatId, row, await readSession(chatId));
+			} else if (hitChunk) {
+				await rewriteChunks(chatId, reduceChunks(concat, chatId, tombs));
 			}
 			// A dropped gap mid changes what `loadMessages` reconstructs, so the summary
 			// fp can no longer vouch for the stored manifest. (`rewriteChunks` above
@@ -3764,17 +3914,16 @@ export function install() { // page-split: install
 		/// written, so a transcript that SHRANK (a cleared conversation) leaves no orphan
 		/// tail chunks. Each chat's clear-then-write plus its summary land in ONE
 		/// transaction, so a chat is never left half-shadowed.
-		async function writeShadow(list) {
+		/// `keep` names the chats whose chunks hold the transcript already: their summary
+		/// alone is written.
+		async function writeShadow(list, keep) {
 			try {
 				await conn();
 				// What is already shadowed, so an unchanged chat is not rewritten.
 				var have = {};
-				await new Promise(function (res, rej) {
-					var t = db.transaction(CHATSUM_STORE, 'readonly');
-					var cur = t.objectStore(CHATSUM_STORE).openCursor();
-					cur.onsuccess = function () { var c = cur.result; if (c) { have[c.value.id] = c.value; c.continue(); } else res(); };
-					cur.onerror   = function () { rej(cur.error || new Error('the summaries would not be read')); };
-				});
+				var w = db.watch(CHATSUM_STORE, 'readonly', 'reading the summaries');
+				w.store(CHATSUM_STORE).walk(null, function (v) { have[v.id] = v; });
+				await w.done();
 				// Decide the work, and serialise each transcript, OUTSIDE the write
 				// transaction -- IDB commits a transaction the moment it goes idle, so no
 				// CPU (a JSON.stringify) may sit between its requests.
@@ -3785,22 +3934,18 @@ export function install() { // page-split: install
 					var serial = JSON.stringify(msgs);
 					var sum = have[c.id];
 					if (sum && sum.v === SHADOW_V && sum.fp === fileHash(serial) && sum.msgCount === msgs.length) return;
-					var chunks = [];
-					for (var i = 0; i < msgs.length; i += CHUNK_MSGS) chunks.push(msgs.slice(i, i + CHUNK_MSGS));
-					if (!chunks.length) chunks.push([]);          // an empty chat still gets a seq-0 chunk
-					work.push({ c: c, serial: serial, chunks: chunks });
+					work.push({ c: c, serial: serial, rows: (keep && keep[c.id]) ? null : packRows(c.id, 0, msgs).rows });
 				});
 				if (!work.length) return;
-				var wt = shadowTx([MSGCHUNK_STORE, CHATSUM_STORE], 'readwrite');
-				work.forEach(function (w) {
+				await shadowTx([MSGCHUNK_STORE, CHATSUM_STORE], 'shadowing the chats', function (stores) { work.forEach(function (w) {
 					var id = w.c.id;
-					wt.stores[MSGCHUNK_STORE]['delete'](IDBKeyRange.bound(id + '#', id + '#\uffff'));
-					w.chunks.forEach(function (batch, seq) {
-						wt.stores[MSGCHUNK_STORE].put({ k: id + '#' + seq, chatId: id, seq: seq, msgs: batch });
-					});
-					wt.stores[CHATSUM_STORE].put(summaryOf(w.c, w.serial, w.chunks.length));
-				});
-				await wt.done;
+					if (w.rows) {
+						stores[MSGCHUNK_STORE]['delete'](IDBKeyRange.bound(id + '#', id + '#\uffff'));
+						w.rows.forEach(function (r) { stores[MSGCHUNK_STORE].put(r); });
+					}
+					stores[CHATSUM_STORE].put(summaryOf(w.c, w.serial,
+						w.rows ? w.rows.length : Math.max(1, Math.ceil(w.c.messages.length / CHUNK_MSGS))));
+				}); });
 			} catch (e) {
 				// Inert by design: note it for the probe and move on. The legacy rows are
 				// untouched and the rail is already built.
@@ -3863,9 +4008,10 @@ export function install() { // page-split: install
 					usable = true;
 					read = vouched = judge(mirror);
 					if (vouched) storageAlarmClear();
+					slimDone = shadowDone.then(slimRows).catch(function () { /* the next boot tries again */ });
 					// STAGE 2d SCAFFOLDING (deferred). The reader is the chunks now; the
-					// legacy `chats` rows are kept as a rollback shadow and are NOT pruned
-					// yet. Start the grace clock the first time the store is believed, so a
+					// legacy `chats` rows are slimmed (`slimRows`) but NOT pruned yet, and
+					// since v4 no older build can read them (CHATS_DB_VERSION). Start the grace clock the first time the store is believed, so a
 					// future build can retire the legacy one-row after a vouch PLUS a window
 					// -- the same shape as the CHATS_LEGACY prune. Setting the stamp is all
 					// this stage does; nothing reads it to delete.
@@ -3973,6 +4119,11 @@ export function install() { // page-split: install
 			/// Has a read of the store landed and been believed? False means the chats on
 			/// screen may not be all of them, so nothing may treat the mirror as complete.
 			read: function () { return read; },
+			/// Is a request still waiting on a store that has stopped answering?
+			stalled: DaimondStoreWait.stalled,
+			/// Run `fn` once the stalled store answers again (at once when none is). One per
+			/// chat id: a later call for the same chat replaces the earlier one.
+			whenAnswers: DaimondStoreWait.whenAnswers,
 			/// Can the mirror be MERGED AGAINST? False means the store has not been
 			/// read, or read something this device knows to be wrong — so anything
 			/// absent from the mirror is unknown rather than gone, and a merge that
@@ -3992,14 +4143,17 @@ export function install() { // page-split: install
 				setWatermark(0);
 				vouched = true;
 				read = true;
-				try { await conn(); var t = tx('readwrite'); t.store.clear(); await t.done; }
+				try {
+					await conn();
+					await db.watch(CHATS_STORE, 'readwrite', 'clearing the chats').run(function (store) { store(CHATS_STORE).clear(); });
+				}
 				catch (e) { /* nothing to clear */ }
 				// The transcript shadow goes too, or a re-created account at this browser
 				// would find a stranger's chunks under its ids (seq 212, Stage 0).
 				try {
-					var st = shadowTx([MSGCHUNK_STORE, CHATSUM_STORE], 'readwrite');
-					st.stores[MSGCHUNK_STORE].clear(); st.stores[CHATSUM_STORE].clear();
-					await st.done;
+					await shadowTx([MSGCHUNK_STORE, CHATSUM_STORE], 'clearing the transcripts', function (stores) {
+						stores[MSGCHUNK_STORE].clear(); stores[CHATSUM_STORE].clear();
+					});
 				} catch (e2) { /* nothing to clear */ }
 			},
 			/// The transcript and model session of one chat, from its authoritative legacy
@@ -4036,11 +4190,10 @@ export function install() { // page-split: install
 				}
 				if (!landed.length) return;
 				try {
-					var t = db.transaction(CHATSUM_STORE, 'readwrite'), st = t.objectStore(CHATSUM_STORE);
-					landed.forEach(function (f) {
-						var g = st.get(f.id);
-						g.onsuccess = function () {
-							var s = g.result;
+					db.watch(CHATSUM_STORE, 'readwrite', 'noting summary marks').run(function (store) {
+						var st = store(CHATSUM_STORE);
+						return Promise.all(landed.map(function (f) {
+						return st.get(f.id).then(function (s) {
 							if (!s) return;
 							// Only the row this fix was measured for: a write since (another tab's)
 							// has its own seed, and the pair put over it would be read back at the
@@ -4050,8 +4203,9 @@ export function install() { // page-split: install
 							if (f.fp) s.fp = f.fp;
 							s.seed = f.seed || '';
 							st.put(s);
-						};
-					});
+						});
+						}));
+					}).catch(function () { /* the mirror update already covers this session */ });
 				} catch (e) { /* the mirror update already covers this session */ }
 			},
 			/// Transcript loads served since the last reset, and a reset. Test-only, for
@@ -4108,12 +4262,14 @@ export function install() { // page-split: install
 			migrateShadow: function (list) { shadowDone = writeShadow(list || mirror.slice()); return shadowDone; },
 			/// Resolves when the shadow pass kicked at boot (or by `migrateShadow`) settled.
 			shadowSettled: function () { return shadowDone; },
+			/// Resolves when the boot's pass slimming rows from before PAGESTORE B settled.
+			slimSettled:   function () { return slimDone; },
 		};
 	})();
 	// page-split: install 16
 	DaimondStore.subscribe(function (owed) {
 		var why = tOr('store.records_owed',
-			'This device is out of browser storage, so a change made here is not saved yet. '
+			'This browser’s local storage for this site (localStorage) is full, so a setting or record changed here is not saved yet. '
 			+ 'This page is keeping it, and saves it as soon as there is room.');
 		if (owed.length) { storeOwedBefore = true; storageAlarm(why, 'owed'); return; }
 		storageAlarmClear('owed');

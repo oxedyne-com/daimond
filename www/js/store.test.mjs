@@ -316,7 +316,7 @@ async function main() {
 	{
 		const b = box();
 		const ix = {}, set = (o) => { for (const k of Object.keys(ix)) delete ix[k]; Object.assign(ix, o); };
-		const t = tab(b, [], { DaimondDurable: { durable: () => false, ready: async () => {}, get: async () => null, set: async () => true, migrate: async () => false } });
+		const t = tab(b, [], { DaimondDurable: { durable: () => false, tookOver: () => false, ready: async () => {}, get: async () => null, set: async () => true, migrate: async () => false } });
 		new Function('window', 'localStorage', 'indexedDB', 'with (window) {\n' + readPage(join(HERE, 'cloud.js'), 'utf8') + '\n}')(t.win, t.win.localStorage, undefined);
 		const C = t.win.DaimondCloud;
 		const m = (h) => ({ v: 2, size: 1, chunks: [{ addr: h.repeat(8), size: 1 }], hash: h });

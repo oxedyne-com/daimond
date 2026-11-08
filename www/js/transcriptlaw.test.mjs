@@ -199,7 +199,7 @@ if (!BREAK) {
 	check('the old localStorage migration (`mergeInto`) applies it to both sides',
 		/function mergeInto\(base, incoming\) \{[\s\S]{0,900}!transcriptOk\(c\.messages\)[\s\S]{0,700}!transcriptOk\(st\.messages\)/.test(src));
 	check('the store\'s union handler catches, so it cannot abort the transaction',
-		/g\.onsuccess = function \(\) \{\s*try \{\s*var old = g\.result;\s*if \(old && !transcriptOk\(old\.messages\)\)/.test(src));
+		/csS\.get\(id\)\.then\(function \(old\) \{\s*try \{\s*if \(old && !transcriptOk\(old\.messages\)\)/.test(src));
 	check('and a transcript in hand that is not one never reaches the row',
 		/appendChunks\(mcS, c\.id, c\.messages\);[\s\S]{0,500}if \(!transcriptOk\(c\.messages\)\) \{\s*skip\(/.test(src));
 	check('applySync names a refused chat in `refused`, not in `failed`',

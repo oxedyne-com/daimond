@@ -28,8 +28,8 @@ const read = [], loaded = [];
 const chats = ['cur', 'open', 'ph', 'idle', 'empty'].map((id) => ({ id, messages: [], _loaded: id !== 'ph' }));
 let lifted = null;
 try {
-	lifted = new Function('chats', 'current', 'ChatStore', 'loadChatMessages', 'readChatLog', 'logPlaces', [
-		liftSource(['readLogsAtBoot'], ['chats', 'current', 'ChatStore', 'loadChatMessages', 'readChatLog', 'logPlaces']).src,
+	lifted = new Function('chats', 'current', 'ChatStore', 'loadChatMessages', 'readChatLog', 'logPlaces', 'readLogPlaces', [
+		liftSource(['readLogsAtBoot'], ['chats', 'current', 'ChatStore', 'loadChatMessages', 'readChatLog', 'logPlaces', 'readLogPlaces']).src,
 		'return readLogsAtBoot;',
 	].join('\n'))(
 		chats, chats[0],
@@ -37,6 +37,7 @@ try {
 		async (c) => { loaded.push(c.id); c._loaded = true; },
 		async (c) => { read.push(c.id + (c._loaded ? '' : '!')); },
 		() => ({ open: { seq: 4, views: { T2: {} } }, empty: { seq: 9, views: {} } }),
+		async () => {},
 	);
 } catch (e) { lifted = null; }
 check('BOOT readLogsAtBoot exists', typeof lifted === 'function');

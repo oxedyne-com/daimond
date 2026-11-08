@@ -1757,24 +1757,145 @@ function dispatchedPlaceholderIn(chat, turnId) {
 // The cursor and an open turn's view are this device's, not the chat's: they never ride
 // the parcel (a record carries no reader's place), and a device with none reads the log
 // from its start, which folds what it already holds by mid and adds nothing twice.
+//
+// IN THE DATABASE, NOT THE BOX. An open turn's view carries its rows whole (one long turn's
+// view was 2.3 MB), and written into localStorage on every read the place filled the
+// origin's 5 MB box, after which every synced record was refused. It is kept in
+// DaimondDurable as one map, chat id -> place. The box's copy is read at install and stays
+// until a database write of it has landed, as DaimondDurable.migrate moves a key, so a
+// reload or a refusal in between loses nothing. A device with no database keeps a bounded
+// place in the box: the cursor, below every turn still open, and the ends, never the views.
 var LOG_PLACE_KEY = 'daimond.chatlog.place';
+var _places = Object.create(null);		// chat id -> this device's place
+var _placeSeq = Object.create(null);	// chat id -> the cursor last written
+var _placesRead = null;					// the read of the stored places that landed, or the one in flight
+var _placeOwed = Object.create(null);	// chat id -> held here or in the box, not yet in the database
 var _logBusy = Object.create(null);		// chat id -> a read in flight
 var _logAgain = Object.create(null);	// chat id -> tapped again while it ran
 
-function logPlaces() {
-	try { return JSON.parse(localStorage.getItem(LOG_PLACE_KEY) || '{}') || {}; } catch (e) { return {}; }
+function boxedLogPlaces() {
+	var m = null;
+	try { m = JSON.parse(localStorage.getItem(LOG_PLACE_KEY) || 'null'); } catch (e) { m = null; }
+	return (m && typeof m === 'object') ? m : null;
 }
+
+/// The place a box can hold: the cursor, moved below the first row of every turn still
+/// open, and below the first piece of a body still arriving in pieces, so a reload reads
+/// those turns again; and the ends; never the views.
+function boundedLogPlace(p) {
+	var seq = +p.seq || 0, views = p.views || {};
+	var below = function (n) { if (+n > 0) seq = Math.min(seq, +n - 1); };
+	Object.keys(views).forEach(function (t) {
+		var v = views[t] || {};
+		(v.rows || []).forEach(function (r) { below(r.seq); });
+		(v.joining || []).forEach(function (j) { below(j.head && j.head.seq); });
+	});
+	return { seq: seq, views: {}, ends: p.ends || {} };
+}
+
+/// Write `places` (chat id -> a place, bounded here, or null to drop it) into the box's map.
+/// Did the box take it?
+function boxLogPlaces(places) {
+	var m = boxedLogPlaces() || {};
+	Object.keys(places).forEach(function (id) {
+		if (places[id]) m[id] = boundedLogPlace(places[id]); else delete m[id];
+	});
+	try {
+		if (Object.keys(m).length) localStorage.setItem(LOG_PLACE_KEY, JSON.stringify(m));
+		else localStorage.removeItem(LOG_PLACE_KEY);
+		return true;
+	} catch (e) { return false; }
+}
+
+/// Read the box's copy of the places into memory at install, before the unlock names the
+/// account whose database holds them. The box keeps it until the database does.
+export function readBoxedLogPlaces() {
+	var boxed = boxedLogPlaces();
+	if (!boxed) return;
+	Object.keys(boxed).forEach(function (id) { _places[id] = boxed[id]; _placeOwed[id] = 1; });
+}
+
+/// Read the account's stored places into memory, joining in, in the same transaction, those
+/// the database does not hold yet, then take those out of the box. A read that did not land
+/// (no database, a refusal, a rejection) is tried again at the next need.
+function readLogPlaces() {
+	if (_placesRead) return _placesRead;
+	var run = _placesRead = (async function () {
+		var D = window.DaimondDurable, owed = Object.keys(_placeOwed);
+		if (D) await D.ready();
+		if (!D || !D.durable()) {
+			var held = {};
+			owed.forEach(function (id) { if (_places[id]) held[id] = _places[id]; });
+			if (owed.length) boxLogPlaces(held);
+			return false;
+		}
+		var r = null;
+		try {
+			var stored = await D.get(LOG_PLACE_KEY), ops = {};
+			stored = (stored && typeof stored === 'object') ? stored : {};
+			// A stored place at or past the held one's cursor is the newer: it keeps its views.
+			// A sibling tab's save between this read and the write can be put back a step,
+			// which costs a re-read from the older cursor, never a row.
+			owed.forEach(function (id) {
+				var p = _places[id], s = stored[id];
+				if (p && !(s && (+s.seq || 0) >= (+p.seq || 0))) ops[id] = { v: p };
+			});
+			r = await D.update(LOG_PLACE_KEY, ops);
+		} catch (e) { r = null; }	// the read did not land
+		// Answered from the box after a dropped connection, the read is the box's, not the database's.
+		if (!(r && r.ok) || !D.durable()) return false;
+		var m = r.value || {}, gone = {};
+		Object.keys(m).forEach(function (id) { if (!(id in _places) || _placeOwed[id]) _places[id] = m[id]; });
+		owed.forEach(function (id) { delete _placeOwed[id]; gone[id] = null; });
+		if (owed.length) boxLogPlaces(gone);
+		return true;
+	})();
+	run.then(function (landed) { if (!landed && _placesRead === run) _placesRead = null; });
+	return run;
+}
+function logPlaces() { return _places; }
 function saveLogPlace(chat) {
-	var all = logPlaces();
-	all[chat.id] = { seq: logCursor(chat), views: chat.logViews || {}, ends: chat.logEnds || {} };
-	try { localStorage.setItem(LOG_PLACE_KEY, JSON.stringify(all)); } catch (e) { /* re-read next boot */ }
+	var seq = logCursor(chat), id = chat.id;
+	if (_placeSeq[id] === seq && _places[id]) return;
+	var place = _places[id] = { seq: seq, views: chat.logViews || {}, ends: chat.logEnds || {} };
+	_placeSeq[id] = seq;
+	var D = window.DaimondDurable;
+	if (!D || !D.durable()) {
+		// The box holds it, bounded, and the next read that finds the database writes it there.
+		var one = {};
+		one[id] = place;
+		_placeOwed[id] = 1;
+		if (!boxLogPlaces(one)) delete _placeSeq[id];
+		return;
+	}
+	var ops = {};
+	ops[id] = { v: place };
+	D.update(LOG_PLACE_KEY, ops).then(function (r) {
+		if (!(r && r.ok)) delete _placeSeq[id];	// the next read writes it again
+	});
 }
 function loadLogPlace(chat) {
 	if (chat.logSeq != null) return;
-	var p = logPlaces()[chat.id];
+	var p = _places[chat.id];
 	chat.logSeq   = p ? (+p.seq || 0) : 0;
 	chat.logViews = (p && p.views) || {};
 	chat.logEnds  = (p && p.ends) || {};
+	_placeSeq[chat.id] = chat.logSeq;
+}
+
+/// Forget a destroyed chat's place: nothing will read its log again.
+export function forgetLogPlace(id) {
+	if (!id) return;
+	delete _places[id];
+	delete _placeSeq[id];
+	delete _placeOwed[id];
+	var boxed = boxedLogPlaces(), one = {};
+	if (boxed && id in boxed) { one[id] = null; boxLogPlaces(one); }
+	var D = window.DaimondDurable;
+	if (!D || !D.durable()) return;
+	var ops = {};
+	ops[id] = { del: 1 };
+	D.update(LOG_PLACE_KEY, ops);	// refused, a stale place costs nothing: no chat reads it
 }
 
 /// Has this device read turn `turn` of chat `chatId` ended? The dead-writer detector's check
@@ -1804,8 +1925,18 @@ export async function readChatLog(chat) {
 		// The transcript first, so the log folds under it: a chat the rail holds only as a
 		// summary, one that never said, or one a cold store answered short (REL-1n). Still
 		// not whole, `readChat` holds and the cursor stays for the read after it settles.
-		if (!transcriptWhole(chat)) await loadChatMessages(chat);
+		// A store that has stopped answering cannot give the transcript; the notice says so,
+		// and the log is read again once it answers rather than this tap waiting for ever.
+		// A chat already whole needs nothing from the store, so its reply draws regardless.
+		if (!transcriptWhole(chat)) {
+			await loadChatMessages(chat);
+			if (!transcriptWhole(chat) && ChatStore.stalled()) {
+				ChatStore.whenAnswers(chat.id, function () { readChatLog(chat).catch(function () { /* the next tap reads again */ }); });
+				return null;
+			}
+		}
 		if (window.DaimondGateway && DaimondGateway.account) pg.member = DaimondGateway.account() || pg.member;
+		await readLogPlaces();
 		var out;
 		do {
 			delete _logAgain[chat.id];
@@ -1846,6 +1977,7 @@ export async function readChatLog(chat) {
 /// a turn the log holds open here (a view in this device's place), and every chat holding a
 /// hand-off placeholder, each once its transcript is resident. One at a time.
 export async function readLogsAtBoot() {
+	await readLogPlaces();
 	var places = logPlaces(), held = {};
 	try { ChatStore.stored().forEach(function (s) { if (s && s.id && Array.isArray(s.iturns) && s.iturns.length) held[s.id] = 1; }); }
 	catch (e) { /* placeholders unknown: the screen and the open turns still read */ }
@@ -3780,6 +3912,7 @@ export function install() { // page-split: install
 			onLogTap(String(d.chat || ''), +d.head || Number.MAX_SAFE_INTEGER);
 		});
 	} catch (e) { /* no window */ }
+	readBoxedLogPlaces();
 	try { window.addEventListener('daimond:unlock', function () { readLogsAtBoot().catch(function () {}); }); } catch (e) { /* no window */ }
 	// The one dead-writer detector asks the reader before it ends a turn (P2.3c1).
 	readerEnded(chatLogEnded);

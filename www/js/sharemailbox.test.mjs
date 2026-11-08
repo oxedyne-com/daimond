@@ -29,6 +29,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { enc, dec, cmp, inRange, isRange } from './test/idbkeys.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0, checks = 0;
@@ -89,6 +90,8 @@ function makeLocal() {
 
 /// An async IndexedDB, from quotamanifest.test.mjs: one store over a Map, transactions
 /// that complete a tick later, and `setFailWrites` to make every put abort.
+const KeyRange = { bound: (lower, upper, lo, uo) => ({ lower, upper, lowerOpen: !!lo, upperOpen: !!uo }) };
+const Policy = { storePieceBytes: () => 32768, storeWaitMs: () => 20000 };
 function makeIndexedDB() {
 	const dbs = new Map();
 	let failWrites = false;
@@ -105,7 +108,7 @@ function makeIndexedDB() {
 				const tx = { oncomplete: null, onerror: null, onabort: null, objectStore: null };
 				let open = 0, over = false;
 				const request = (work) => {
-					const rq = { onsuccess: null, onerror: null, result: undefined };
+					const rq = { ls: [], addEventListener(e, f) { if (e === 'success') this.ls.push(f); }, onsuccess: null, onerror: null, result: undefined };
 					open++;
 					soon(() => {
 						if (over) return;
@@ -116,15 +119,28 @@ function makeIndexedDB() {
 							if (tx.onabort) tx.onabort();
 							return;
 						}
-						if (rq.onsuccess) rq.onsuccess();
+						if (rq.onsuccess) rq.onsuccess(); rq.ls.forEach((f) => f());
 						soon(() => { if (!over && open === 0) { over = true; if (tx.oncomplete) tx.oncomplete(); } });
 					});
 					return rq;
 				};
 				const os = {
-					get:    (k) => request((rq) => { rq.result = data.has(k) ? data.get(k) : undefined; }),
-					put:    (v, k) => request(() => { if (failWrites) return false; data.set(k, v); }),
-					delete: (k) => request(() => { data.delete(k); }),
+					get:    (k) => request((rq) => { rq.result = data.has(enc(k)) ? data.get(enc(k)) : undefined; }),
+					put:    (v, k) => request(() => { if (failWrites) return false; data.set(enc(k), v); }),
+					// A key range is durable.js's `IDBKeyRange.bound` below; a cursor reads the store as it
+					// stands at each step, so it sees the writes its transaction issued before it.
+					delete: (k) => request(() => { if (isRange(k)) { for (const x of [...data.keys()]) if (inRange(k, dec(x))) data.delete(x); } else data.delete(enc(k)); }),
+					openCursor: (r) => {
+						const rq = { ls: [], addEventListener(e, f) { if (e === 'success') this.ls.push(f); }, onsuccess: null, result: null };
+						let last;
+						const step = () => { const q = request((q1) => {
+							const k = [...data.keys()].map(dec).filter((x) => inRange(r, x) && (last === undefined || cmp(x, last) > 0)).sort(cmp)[0];
+							last = k;
+							q1.result = k === undefined ? null : { key: k, value: data.get(enc(k)), continue: step };
+						}); q.onsuccess = () => { rq.result = q.result; if (rq.onsuccess) rq.onsuccess(); rq.ls.forEach((f) => f()); }; };
+						step();
+						return rq;
+					},
 				};
 				tx.objectStore = () => os;
 				return tx;
@@ -139,7 +155,7 @@ function makeIndexedDB() {
 				soon(() => {
 					const fresh = !dbs.has(name) || dbs.get(name).size === 0;
 					req.result = makeDb(name);
-					if (fresh && req.onupgradeneeded) req.onupgradeneeded();
+					if (fresh && req.onupgradeneeded) req.onupgradeneeded({ oldVersion: 0 });
 					if (req.onsuccess) req.onsuccess();
 				});
 				return req;
@@ -222,7 +238,7 @@ function makeTab(box, o) {
 		location: { origin: 'https://example.test', href: 'https://example.test/' },
 		navigator: { onLine: true },
 		localStorage: local.api,
-		indexedDB: idb.api,
+		indexedDB: idb.api, IDBKeyRange: KeyRange, DaimondPolicy: Policy,
 		DaimondIdentity: {
 			isUnlocked: () => true, deviceId: () => 'dev-self',
 			publicKeyB64url: () => 'pub-self', publicKeyRaw: async () => new Uint8Array(32),
@@ -256,6 +272,7 @@ function makeTab(box, o) {
 			'with (window) {\n' + src + '\n}');
 		fn(win, dom.document, local.api, setTimeout, clearTimeout, () => 0, () => {});
 	};
+	run(readFileSync(join(HERE, 'storewait.js'), 'utf8'));
 	run(readFileSync(join(HERE, 'durable.js'), 'utf8'));
 
 	let src = readFileSync(join(HERE, 'post.js'), 'utf8');

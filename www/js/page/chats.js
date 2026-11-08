@@ -6,7 +6,7 @@ import { CHAT_MODEL_FIELDS, ChatStore, bumpDiamonds, chatTaintJoin, chatTaintOf,
 	storageAlarm, storedChats, tombMark, tombstone, touchChat, touchChatMeta, touchChatModel,
 	trashRestore } from './chatstore.js';
 import { newChatId, peekDiamondLabel, takeDiamondLabel } from './parcel_apply.js';
-import { peerStopTurn, readChatLog } from './handoff.js';
+import { forgetLogPlace, peerStopTurn, readChatLog } from './handoff.js';
 import { _sharedClients, moveComposerTo, peerHeldTurns, sendUserMessage, syncComposer, turnPhase } from './send.js';
 import { journalQueue, renderQueue, resumeQueue, stopGeneration } from './steer.js';
 import { WORKERS_PAUSED_KEY, Workers } from './workers.js';
@@ -387,6 +387,7 @@ export function newChat() {
 		prevCost: 0,
 		lastPrompt: 0,
 		updatedAt: 0,
+		_loaded: true,					// a new id: the empty transcript in hand is the whole of it
 	};
 	// Seed BOTH stamps at creation (S-SYNC #5), so a new chat's name/model/holds
 	// carry a real `metaAt` from the first moment rather than falling back to a
@@ -555,7 +556,7 @@ function removeChat(chat) {
 	// chat left the rail with nothing recording where it went and came back on
 	// the next reload. Say so instead (S-SYNC #6).
 	if (!trashed) storageAlarm(tOr('store.delete_unrecorded',
-		'a deletion could not be recorded — this browser’s storage is full'));
+		'a deletion could not be recorded — this browser’s {store} for this site is full', { store: tOr('store.where_box', 'local storage (localStorage)') }));
 	persistChats();
 	renderSessionList();
 }
@@ -576,7 +577,7 @@ export async function destroyChat(id) {
 	var at = Date.now(), obj = {}; obj[id] = at;
 	if (!(await ChatStore.putTombs(TOMBS_KEY, obj))) {
 		storageAlarm(tOr('store.delete_unrecorded',
-			'a deletion could not be recorded — this browser’s storage is full'));
+			'a deletion could not be recorded — this browser’s {store} for this site is full', { store: tOr('store.where_db', 'database (IndexedDB)') }));
 		return false;
 	}
 	tombMark(TOMBS_KEY, [id], at);   // durable now: safe to overlay and delete
@@ -594,6 +595,7 @@ export async function destroyChat(id) {
 	// comes back to its panels; only destroying lets it go.
 	try { if (window.DaimondPanelRec) DaimondPanelRec.drop('chat:' + id); }
 	catch (e) { /* no store */ }
+	forgetLogPlace(id);
 	// ── A CHAT'S SCOPE MUST GO WITH IT. A SEAM. ─────────────────
 	//
 	// A chat now carries persistent scope — files and folders brought into it

@@ -3851,21 +3851,32 @@
 	// Said outright, and while the user can still act. The failure this replaces
 	// was silent: the work went on being answered and stopped being stored, and
 	// the user found out on the next reload.
-	'store.alarm':          'Your conversations are not being saved.',
-	'store.alarm_advice':   'Everything on screen is still here, but a reload would lose it. Download a copy now.',
-	'boot.chats_held':      'Your chats could not be read yet, so work sent from your other devices is waiting. Trying again.',
-	'boot.chats_retry':     'Try again',
-	'store.alarm_download': 'Download a copy',
-	'store.alarm_retry':    'Try again',
-	'store.full':           'there is no room left in this browser’s storage for this site',
+	'store.alarm':             'Your conversations are not being saved.',
+	'store.alarm_advice':      'Everything on screen is still here, but a reload would lose it. Download a copy now.',
+	'boot.chats_held':         'Your chats could not be read yet, so work sent from your other devices is waiting. Trying again.',
+	'boot.chats_retry':        'Try again',
+	'store.alarm_download':    'Download a copy',
+	'store.alarm_retry':       'Try again',
+	'store.full':              'there is no room left in this browser’s {store} for this site',
+	'store.stalled':           'This browser’s storage stopped answering while {what}. Restart this browser to clear it.',
+	'store.blocked':           'Another Daimond tab is holding this browser’s storage at an older version, so it was refused while {what}. Close the other Daimond tabs and reload.',
+	'store.full_db':           'this browser’s database for this site (IndexedDB) has no room left',
+	// i18n-indirect: daimond.js aside[0] = store.alarm_box store.alarm_sync store.alarm_files
+	'store.alarm_box':         'Some changes made on this device are not being saved.',
+	'store.alarm_sync':        'Cross-device sync is paused.',
+	'store.alarm_files':       'Files written on this device are not being saved.',
+	'store.alarm_convos_kept': 'Your conversations are still being saved, in this browser’s database (IndexedDB).',
+	'store.where_db':          'database (IndexedDB)',
+	'store.where_box':         'local storage (localStorage)',
+	'store.where_files':       'file storage (OPFS)',
 	// A deletion whose tombstone could not be recorded, so it was refused rather
 	// than left to resurrect from disk or from the other device (S-SYNC #6).
-	'store.delete_unrecorded': 'a deletion could not be recorded — this browser’s storage is full',
-	'store.taint_unrecorded': 'a conversation’s mark that it read outside content could not be recorded — this browser’s storage is full',
-	'store.records_owed': 'This device is out of browser storage, so a change made here is not saved yet. This page is keeping it, and saves it as soon as there is room.',
+	'store.delete_unrecorded': 'a deletion could not be recorded — this browser’s {store} for this site is full',
+	'store.taint_unrecorded':  'a conversation’s mark that it read outside content could not be recorded — this browser’s {store} for this site is full',
+	'store.records_owed':      'This browser’s local storage for this site (localStorage) is full, so a setting or record changed here is not saved yet. This page is keeping it, and saves it as soon as there is room.',
 	// The cloud index (`contentSet`/`setIndex`) lost to quota: an offloaded chat, Diamond
 	// or message tail rides inline, and a deletion or ledger merge cannot be recorded.
-	'store.cloud_index_full': 'This device is out of browser storage, so cross-device sync is paused. Free some space, and your work will travel again.',
+	'store.cloud_index_full':  'This browser’s {store} for this site is full, so the index cross-device sync works from cannot be saved. Free some space, and your work will travel again.',
 	// A read that returned nothing where the last good write left {n}. The
 	// number is the count, so keep the placeholder.
 	'store.empty_read':     'this browser returned none of the {n} conversations it is holding',

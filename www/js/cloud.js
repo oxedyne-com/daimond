@@ -76,9 +76,15 @@
 	// no prefixing of their own.
 
 	var _kept = Object.create(null);		// localStorage key -> the parsed map (`kept`, below)
+	// A value of another shape than the fallback's (a number where a map is kept) is the
+	// fallback, so no caller writes into a primitive.
 	function readJson(key, fallback) {
-		try { return JSON.parse(localStorage.getItem(key) || 'null') || fallback; }
+		var v;
+		try { v = JSON.parse(localStorage.getItem(key) || 'null'); }
 		catch (e) { return fallback; }
+		if (!v) return fallback;
+		if (fallback !== null && (typeof v !== typeof fallback || Array.isArray(v) !== Array.isArray(fallback))) return fallback;
+		return v;
 	}
 	function writeJson(key, val) {
 		if (_kept[key]) _kept[key] = val;
@@ -131,6 +137,12 @@
 	var _ready  = false;
 	var _readyP = null;
 	var _durableMode = false;				// sticky: the index has moved to IndexedDB, so read the mirror, never the emptied box
+	// The mirror holds what the store holds only once a read of the index has landed. Until
+	// then a store that was busy past the wait is not an empty one: the index is not durable
+	// and not whole, and each `refresh` reads it again.
+	var _ixRead = false;
+	// Until the box's copy of the index has moved into the store, the store holds only part of it.
+	var _moved = false;
 
 	// ── A map kept in the durable store, one key at a time ─────────
 	//
@@ -222,28 +234,37 @@
 		var ops = km.pend;
 		if (!Object.keys(ops).length) return true;
 		if (!window.DaimondDurable || !DaimondDurable.update) return false;
+		// An index write landed before the box's copy has moved would leave the store a part
+		// of the index with no record of the move, which the move and an older build both
+		// read as the index: so the ops stay owed, and the alarm up, until the move lands.
+		if (km === IXM && !_moved) {
+			try { _moved = await DaimondDurable.migrate(IX_KEY); } catch (e) { _moved = false; }
+			if (!_moved) { km.dirty.lost = true; ixAlarm(); return false; }
+		}
 		km.pend = {};
 		km.fly  = ops;
 		var res = null;
 		try {
-			res = await DaimondDurable.update(km.key, function (stored) {
-				return applyOps((stored && typeof stored === 'object') ? stored : {}, ops);
-			});
+			res = await DaimondDurable.update(km.key, ops);
 		} catch (e) { res = null; }
 		km.fly = null;
 		var ok = !!(res && res.ok);
 		if (ok) {
+			// The landed write hands back the whole stored map, which is the index: its box copy has moved.
 			mirrorTo(km, res.value);
+			if (km === IXM) _ixRead = true;
 			try { var c = channel(); if (c) c.postMessage({ key: km.key, ops: ops }); }
 			catch (e) { /* no sibling to tell */ }
 			if (!Object.keys(km.pend).length) km.dirty = null;
+			else km.dirty.lost = false;
 		} else {
 			// Not stored: queued again beneath anything written since, for the next write.
 			Object.keys(ops).forEach(function (k) {
 				if (!Object.prototype.hasOwnProperty.call(km.pend, k)) km.pend[k] = ops[k];
 			});
+			km.dirty.lost = true;
 		}
-		if (km === IXM) { if (!ok) alarmRaise(); else if (!km.dirty) alarmClear(); }
+		if (km === IXM) ixAlarm();
 		// A record of a file's deletion or return that did not reach the store is said: it is
 		// in the mirror and every parcel this session, and lost with the session (A5).
 		if (km === TBM && !ok) tombAlarm();
@@ -254,9 +275,14 @@
 	/// announce.
 	async function refreshKept(km) {
 		if (!window.DaimondDurable || !DaimondDurable.get) return;
+		if (km === IXM && !_moved) {
+			try { _moved = await DaimondDurable.migrate(IX_KEY); } catch (e) { _moved = false; }
+			if (!_moved) { ixAlarm(); return; }
+		}
 		var v = null;
 		try { v = await DaimondDurable.get(km.key); } catch (e) { return; }
 		if (v && typeof v === 'object') mirrorTo(km, v);
+		if (km === IXM) { _ixRead = true; ixAlarm(); }
 	}
 
 	/// The index this device serves. Once the durable store is live the mirror is
@@ -295,18 +321,20 @@
 			if (window.DaimondDurable && DaimondDurable.ready) {
 				try {
 					await DaimondDurable.ready();
-					var live = !!(DaimondDurable.durable && DaimondDurable.durable());
-					if (live) {
+					if (DaimondDurable.tookOver()) {
 						// The index now lives in IndexedDB; from here the mirror is the sole truth
 						// and the box copy is migrated away (see `index()`). Sticky, so a later
-						// connection drop cannot send a read back to the emptied box.
+						// connection drop cannot send a read back to the emptied box. So too when
+						// this page's open was refused on a device whose store has taken over: the
+						// reads below fail, and the index is neither whole nor durable until one lands.
 						_durableMode = true;
-						await DaimondDurable.migrate(IX_KEY);
-						var v = await DaimondDurable.get(IX_KEY);
-						if (v && typeof v === 'object') mirrorTo(IXM, v);
+						await refreshKept(IXM);
+						var t = await DaimondDurable.get(TOMB_KEY);
+						if (t && typeof t === 'object') mirrorTo(TBM, t);
+					} else {
+						var tb = await DaimondDurable.get(TOMB_KEY);
+						if (tb && typeof tb === 'object') mirrorTo(TBM, tb);
 					}
-					var t = await DaimondDurable.get(TOMB_KEY);
-					if (t && typeof t === 'object') mirrorTo(TBM, t);
 				} catch (e) { /* keep the box-seeded mirror; the fallback path stays active */ }
 			}
 			await readWhole();
@@ -336,11 +364,17 @@
 
 	async function readWhole() {
 		if (_wholePend) return;
+		// The mark vouches for the store's index, not for a mirror that never read it. What
+		// the store holds is then unknown, so a note of -1 meanwhile is written.
+		if (_durableMode && !_ixRead) { _whole = -1; _wholeStored = null; return; }
 		var mk = null;
 		try {
 			mk = (window.DaimondDurable && DaimondDurable.get)
 				? await DaimondDurable.get(MERGED_KEY) : readJson(MERGED_KEY, null);
-		} catch (e) { mk = null; }
+		} catch (e) {
+			_whole = -1; _wholeStored = null;	// unread is not "never recorded"
+			return;
+		}
 		if (_wholePend) return;
 		if (mk && typeof mk.v === 'number') _whole = mk.v;
 		else _whole = readJson(MERGED_SEEN, null) ? -1 : null;
@@ -398,6 +432,15 @@
 	// the collector used to raise itself when `contentSet` answered false.
 	function alarmClear() { try { if (window.DaimondCore && DaimondCore.clearStorageAlarm) DaimondCore.clearStorageAlarm('index'); } catch (e) { /* no core */ } }
 	function alarmRaise() { try { if (window.DaimondCore && DaimondCore.noteCloudIndexStuck) DaimondCore.noteCloudIndexStuck(); } catch (e) { /* no core */ } }
+	// The index alarm follows the handover's state, whichever path left it there, so a page
+	// that writes nothing is not held quietly: up while the box's copy has not moved or a write
+	// is owed that did not land, down once the index is moved, read and clean. A read still
+	// owed after the move (a busy store) leaves it as it is, and the next refresh reads again.
+	function ixAlarm() {
+		if (!_durableMode) return;
+		if (!_moved || (IXM.dirty && IXM.dirty.lost)) alarmRaise();
+		else if (_ixRead && !IXM.dirty) alarmClear();
+	}
 	function tombAlarm() { try { if (window.DaimondCore && DaimondCore.noteDeletionUnrecorded) DaimondCore.noteDeletionUnrecorded(); } catch (e) { /* no core */ } }
 
 	// ── Is this device's index durably written? ────────────────────
@@ -434,7 +477,10 @@
 	/// Did this device's index writes land, so a commit may declare a live set from the
 	/// index? False while a write has not committed, or was lost to quota and no later one
 	/// has landed -- the state in which committing would sweep the parcel's own chunks.
-	function indexDurable() { return _durableMode ? !IXM.dirty : !indexDirty; }
+	function indexDurable() { return _durableMode ? _ixRead && !IXM.dirty : !indexDirty; }
+
+	/// Does the mirror hold what the store holds (always, on the box)?
+	function indexRead() { return !_durableMode || _ixRead; }
 
 	function pins()       { return kept(PIN_KEY); }
 	function atimes()     { return kept(ATIME_KEY); }
@@ -1570,6 +1616,10 @@
 	/// content a path was deleted at is no news from either side (see "Deletions of index
 	/// paths"). One here is kept until `honourChunkTombs` has dealt with the bytes behind it.
 	function merge(remoteIx, baseline, selfDev, fromDev, remoteTombs) {
+		// COLLECT-GATE's rule for the index: over a mirror whose read never landed every remote
+		// path is "only there", adopted with no conflict copy, and the result lands over this
+		// device's newer manifests when the store answers. Thrown, so the section is pulled again.
+		if (!indexRead()) throw new Error('the cloud index has not been read from its store');
 		joinTombs(remoteTombs);
 		var local = index(), base = baseline || {}, out = {}, seen = {};
 		remoteIx = (remoteIx && typeof remoteIx === 'object') ? remoteIx : {};
@@ -2505,6 +2555,7 @@
 		/// because a commit from an index that lost a manifest to quota sweeps the
 		/// very chunks the parcel it pushed still points at.
 		indexDurable: indexDurable,
+		indexRead:    indexRead,
 		/// The version this index is known whole at (`wholeAt`: a version, -1, or null for never
 		/// recorded) and its record (`noteWhole`). The commit gate reads it; see "Is this index
 		/// the account's whole index?" above.
