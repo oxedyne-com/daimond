@@ -1116,7 +1116,7 @@
 	'store.alarm_download':    'Kopie herunterladen',
 	'store.alarm_retry':       'Erneut versuchen',
 	'store.full':              'im Speicherort {store} dieses Browsers ist für diese Seite kein Platz mehr',
-	'store.stalled':           'Der Speicher dieses Browsers hat aufgehört zu antworten ({what}). Starte diesen Browser neu, um das zu beheben.',
+	'store.stalled':           'Der Speicher dieses Browsers hat aufgehört zu antworten ({what}). Chat-Speicherungen warten auf dieser Seite und werden geschrieben, sobald er antwortet. Starte diesen Browser neu, um das zu beheben; Antworten werden danach erneut gelesen.',
 	'store.blocked':           'Ein anderer Daimond-Tab hält den Speicher dieses Browsers in einer älteren Version offen, darum wurde er abgelehnt ({what}). Schließe die anderen Daimond-Tabs und lade neu.',
 	'store.full_db':           'die Datenbank dieses Browsers für diese Seite (IndexedDB) hat keinen Platz mehr',
 	'store.alarm_box':         'Einige Änderungen auf diesem Gerät werden nicht gespeichert.',

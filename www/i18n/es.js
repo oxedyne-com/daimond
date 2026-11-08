@@ -1113,7 +1113,7 @@
 	'store.alarm_download':    'Descargar una copia',
 	'store.alarm_retry':       'Reintentar',
 	'store.full':              'el espacio de este navegador para este sitio, {store}, no tiene sitio libre',
-	'store.stalled':           'El almacenamiento de este navegador dejó de responder ({what}). Reinicia este navegador para solucionarlo.',
+	'store.stalled':           'El almacenamiento de este navegador dejó de responder ({what}). Los guardados de los chats quedan en cola en esta página y se escriben en cuanto responda. Reinicia este navegador para solucionarlo; las respuestas se vuelven a leer después.',
 	'store.blocked':           'Otra pestaña de Daimond mantiene el almacenamiento de este navegador en una versión anterior, así que se rechazó ({what}). Cierra las otras pestañas de Daimond y recarga.',
 	'store.full_db':           'la base de datos de este navegador para este sitio (IndexedDB) no tiene espacio',
 	'store.alarm_box':         'Algunos cambios hechos en este dispositivo no se están guardando.',

@@ -1294,7 +1294,7 @@
 	'store.alarm_download':    '사본 내려받기',
 	'store.alarm_retry':       '다시 시도',
 	'store.full':              '이 브라우저의 이 사이트 {store}에 남은 자리가 없어요',
-	'store.stalled':           '이 브라우저의 저장소가 응답을 멈췄어요({what}). 브라우저를 다시 시작하면 해결돼요.',
+	'store.stalled':           '이 브라우저의 저장소가 응답을 멈췄어요({what}). 채팅 저장은 이 페이지에서 대기하다가 응답이 오면 기록돼요. 브라우저를 다시 시작하면 해결되고, 답변은 다시 시작한 뒤 다시 읽어 와요.',
 	'store.blocked':           '다른 Daimond 탭이 이 브라우저의 저장소를 이전 버전으로 열어 두고 있어서 거부됐어요({what}). 다른 Daimond 탭을 닫고 새로 고쳐 주세요.',
 	'store.full_db':           '이 브라우저의 이 사이트 데이터베이스(IndexedDB)에 남은 자리가 없어요',
 	'store.alarm_box':         '이 기기에서 한 일부 변경이 저장되지 않고 있어요.',

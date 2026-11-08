@@ -1889,6 +1889,7 @@ export function forgetLogPlace(id) {
 	delete _places[id];
 	delete _placeSeq[id];
 	delete _placeOwed[id];
+	delete _placeDue[id];
 	var boxed = boxedLogPlaces(), one = {};
 	if (boxed && id in boxed) { one[id] = null; boxLogPlaces(one); }
 	var D = window.DaimondDurable;
@@ -1905,6 +1906,24 @@ export function chatLogEnded(chatId, turn) {
 	if (chat && chat.logSeq != null) return turnEnded(chat, turn);
 	var p = logPlaces()[id];
 	return !!p && turnEnded({ logEnds: p.ends, logViews: p.views }, turn);
+}
+
+var _placeDue = Object.create(null);	// chat id -> the save carrying rows drawn past the stored place
+
+/// Keep `chat`'s place, never ahead of its transcript. Rows drawn into it (`drew`) ride chat
+/// save `gen`, and until that save lands the stored place stays below them: a restart while
+/// the store is stalled drops the queued save, and the log is read again from there.
+function keepLogPlace(chat, drew, gen) {
+	var id = chat.id;
+	if (drew) _placeDue[id] = (gen == null) ? null : gen;
+	if (!(id in _placeDue)) { saveLogPlace(chat); return; }
+	var due = _placeDue[id];
+	if (due == null) return;	// no save carries those rows; the next read that draws makes one
+	ChatStore.whenStored(id, due, function () {
+		if (_placeDue[id] !== due) return;
+		delete _placeDue[id];
+		saveLogPlace(chat);
+	});
 }
 
 /// The turn's state tile: its empty hand-off placeholder.
@@ -1959,15 +1978,16 @@ export async function readChatLog(chat) {
 			for (var vt in chat.logViews || {}) {
 				_progressView[vt] = { turn: vt, msgs: viewMessages(chat.logViews[vt]), final: false };
 			}
-			saveLogPlace(chat);
-			if (chat.messages !== held) {
+			var drew = chat.messages !== held, gen = null;
+			if (drew) {
 				touchChat(chat);
-				try { persistChats(); } catch (e) { /* drawn; the next save takes it */ }
+				try { gen = persistChats(); } catch (e) { /* drawn; the next save takes it */ }
 				if (pg.current && pg.current.id === chat.id && ownsChat(chat)) {
 					renderHistory(chat.messages);
 					followActivity(follow);
 				}
 			}
+			keepLogPlace(chat, drew, gen);
 		} while (_logAgain[chat.id]);
 		return out;
 	} finally { delete _logBusy[chat.id]; }

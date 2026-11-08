@@ -3858,7 +3858,7 @@
 	'store.alarm_download':    'Download a copy',
 	'store.alarm_retry':       'Try again',
 	'store.full':              'there is no room left in this browser’s {store} for this site',
-	'store.stalled':           'This browser’s storage stopped answering while {what}. Restart this browser to clear it.',
+	'store.stalled':           'This browser’s storage stopped answering while {what}. Chat saves are queued on this page and written once it answers. Restart this browser to clear it; replies are read again after the restart.',
 	'store.blocked':           'Another Daimond tab is holding this browser’s storage at an older version, so it was refused while {what}. Close the other Daimond tabs and reload.',
 	'store.full_db':           'this browser’s database for this site (IndexedDB) has no room left',
 	// i18n-indirect: daimond.js aside[0] = store.alarm_box store.alarm_sync store.alarm_files

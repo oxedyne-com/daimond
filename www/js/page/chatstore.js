@@ -1691,6 +1691,7 @@ function slimMessages(msgs) {
 	});
 }
 
+/// Save every chat. Answers the save's number (for `ChatStore.whenStored`), none when the merge broke.
 export function persistChats() {
 	try {
 		var stored = ChatStore.stored();
@@ -1734,11 +1735,12 @@ export function persistChats() {
 		});
 		var tombs = loadTombs();
 		Object.keys(tombs).forEach(function (id) { delete byId[id]; });
-		ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));
+		var gen = ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));
 		// Same reason as bumpDiamonds: renaming or deleting a chat, or folding
 		// one into a Diamond, is not a turn and does not hide the tab, so
 		// nothing else would ever schedule the push that carries it.
 		nudgeSync();
+		return gen;
 	} catch (e) {
 		// The merge itself broke, which is not the store's fault and is not
 		// something to swallow either: from here on nothing is being written.
@@ -2585,6 +2587,11 @@ export function install() { // page-split: install
 		var disk    = {};        // id → stamp of what we believe is actually written
 		var writing = null;      // the write in flight, so two saves queue rather than race
 		var queued  = null;      // the next list to write, replacing any earlier one
+		var saveGen   = 0;       // saves made: each list is numbered as it is handed in
+		var queuedGen = 0;       // the number of `queued`
+		var owedWrite = false;   // the last write did not land, so the mirror is written again when a stall ends
+		var landedAt  = {};      // chat id -> the number of the last save whose row for it landed
+		var storedFns = {};      // chat id -> { gen, fn }: run once save `gen` has landed for it
 		var loadProbe = 0;       // transcript loads served, for verify_collectheap only
 		var usable  = false;     // the store opened and was read at least once
 		var vouched = false;     // and what it read can be believed -- see CHATS_COUNT
@@ -2597,10 +2604,15 @@ export function install() { // page-split: install
 		DaimondStoreWait.tell({
 			stalled: function (what, ms) {
 				diag('store STALLED', what + ' (' + ms + ' ms)');
-				storageAlarm(tOr('store.stalled', 'This browser\'s storage stopped answering while {what}. Restart this browser to clear it.',
+				storageAlarm(tOr('store.stalled', 'This browser\'s storage stopped answering while {what}. Chat saves are queued on this page and written once it answers. Restart this browser to clear it; replies are read again after the restart.',
 					{ what: what }), 'stall');
 			},
-			answered: function () { storageAlarmClear('stall'); },
+			// A write the bound gave up on may have landed late or not at all, and nothing
+			// else would write it again: the mirror goes now, so what waits on it lands.
+			answered: function () {
+				storageAlarmClear('stall');
+				if (owedWrite) schedule(mirror, ++saveGen);
+			},
 			blocked: function (what) {
 				diag('store BLOCKED', what);
 				storageAlarm(tOr('store.blocked', 'Another Daimond tab is holding this browser\'s storage at an older version, so it was refused while {what}. Close the other Daimond tabs and reload.',
@@ -3004,7 +3016,7 @@ export function install() { // page-split: install
 			return false;
 		}
 
-		async function write(list) {
+		async function write(list, gen) {
 			try {
 				// Only when there is no usable connection. This is the difference
 				// between the new store and the old one: `localStorage.setItem` was
@@ -3024,7 +3036,7 @@ export function install() { // page-split: install
 				// `chatsum` SUMMARY the rail is built from, and (on deletion) the chat's
 				// msgchunks. See the never-shorten note in the loop.
 				var w = db.watch([CHATS_STORE, CHATSUM_STORE, MSGCHUNK_STORE], 'readwrite', 'saving the chats');
-				var seen = {}, put = {}, compactIds = [], failure = null, kept = {}, keptN = 0;
+				var seen = {}, put = {}, compactIds = [], failure = null, kept = {}, keptN = 0, missed = {};
 				await w.run(function (store) {
 					var csS = store(CHATS_STORE), suS = store(CHATSUM_STORE), mcS = store(MSGCHUNK_STORE);
 					var mtombs = loadMsgTombs();		// parse the message tombstones once for this pass
@@ -3041,10 +3053,13 @@ export function install() { // page-split: install
 					// is raised as it always was, because this write did not all land.
 					var skip = function (id, why) {
 						noteSkipped(id, why);
+						missed[id] = 1;
 						if (disk[id] !== undefined) put[id] = disk[id]; else delete put[id];
 					};
 					var fail = function (id, e) {
 						failure = failure || e;
+						missed[id] = 1;
+						delete chunkedMids[id];
 						diag('store chat FAILED', id + ': ' + storeReason(e));
 						if (disk[id] !== undefined) put[id] = disk[id]; else delete put[id];
 					};
@@ -3236,6 +3251,7 @@ export function install() { // page-split: install
 					vouched = true;
 					setWatermark(Object.keys(disk).length);
 				} else reread();
+				list.forEach(function (c) { if (c && c.id && !missed[c.id]) landed(c.id, gen); });
 				if (failure) {
 					// The rest landed; this chat did not, and the person is told so.
 					diag('store write FAILED', storeReason(failure));
@@ -3253,10 +3269,13 @@ export function install() { // page-split: install
 					try { await compactChunks(compactIds[ci]); }
 					catch (e) { /* dead weight kept; the reader still drops it */ }
 				}
+				owedWrite = !!failure;
 				return !failure;
 			} catch (e) {
 				diag('store write FAILED', storeReason(e));
 				storageAlarm(storeReason(e));
+				list.forEach(function (c) { if (c && c.id) delete chunkedMids[c.id]; });
+				owedWrite = true;
 				return false;
 			}
 		}
@@ -3273,12 +3292,22 @@ export function install() { // page-split: install
 				.then(function () { rereading = null; });
 		}
 
-		function schedule(list) {
-			if (writing) { queued = list; return; }
-			writing = write(list).then(function () {
+		function schedule(list, gen) {
+			if (writing) { queued = list; queuedGen = gen; return; }
+			writing = write(list, gen).then(function () {
 				writing = null;
-				if (queued) { var next = queued; queued = null; schedule(next); }
+				if (queued) { var next = queued; queued = null; schedule(next, queuedGen); }
 			});
+		}
+
+		/// Save `gen` landed `id`'s row: run what waited on it.
+		function landed(id, gen) {
+			if (gen <= (landedAt[id] || 0)) return;
+			landedAt[id] = gen;
+			var w = storedFns[id];
+			if (!w || w.gen > gen) return;
+			delete storedFns[id];
+			try { w.fn(); } catch (e) { /* one caller's fault stays its own */ }
 		}
 
 		/// Wait for everything queued at this moment to reach the database. Bounded, so a
@@ -3987,7 +4016,7 @@ export function install() { // page-split: install
 						usable = true;
 						read = true;		// the full read landed; the summary read below judges it again
 						full = mergeInto(full, old);
-						if (await write(full)) {
+						if (await write(full, ++saveGen)) {
 							// Kept as a readable archive, but MOVED off the live key so nothing
 							// unions it back in and resurrects a chat deleted after the move.
 							try {
@@ -4102,17 +4131,26 @@ export function install() { // page-split: install
 				} catch (e) { vouched = false; read = false; storageAlarm(storeReason(e)); }
 				return mirror.slice();
 			},
-			/// Store `list`, which is already the merged truth. Returns at once; the
-			/// mirror is current now and the disk write happens behind it.
+			/// Store `list`, which is already the merged truth. Returns at once with the save's
+			/// number (for `whenStored`); the mirror is current now and the disk write happens
+			/// behind it.
 			save: function (list) {
 				// The mirror's summaries keep their figures across the replacement (F3b-0).
 				carryChatFigures(list, mirror);
 				mirror = list;
 				bumpChats();
-				schedule(list);
+				var gen = ++saveGen;
+				schedule(list, gen);
+				return gen;
+			},
+			/// Run `fn` once save `gen` (what `save` answered) has landed chat `id`'s row; at
+			/// once if it has. One per chat: a later call replaces the earlier one.
+			whenStored: function (id, gen, fn) {
+				if (gen <= (landedAt[id] || 0)) { fn(); return; }
+				storedFns[id] = { gen: gen, fn: fn };
 			},
 			/// Try the last write again, for the button on the alarm.
-			retry: function () { schedule(mirror); },
+			retry: function () { schedule(mirror, ++saveGen); },
 			/// Is the real store working? False means this session is running on the
 			/// fallback and the alarm is up.
 			usable: function () { return usable; },

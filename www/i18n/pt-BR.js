@@ -1111,7 +1111,7 @@
 	'boot.chats_retry':        'Tentar novamente',
 	'store.alarm_download':    'Baixar uma cópia',
 	'store.alarm_retry':       'Tentar de novo',
-	'store.stalled':           'O armazenamento deste navegador parou de responder ({what}). Reinicie este navegador para resolver.',
+	'store.stalled':           'O armazenamento deste navegador parou de responder ({what}). Os salvamentos das conversas ficam na fila nesta página e são gravados assim que ele responder. Reinicie este navegador para resolver; as respostas são lidas de novo depois.',
 	'store.blocked':           'Outra aba do Daimond mantém o armazenamento deste navegador numa versão anterior, por isso foi recusado ({what}). Feche as outras abas do Daimond e recarregue.',
 	'store.full':              'o espaço deste navegador para este site, {store}, está sem espaço livre',
 	'store.full_db':           'o banco de dados deste navegador para este site (IndexedDB) está sem espaço',

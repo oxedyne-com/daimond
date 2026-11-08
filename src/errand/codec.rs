@@ -242,6 +242,10 @@ pub struct Errand {
     /// `ocr.js` `route()` decided it (OWNKEY A1, QA OKD-A M-2), kept as the tab wrote it; `Null`
     /// where it sent none, which routes no read ([`the runner's `run::ReadRoute``]).
     pub ocr:            Js,
+    /// The turn's own message as the asker's chat holds it, less its `content` where that is
+    /// `prompt`, kept as the tab wrote it: the runner logs it as the turn's first row, so every
+    /// view of the chat has the question with its answer.  `Null` where the tab sent none.
+    pub msg:            Js,
     pub abi:            i64,        // the page's `ENGINE_ABI` (OWNKEY H3), 0 where it sent none
     pub ts:             i64,
 }
@@ -320,6 +324,9 @@ impl Errand {
         if let Js::Obj(_) = &self.ocr {
             kv.push(("ocr".into(), self.ocr.clone()));
         }
+        if let Js::Obj(_) = &self.msg {
+            kv.push(("msg".into(), self.msg.clone()));
+        }
         // The page's engine ABI (OWNKEY H3) closes it, after the reference.
         if self.abi != 0 {
             kv.push(("abi".into(), Js::int(self.abi)));
@@ -381,6 +388,10 @@ impl Errand {
                 _                       => Js::Null,
             },
             ocr:            match o.get("ocr") {
+                Some(v @ Js::Obj(_))    => v.clone(),
+                _                       => Js::Null,
+            },
+            msg:            match o.get("msg") {
                 Some(v @ Js::Obj(_))    => v.clone(),
                 _                       => Js::Null,
             },

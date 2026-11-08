@@ -1289,7 +1289,7 @@
 	'store.alarm_download':    '下载副本',
 	'store.alarm_retry':       '重试',
 	'store.full':              '这个浏览器为本站点留的{store}已经满了',
-	'store.stalled':           '这个浏览器的存储停止了响应（{what}）。重启这个浏览器即可解决。',
+	'store.stalled':           '这个浏览器的存储停止了响应（{what}）。聊天的保存会在此页面排队，等它响应后写入。重启这个浏览器即可解决，回复会在重启后重新读取。',
 	'store.blocked':           '另一个 Daimond 标签页以旧版本占用着这个浏览器的存储，所以被拒绝了（{what}）。请关闭其他 Daimond 标签页并重新加载。',
 	'store.full_db':           '这个浏览器为本站点留的数据库 (IndexedDB) 已经没有空间',
 	'store.alarm_box':         '在此设备上所做的部分更改没有被保存。',

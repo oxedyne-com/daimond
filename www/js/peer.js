@@ -382,6 +382,9 @@
 		// relay door would not take: a runner holding the chat reads it there, checking `upto`, or
 		// hands the turn back `thread`. Written only when present, closing the errand.
 		if (o.sessionRef && typeof o.sessionRef === 'object') e.sessionRef = o.sessionRef;
+		// The turn's own message (SIBLING-NOASK), written only as an object, so a runner reads its
+		// absence -- and every older sender -- as nothing to log ahead of the turn's rows.
+		if (o.msg && typeof o.msg === 'object') e.msg = o.msg;
 		// THE SEALED KEYS of every own-key source the halves name, and his OCR rows (OWNKEY §1.2,
 		// A1, I1/I4): the row's `url`, `keyEnc` and `fetched`, never a plaintext key and never
 		// `credits`. Derived from the halves when the caller passes none. Written only when there
@@ -1948,6 +1951,17 @@
 		var behind = openTurn(c, turnId);		// the running turns this one queues behind
 		var through = throughOf(c, turnId);	// the last message the asker saw
 		var ids    = threadIds(c, turnId);		// which messages it held (N1)
+		// THE TURN'S OWN MESSAGE AS THIS CHAT HOLDS IT (SIBLING-NOASK): Kimberlite logs it as the
+		// turn's first row, so a view without this tab's copy (a sibling tab, another device) has
+		// the question with its answer. Local `_` fields stay here; its words go once, as `prompt`.
+		var own = (c.messages || []).find(function (m) { return m && m.role === 'user' && String(m.mid || '') === turnId; });
+		var msg = null;
+		if (own) {
+			msg = {};
+			Object.keys(own).forEach(function (k) {
+				if (k.charAt(0) !== '_' && !(k === 'content' && own.content === prompt)) msg[k] = own[k];
+			});
+		}
 		return {
 			// MARK FIRST, then post, then push. The durable `why:'dispatched'`
 			// placeholder is written BEFORE the errand is posted, so a refused post is a
@@ -1976,7 +1990,7 @@
 					scope: scope, fence: fence, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
 					seed: seed, thread: thread, tried: tried, asks: PERMIT_ASKS,
-					gone: gone, to: to, behind: behind, through: through, ids: ids,
+					gone: gone, to: to, behind: behind, through: through, ids: ids, msg: msg,
 					auto: o.auto === true, pendingOnly: o.pendingOnly === true, clean: o.clean === true,
 					locked: o.locked, limits: o.limits, focus: o.focus, today: o.today, sessionRef: o.sessionRef,
 				});
