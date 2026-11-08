@@ -1,0 +1,73 @@
+{
+ "domain": "kimberlite/plain/v1\\0",
+ "vectors": [
+  {
+   "name": "page change, two passed checks",
+   "seq": "1762425600",
+   "repo": "daimond",
+   "branch": "daimon/weekday-dates",
+   "commit": "3f9c2e1a7b6d5c4e3f2a1b0c9d8e7f6a5b4c3d2e",
+   "summary": "Dates in chats show the weekday.",
+   "chat": "chat-7f3a",
+   "diamond": "Daimond",
+   "diamond_name": "Weekday dates",
+   "page_code": 1,
+   "runner_code": 0,
+   "checks": [
+    {
+     "name": "node --test www/js",
+     "result": 1,
+     "runs": 1233
+    },
+    {
+     "name": "cargo test --lib",
+     "result": 1,
+     "runs": 6456
+    }
+   ],
+   "card_hex": "6b696d6265726c6974652f706c61696e2f76310000000000690c7b0000076461696d6f6e6400146461696d6f6e2f7765656b6461792d64617465730028336639633265316137623664356334653366326131623063396438653766366135623463336432650020446174657320696e2063686174732073686f7720746865207765656b6461792e0009636861742d3766336100074461696d6f6e64000d5765656b64617920646174657301000200126e6f6465202d2d74657374207777772f6a7301000004d10010636172676f2074657374202d2d6c69620100001938",
+   "card_b64u": "a2ltYmVybGl0ZS9wbGFpbi92MQAAAAAAaQx7AAAHZGFpbW9uZAAUZGFpbW9uL3dlZWtkYXktZGF0ZXMAKDNmOWMyZTFhN2I2ZDVjNGUzZjJhMWIwYzlkOGU3ZjZhNWI0YzNkMmUAIERhdGVzIGluIGNoYXRzIHNob3cgdGhlIHdlZWtkYXkuAAljaGF0LTdmM2EAB0RhaW1vbmQADVdlZWtkYXkgZGF0ZXMBAAIAEm5vZGUgLS10ZXN0IHd3dy9qcwEAAATRABBjYXJnbyB0ZXN0IC0tbGliAQAAGTg",
+   "challenge_hex": "f3c3b90a6e6c95448424da745f5e40d1214cea1c760a8eb25c9156bca1da9210"
+  },
+  {
+   "name": "no page code, no checks, no chat, non-ASCII summary",
+   "seq": "1",
+   "repo": "daimond",
+   "branch": "daimon/naïve-fix",
+   "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "summary": "Grüße — weekday shown",
+   "chat": "",
+   "diamond": "",
+   "diamond_name": "Grüße — garden",
+   "page_code": 0,
+   "runner_code": 0,
+   "checks": [],
+   "card_hex": "6b696d6265726c6974652f706c61696e2f763100000000000000000100076461696d6f6e6400116461696d6f6e2f6e61c3af76652d66697800406161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616100194772c3bcc39f6520e28094207765656b6461792073686f776e0000000000124772c3bcc39f6520e280942067617264656e000000",
+   "card_b64u": "a2ltYmVybGl0ZS9wbGFpbi92MQAAAAAAAAAAAQAHZGFpbW9uZAARZGFpbW9uL25hw692ZS1maXgAQGFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEAGUdyw7zDn2Ug4oCUIHdlZWtkYXkgc2hvd24AAAAAABJHcsO8w59lIOKAlCBnYXJkZW4AAAA",
+   "challenge_hex": "830c37a788a5e0a7cba3c711b2ce6dfe474b1d14221592a7ac896b4fd950d817"
+  },
+  {
+   "name": "a failed check",
+   "seq": "18446744073709551615",
+   "repo": "fe2o3",
+   "branch": "daimon/x",
+   "commit": "0123456789abcdef0123456789abcdef01234567",
+   "summary": "Two\nlines.",
+   "chat": "chat-1",
+   "diamond": "Kimberlite ✦ run",
+   "diamond_name": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+   "page_code": 1,
+   "runner_code": 1,
+   "checks": [
+    {
+     "name": "cargo test",
+     "result": 2,
+     "runs": 0
+    }
+   ],
+   "card_hex": "6b696d6265726c6974652f706c61696e2f763100ffffffffffffffff00056665326f3300086461696d6f6e2f78002830313233343536373839616263646566303132333435363738396162636465663031323334353637000a54776f0a6c696e65732e0006636861742d3100124b696d6265726c69746520e29ca62072756e0080c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9010101000a636172676f20746573740200000000",
+   "card_b64u": "a2ltYmVybGl0ZS9wbGFpbi92MQD__________wAFZmUybzMACGRhaW1vbi94ACgwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3AApUd28KbGluZXMuAAZjaGF0LTEAEktpbWJlcmxpdGUg4pymIHJ1bgCAw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6kBAQEACmNhcmdvIHRlc3QCAAAAAA",
+   "challenge_hex": "8fd960203f0a02eecdb802f85df889c2444994c0f04a90b2b31cc6f97e3e7ab2"
+  }
+ ]
+}

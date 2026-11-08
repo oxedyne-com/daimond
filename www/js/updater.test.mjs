@@ -28,7 +28,9 @@
      (h) an idle unlocked DESKTOP reloads itself whether or
          not it is the nominated runner, a phone does not
          beyond the runner exemption, and an unlocked device
-         holding a lease for another is never reloaded.
+         holding a lease for another is never reloaded;
+     (i) a turn whose lease is complete holds nothing: the idle
+         tab takes the build on the next tick (UPDATE-LAG).
 
    The browser-side companion is dev/verify_updates.mjs, which
    covers the chip, the forced (stale) path and the loop guard
@@ -216,10 +218,12 @@ function makeTab(cfg) {
 	};
 	// Left OFF deliberately in the `noLease` scenario: a device that cannot find out
 	// whether it holds a lease must not be reloaded.
-	if (!cfg.noLease) win.DaimondLease = { heldBy: () => !!cfg.state.lease };
+	if (!cfg.noLease) win.DaimondLease = cfg.lease || { heldBy: () => !!cfg.state.lease };
 	// A phone says so through the shell. Absent is a desktop, which is mobile.js's
 	// own doctrine for a device that cannot say.
 	if (cfg.mobile) win.DaimondShell = { isMobileDevice: () => true };
+	// What policy.js holds from /api/policy; absent is a page that never reached a gateway.
+	if (cfg.net) win.DaimondNet = cfg.net;
 	win.window = win;
 	cfg.state = cfg.state || {};
 
@@ -246,6 +250,35 @@ function makeTab(cfg) {
 			return b.children.map((c) => c.textContent).join('|');
 		},
 		evKinds: () => events.map((e) => e.kind),
+	};
+}
+
+// One device's peer.js, loaded as the page loads it, for the scenarios that need
+// the real lease rather than a stub.
+function loadPeer() {
+	const win = { addEventListener() {}, dispatchEvent() { return true; } };
+	const quiet = { debug() {}, log() {}, warn() {}, error: console.error };
+	const doc = { readyState: 'complete', addEventListener() {}, querySelector: () => null,
+		querySelectorAll: () => [], getElementById: () => null };
+	for (const rel of ['stamp.js', 'peer.js']) {
+		const body = readFileSync(join(HERE, rel), 'utf8');
+		new Function('window', 'document', 'console', 'localStorage', 'navigator', 'CustomEvent',
+			'with (window) {\n' + body + '\n}')(win, doc, quiet,
+			{ getItem: () => null, setItem() {}, removeItem() {} }, { storage: {} }, function () {});
+	}
+	return win;
+}
+
+// The synced lease door, as a compare-and-set.
+function makeDoor() {
+	let version = 1, leases = {};
+	return {
+		read: async () => ({ version, leases: JSON.parse(JSON.stringify(leases)) }),
+		write: async (base, next) => {
+			if (base !== version) return { ok: false };
+			version += 1; leases = JSON.parse(JSON.stringify(next));
+			return { ok: true, version };
+		},
 	};
 }
 
@@ -493,6 +526,23 @@ async function main() {
 		check('sync was never quiet through the whole scenario', tab.state.quiet === false);
 	}
 
+	console.log('\nupdater: once sync has yielded, the reason held names what still holds the reload');
+	{
+		// UPDATE-LAG-b: gilgamesh's feed said `sync:` for minutes after the yield had
+		// latched, while the lease was what held the build.
+		const tab = await boot({ stamps: [BOOTED, NEWER], selfId: 'd-aaa',
+			state: { quiet: false, unlocked: true, lease: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		await tab.clock.advance(SYNC_YIELD_MS + 30000);
+		check('a held lease still holds the build past the sync bound', tab.reloads.n === 0
+			&& tab.U().countdown() === 0);
+		check('the reason held is the lease, not sync (' + tab.U().held() + ')', tab.U().held() === 'lease');
+		tab.state.lease = false;
+		await tab.clock.advance(11000);
+		check('the lease released, the yielded sync no longer holds it', tab.U().countdown() > 0);
+	}
+
 	console.log('\nupdater: a HARD block still holds indefinitely, even past the sync bound');
 	{
 		// The yield is ONLY for sync-not-quiet. A busy turn is a hard block: it stays
@@ -539,10 +589,68 @@ async function main() {
 		check('and it reloads once the ten-minute gap has passed', tab.reloads.n === 1);
 	}
 
+	console.log('\nupdater: the timings come from /api/policy through policy.js (UPDATE-LAG-b)');
+	{
+		const run = async (net) => {
+			const tab = await boot({ stamps: [BOOTED, NEWER], state: { quiet: false }, net });
+			await tab.clock.advance(65000);
+			await learn(tab);
+			await tab.clock.advance(40000);
+			return tab.U().countdown() > 0;
+		};
+		check('the shipped sync yield still holds at 40 s', await run(undefined) === false);
+		check('a served 30 s sync yield lets the build through at 40 s',
+			await run({ updater: () => ({ syncYieldMs: 30000 }) }) === true);
+		check('a served zero is not obeyed: the shipped figure stands',
+			await run({ updater: () => ({ syncYieldMs: 0 }) }) === false);
+	}
+	{
+		// The page's shipped figures and the gateway's fallbacks are one table written twice.
+		const src = readFileSync(join(HERE, 'updater.js'), 'utf8');
+		const rs  = readFileSync(join(HERE, '..', '..', 'gateway', 'src', 'handlers', 'policy.rs'), 'utf8');
+		const page = {}, gw = {};
+		for (const m of src.matchAll(/knob\('(\w+)', (\d+)\)/g)) page[m[1]] = +m[2];
+		const table = rs.slice(rs.indexOf('pub const UPDATER'), rs.indexOf('];', rs.indexOf('pub const UPDATER')));
+		for (const m of table.matchAll(/\("update_\w+",\s*"(\w+)",\s*([\d_]+)\)/g)) gw[m[1]] = +m[2].replace(/_/g, '');
+		const names = Object.keys(page).sort();
+		check('updater.js reads ' + names.length + ' timings, every one the gateway serves',
+			names.length === 20 && JSON.stringify(names) === JSON.stringify(Object.keys(gw).sort()));
+		const off = names.filter((n) => page[n] !== gw[n]);
+		check('and ships the gateway\'s fallback for each (' + off.join(', ') + ')', off.length === 0);
+		const bare = src.split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l))
+			.filter((l) => /setTimeout\([^;]*,\s*\d{3,}\)|var [A-Z_]+_MS\s*=\s*\d/.test(l));
+		check('no timing is left a literal (' + bare.length + ')', bare.length === 0);
+	}
+	{
+		// policy.js: the answer's `updater`, whole numbers of at least one, cached for the next boot.
+		const body = readFileSync(join(HERE, 'policy.js'), 'utf8');
+		const mem = new Map();
+		const mkWin = () => {
+			const w = {
+				localStorage: { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)) },
+				document: { readyState: 'complete', querySelector: () => null, addEventListener() {} },
+				dispatchEvent() { return true }, CustomEvent: function () {},
+				DaimondGateway: { clientApi: () => 1 },
+				fetch: async () => ({ ok: true, json: async () => ({ ok: true, network: 'live',
+					updater: { pollMs: 5000, quiesceMs: 0, bogus: 'x' } }) }),
+			};
+			w.window = w;
+			new Function('window', 'with (window) {\n' + body + '\n}')(w);
+			return w;
+		};
+		const w = mkWin();
+		await w.DaimondNet.read();
+		check('policy.js carries the served timings, junk dropped',
+			JSON.stringify(w.DaimondNet.updater()) === '{"pollMs":5000}');
+		const w2 = mkWin();
+		check('and the next boot has them before it asks', !!w2.DaimondNet.updater()
+			&& w2.DaimondNet.updater().pollMs === 5000);
+	}
+
 	console.log('\nupdater: SYNC_YIELD_MS is the bound the module actually uses');
 	{
 		const src = readFileSync(join(HERE, 'updater.js'), 'utf8');
-		check('the sync-yield bound is defined', /var SYNC_YIELD_MS = 120000;/.test(src));
+		check('the sync-yield bound is defined', /var SYNC_YIELD_MS = knob\('syncYieldMs', 120000\);/.test(src));
 		check('safeNow yields to the latch, not to syncQuiet alone', /return syncYield;/.test(src));
 		check('the latch is gated on !stuck', /!syncYield && !stuck && unsafeSince/.test(src));
 	}
@@ -883,6 +991,35 @@ async function main() {
 		await tab.clock.advance(11000);		// one tick of "is it safe yet?"
 		check('letting the lease go lets the update through', tab.U().countdown() > 0,
 			'countdown=' + tab.U().countdown());
+	}
+
+	// UPDATE-LAG (6 Nov, argonaut): a turn ended at 09:49:58 and its lease was
+	// completed a second later, yet the hidden tab sat "held: lease" until the lease
+	// was released at 10:03:08. A completed lease arbitrates the turn but runs
+	// nothing, so a reload drops nothing.
+	console.log('\nupdater: a completed turn lease holds nothing; a running one waits for its end');
+	{
+		const peer = loadPeer(), door = makeDoor(), L = peer.DaimondLease;
+		const ME = 'd-aaa', TID = 't-lag', now = () => Date.now();
+		const took = await L.take(TID, { holder: ME, ts: Date.now() }, door, now);
+		check('the device takes the turn\'s lease', !!(took && took.won));
+		check('a running lease reads as this device running a turn', L.heldBy(ME) === true);
+		const tab = await boot({ stamps: [BOOTED, NEWER], selfId: ME, lease: L,
+			state: { unlocked: true } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		check('the newer build is pending', tab.U().pending() === NEWER.build);
+		check('no countdown while the turn runs', tab.U().countdown() === 0);
+		await tab.clock.advance(5 * MIN);
+		check('and no reload mid-turn', tab.reloads.n === 0);
+		const done = await L.complete(TID, ME, door, now);
+		check('the turn\'s lease completes', !!(done && done.ok));
+		check('a completed lease still names its holder (arbitration unchanged)', L.holder(TID) === ME);
+		check('a completed lease is not a turn this device is running', L.heldBy(ME) === false);
+		await tab.clock.advance(11000);		// one tick of "is it safe yet?"
+		check('the turn\'s end lets the update through on the next tick', tab.U().countdown() > 0);
+		await tab.clock.advance(21000);
+		check('the idle tab reloads onto the new build', tab.reloads.n === 1);
 	}
 
 	console.log('\nupdater: an unlocked device that cannot tell is not reloaded');

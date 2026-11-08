@@ -2202,6 +2202,12 @@ async function runRecoveryAcceptance(P, L, check, phone) {
 			P.watchDecision(seat, { holder: 'PEER', mode: 'released', expiry: 0, renewedAt: now - 120000 }, false, 'PHONE', now) === true);
 		check('watchDecision: FALSE for a placeholder with no stamp to age it by',
 			P.watchDecision({ why: 'dispatched', iturn: 'w' }, null, false, 'PHONE', now) === false);
+		check('watchDecision: TRUE for a settled seat whose turn this device still holds open (STOP-STUCK)',
+			P.watchDecision(seat, { holder: 'PEER', mode: 'done', expiry: 0, renewedAt: now - 1000 }, false, 'PHONE', now, true) === true);
+		check('watchDecision: FALSE for a settled seat with no open view of its turn',
+			P.watchDecision(seat, { holder: 'PEER', mode: 'done', expiry: 0, renewedAt: now - 1000 }, false, 'PHONE', now, false) === false);
+		check('watchDecision: FALSE for an open view whose runner lapsed unsettled',
+			P.watchDecision(seat, { holder: 'PEER', mode: 'running', expiry: now - 1, renewedAt: now - 30000 }, false, 'PHONE', now, true) === false);
 		check('watchDecision: FALSE for a turn that was never dispatched',
 			P.watchDecision({ why: 'offline', iturn: 'w', ts: now }, null, false, 'PHONE', now) === false);
 		check('recoverDecision: FALSE for an ask-card answer ("Chose: …"), even our own and fresh',

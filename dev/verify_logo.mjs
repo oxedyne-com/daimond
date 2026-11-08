@@ -27,13 +27,13 @@ const RETIRED = [
 	['M 0,-42.137 -29.879,0 0,0 Z',				'pale mark as the splash symbol'],
 ];
 
-// His illustration, not the logo: its diamond is drawn from the pale mark, and redrawing a
-// figure of his is his call. A hold whose file no longer carries a retired mark fails, so
-// the list cannot outlive the ruling.
-const HELD = {
-	'www/assets/splash.svg':	'splash artwork (ruling asked, D-20261106-10)',
-	'landing/assets/splash.svg':	'splash artwork (ruling asked, D-20261106-10)',
-};
+// His splash illustration: its diamond is his current mark, each facet's path and fill as in
+// www/assets/daimond_mark.svg (D-20261106-14). Its twinkling stars are drawn from the splash
+// symbol of the pale mark and stay as drawn, so that one signature is allowed there alone.
+const SPLASH = ['www/assets/splash.svg', 'landing/assets/splash.svg'];
+const STARS = 'M 0,-42.137 -29.879,0 0,0 Z';
+const FACETS = [...fs.readFileSync(path.join(ROOT, 'www/assets/daimond_mark.svg'), 'utf8')
+	.matchAll(/<path d="([^"]+)" fill="([^"]+)"\/>/g)].map(m => m[0]);
 
 const TEXT = /\.(svg|html?|css|m?js|json|webmanifest|typ|md|txt)$/i;
 
@@ -55,18 +55,17 @@ const files = tracked();
 for (const d of process.argv.slice(2)) files.push(...walk(path.resolve(d)));
 
 let found = 0;
-let held = 0;
 for (const [name, file] of files) {
 	if (name === 'dev/verify_logo.mjs') continue;
 	if (!fs.existsSync(file)) continue;
 	const src = fs.readFileSync(file, 'utf8');
-	const hits = RETIRED.filter(([sig]) => src.includes(sig)).map(([, what]) => what);
-	if (HELD[name]) {
-		if (hits.length) { held++; console.log(`  HELD     ${name}: ${HELD[name]}`); }
-		else { found++; console.log(`  STALE HOLD ${name}: carries no retired mark, drop it from HELD`); }
-		continue;
-	}
+	const splash = SPLASH.includes(name);
+	const hits = RETIRED.filter(([sig]) => src.includes(sig) && !(splash && sig === STARS)).map(([, what]) => what);
 	if (hits.length) { found++; console.log(`  RETIRED  ${name}: ${hits.join('; ')}`); }
+	if (splash && (!FACETS.length || FACETS.some(f => !src.includes(f)))) {
+		found++;
+		console.log(`  RETIRED  ${name}: its diamond is not the current mark's facets`);
+	}
 }
 
 const icons = spawnSync('node', [path.join(ROOT, 'dev', 'icons.mjs'), '--check'], { encoding: 'utf8' });
@@ -75,5 +74,5 @@ if (icons.status !== 0) {
 	console.log(`  RETIRED  www/assets/icons: not renders of the current mark\n${icons.stdout}${icons.stderr}`);
 }
 
-console.log(`\nverify_logo: ${found} retired, ${held} held, ${files.length} files read`);
+console.log(`\nverify_logo: ${found} retired, ${files.length} files read`);
 process.exit(found ? 1 : 0);

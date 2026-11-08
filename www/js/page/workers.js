@@ -1,9 +1,9 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
-import { DaimondApp } from './wasm.js';
+import { DaimondApp, Wasm } from './wasm.js';
 import { TAG_CHIPS_SHOWN, agentsCount, agentsGrid, agentsList, diamondBusy, pg } from './state.js';
 import { appCfgFor, dsEvent, engineFor, fmtCtx, friendlyError, maxOutFor, readJson, t, tn } from './util.js';
 import { RESUMABLE_ENDINGS, isFailedEnding, jsonBytes, newMid, persistChats, priorSessionRun,
-	reportBody, reportHasSubstance, touchChat, touchedCount, withCommas, workerEndStatus,
+	reportBody, reportHasSubstance, taintChat, touchChat, touchedCount, withCommas, workerEndStatus,
 	workerEndingNote, workerFoldable, workerProse, workerWrites } from './chatstore.js';
 import { deviceId, loadDevices } from './parcel_collect.js';
 import { shortModel } from './parcel_apply.js';
@@ -21,7 +21,7 @@ import { chatSpendNode, migrateWorkerHold, repaintPause, setWorkersHeld, workers
 import { DEFAULT_SPEND_CAP, ensureWantMinor, noteWorkerProv, workerProd } from './tilestyle.js';
 import { Instructions, Pending, Prompts, SYSTEM_PROMPT, foldDeltaInto } from './pending.js';
 import { FOLLOW_MAX_MS, _lastSteer, daimonChat, diamondApp, diamondCanRun, diamondModels,
-	diamondVisionModel, diamondWorkerModel, tagChip, taskWantsVision } from './diamonds.js';
+	diamondVisionModel, diamondWorkerModel, tagChip, taintDaimon, taskWantsVision } from './diamonds.js';
 import { actBtn, agentAsk, agentBudget, agentDiamondChip, agentMatches, agentRunSpend,
 	agentSheetDots, agentSquareFill, agentTagsOf, agentWaiting, readBtn, renderAgentFilter,
 	renderAgentGrid, renderAgentTagPool, setAgentPinned, setAgentTagFilter, updateAgentControls,
@@ -450,6 +450,7 @@ export var Workers = {
 					context: workerKindSaid(r),		// the engine heads the report with it
 					why:    String(r.why || ''),		// a failure's reason, for its heading
 					transient: !!r.whyTransient,		// ... and whether a retry is right
+					tainted: !!r.tainted,				// the engine wraps and taints on it
 					// `r.report` is the whole final answer -- see the `finally` in `start`.
 					// `r.text` is the fallback for a worker that died before it ever answered.
 					report: String(r.report != null ? r.report : (r.text || '')),
@@ -486,6 +487,7 @@ export var Workers = {
 					context: workerKindSaid(r),
 					why:    String(r.why || ''),
 					transient: !!r.whyTransient,
+					tainted: !!r.tainted,
 					report: String(r.report != null ? r.report : (r.text || '')),
 				});
 			});
@@ -702,6 +704,8 @@ export var Workers = {
 					ended: r.ended || null,
 					// Who the run was, for a report relayed after a reload: see noteWorkerProv.
 					prov: r.prov || null,
+					// Its report taints whoever gathers it, after a reload as before.
+					tainted: !!r.tainted,
 				};
 			});
 		// Bounded by weight as well as by count: one run with a long report and
@@ -760,6 +764,8 @@ export var Workers = {
 			// quietly dropping it.
 			if (r.status === 'queued') r.status = 'interrupted';
 			r.app = null;
+			// A record saved before taint was kept cannot say its worker read nothing.
+			if (typeof r.tainted !== 'boolean') r.tainted = true;
 			// A RUNNING RECORD MAY BE ANOTHER TAB'S LIVE WORKER (U3a QRFIX2, F3). It used to be
 			// marked `interrupted` and its `unbilled` billed here, so a second tab opened during
 			// a run billed the live share, and the first tab's `finally` then billed the whole
@@ -1126,6 +1132,16 @@ export var Workers = {
 		mine = mine.filter(function (r) { return !r.gathered; });
 		if (!mine.length) { owe('answered'); return; }
 
+		// A report from a worker that read outside content carries a stranger's words, so the
+		// conversation it reaches is tainted as if it had read them itself, before any of the
+		// ways below decides whether a turn reads it now or later.
+		if (mine.some(function (r) { return !!r.tainted; })) {
+			var taintAt = Date.now();
+			var rec = b.chatId ? pg.chats.find(function (c) { return c.id === b.chatId; }) : null;
+			if (rec) taintChat(rec, taintAt);
+			else taintDaimon(b.diamondId, taintAt);
+		}
+
 		// The reports themselves, composed before any decision about where they
 		// go. Both surfaces get the same text, because it is the same thing.
 		//
@@ -1144,6 +1160,7 @@ export var Workers = {
 			// The kind it ran as, said as `gather` says it (src/tools.rs `gather_result`).
 			var head = '### ' + (r.name || r.id) + ' [' + workerKindSaid(r) + ']' + workerEndingNote(r);
 			var body = reportBody(r);
+			if (body && r.tainted) body = Wasm.wrap_untrusted('worker ' + (r.name || r.id), body);
 			if (!body) {
 				// A blank body is not silence: name the work behind it so the reader
 				// meets figures, not "(no report)". Same computation as
@@ -2130,6 +2147,14 @@ export var Workers = {
 			}
 
 			run.report = _report;
+			// The engine marks a worker that read outside content, or gathered one that did; its
+			// report then carries a stranger's words to whoever gathers it. A verdict that cannot
+			// be read is a taint.
+			if (run.app) {
+				var _read = true;
+				try { _read = typeof run.app.is_tainted !== 'function' || !!run.app.is_tainted(); } catch (e) { _read = true; }
+				run.tainted = !!run.tainted || _read;
+			}
 			// The report's size, on the run as well as in the feed event below: the feed is an
 			// upload buffer that a caller in the page -- the Agents panel, or
 			// `dev/tune/run.mjs` -- cannot read back. Sent equals raw now nothing is cut.

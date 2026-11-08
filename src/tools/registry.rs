@@ -842,6 +842,13 @@ impl<H: Host> ToolRegistry<H> {
                 Diamond's links are your parent's to change: say in your report what should \
                 change and why.")));
         }
+        // NOR DOES IT SUBMIT (SUBMIT-ROUTE SR2a).  A submission puts a card on his phone, and that
+        // is the turn he talks to's act: a worker reports its branch and commit, and its parent
+        // submits them.
+        if ctx.is_unsupervised() && matches!(Tool::from_name(name), Some(Tool::SubmitChange)) {
+            return Ok(MessageContent::text(submit_refusal(
+                "You are a dispatched worker, and a change is submitted by the turn that sent you:                 say in your report the branch and the full commit id, and that it is ready.")));
+        }
         // A read of the chat's own spill is answered from it: the path lies outside the jail.
         if let (Some(Tool::FileRead), Some(cap)) = (Tool::from_name(name), self.cap.get()) {
             if let Some(view) = cap.read(args_json, &ctx) {
@@ -1403,6 +1410,9 @@ impl Tool {
             Tool::MailList | Tool::MailSearch | Tool::MailRead | Tool::MailDraft =>
                 Self::mail_unavailable(),
             Tool::PendingNone => pending_none(ctx),
+            // The test shim has no host to send a frame through: the same refusal a host with no
+            // Kimberlite gives.
+            Tool::SubmitChange => Ok(submit_refusal(crate::engine::host::ui::SUBMIT_NO_KIMBERLITE)),
             Tool::StateSet => Err(err!(
                 "Tool 'state_set' sets a section of a Diamond's STATE.md in the browser's storage; \
                 this is the native build, which has no Diamonds in it."; Unimplemented)),

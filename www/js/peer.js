@@ -390,6 +390,8 @@
 		// guess. Written only from a page that has ocr.js, so a runner reads its absence -- and
 		// every older sender -- as no read paid with credits.
 		if (reads) e.ocr = reads;
+		// The diamond's name as he sees it, which Kimberlite signs on a plain card (SR-W1e).
+		if (typeof o.diamondName === 'string' && o.diamondName !== '') e.diamondName = o.diamondName;
 		// THE PAGE'S ENGINE ABI, closing the errand (ABI-a; the runner's golden `errand_abi`).
 		// Left out from a wasm that names none, which a runner reads as legacy.
 		if (_engineAbi > 0) e.abi = _engineAbi;
@@ -1834,6 +1836,14 @@
 		// The Diamond the chat belongs to, so the runner services a daimon turn through
 		// `steer_crystal` rather than the chat engine. Taken from the caller, or the chat.
 		var diamondId = String(o.diamondId || c.diamondId || '');
+		// Its name, which Kimberlite signs on a plain card and refuses over its bound; refused here
+		// first, before anything is marked or sent, where the gateway names the bound.
+		var diamondName = diamondId ? String(o.diamondName || '') : '';
+		var nameMax = o.diamondNameMax | 0, nameBytes = new TextEncoder().encode(diamondName).length;
+		if (nameMax > 0 && nameBytes > nameMax) {
+			throw new Error('the name of diamond "' + diamondName + '" is ' + nameBytes + ' bytes, over the '
+				+ nameMax + ' Kimberlite can sign on a change; shorten the name to send this turn');
+		}
 		var scope    = o.scope || null;			// the workspace fence -- scopeChatTo, daimond.js:17553
 		var fence    = o.fence || null;			// the absolute roots the Hand gets (R3c2), or null
 		var pause    = o.pause || null;			// pause-tree snapshot pinned to dispatch -- §1.1
@@ -1909,7 +1919,7 @@
 			/// catch-up already handles. The seed is what the runner actually needs.
 			errand: function (parcelVersion) {
 				return makeErrand({
-					eid: eid, turnId: turnId, chatId: chatId, diamondId: diamondId,
+					eid: eid, turnId: turnId, chatId: chatId, diamondId: diamondId, diamondName: diamondName,
 					prompt: prompt, pre: pre, effort: effort, model: model,
 					scope: scope, fence: fence, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
@@ -2487,14 +2497,18 @@
 	///  - a live lease held by THIS device: it runs here, and draws itself;
 	///  - a lease taken for this seat and no longer live: the runner stopped or handed
 	///    it back, and no device holds the turn;
+	///  - a settled lease while this device's view of the turn is `open`: the runner
+	///    has written the turn's End row, and this device has not read it yet (its tap
+	///    can be missed, and nothing else reads the log) -- watch until it folds;
 	///  - no claim yet: watch only while a peer may still claim it, which is the
 	///    errand's own deadline (`DISPATCH_DEADLINE_MS` from the dispatch). No peer
 	///    starts a turn past it (`leaseTakeFrom` refuses), so a placeholder older than
 	///    that with no live lease can never produce another frame.
 	/// A placeholder with no stamp at all cannot be aged, and is not watched.
-	function watchDecision(turn, lease, finished, selfId, now) {
+	function watchDecision(turn, lease, finished, selfId, now, open) {
 		if (!turn || turn.why !== REASON_DISPATCHED) return false;
 		if (finished) return false;
+		if (open && settledLease(lease)) return true;
 		var n = now == null ? Date.now() : now;
 		if (liveLease(lease, n)) return lease.holder !== String(selfId);
 		// A claim made AFTER this seat was set (`renewedAt` is stamped at the take) that
@@ -4824,6 +4838,10 @@
 	/// a turn for anybody? The updater asks it before reloading a runner, because a
 	/// reload drops a turn the device is holding for another and no amount of build
 	/// drift is worth that.
+	///
+	/// A completed (`done`) lease stays live until its expiry so that it still
+	/// arbitrates the turn, but nothing runs under it: counting it held the idle tab
+	/// on argonaut off a new build for 13 minutes after its turn had ended.
 	function leaseHeldBy(holder, now) {
 		var who = String(holder || '');
 		if (!who) return false;
@@ -4831,7 +4849,8 @@
 		for (var id in _leases) {
 			if (!Object.prototype.hasOwnProperty.call(_leases, id)) continue;
 			var r = _leases[id];
-			if (liveLease(r, n) && !endingLease(r) && String(r.holder || '') === who) return true;
+			if (liveLease(r, n) && !endingLease(r) && !settledLease(r)
+				&& String(r.holder || '') === who) return true;
 		}
 		return false;
 	}

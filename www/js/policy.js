@@ -4,7 +4,8 @@
  * Shipping), so the page cannot know its net from anything it was built with.
  * It asks `/api/policy`, which names the net (`network`, "live" or "test") and
  * this caller's capabilities (`capabilities.runner`), beside the two trash
- * figures trash.js reads (design §R11.3, §R7).
+ * figures trash.js reads (design §R11.3, §R7), and Kimberlite's approve page
+ * for this net (`runner_approve_url`), which Pending links his Approve to.
  *
  * Loaded in the head, before the first paint, so a cached "test" swaps the
  * home-screen identity (title, icon, manifest) before iOS or the browser has
@@ -19,7 +20,7 @@
 	'use strict';
 
 	var ENDPOINT = '/api/policy';
-	var KEY      = 'daimond-net';            // cached {network, capabilities, crystalHeight}
+	var KEY      = 'daimond-net';            // cached {network, capabilities, crystalHeight, runnerApprove, plainNameMax, updater}
 	var TEST_ID  = {
 		title:    'Daimond TEST',
 		icon:     'assets/icons/test-180.png',
@@ -48,13 +49,33 @@
 		return n && w ? { writes: n, windowMs: w * 1000 } : null;
 	}
 
+	/// An https address with no query or fragment, or null: Pending appends both.
+	function parseUrl(v) {
+		return (typeof v === 'string' && /^https:\/\/[^\s?#]+$/.test(v)) ? v : null;
+	}
+
+	/// The updater's timings by its own names (updater.js `knob`), each a whole number of at
+	/// least one, or null when the gateway named none: updater.js then uses its shipped ones.
+	function parseUpdater(u) {
+		if (!u || typeof u !== 'object' || Array.isArray(u)) return null;
+		var out = {}, k, n, any = false;
+		for (k in u) {
+			if (!Object.prototype.hasOwnProperty.call(u, k)) continue;
+			n = parseCount(u[k]);
+			if (n) { out[k] = n; any = true; }
+		}
+		return any ? out : null;
+	}
+
 	function load() {
 		try {
 			var j = JSON.parse(localStorage.getItem(KEY) || 'null');
 			if (j && typeof j === 'object') return { network: parseNet(j.network), capabilities: parseCaps(j.capabilities),
-				crystalHeight: j.crystalHeight ? parseHeight(j.crystalHeight.writes, j.crystalHeight.windowMs / 1000) : null };
+				crystalHeight: j.crystalHeight ? parseHeight(j.crystalHeight.writes, j.crystalHeight.windowMs / 1000) : null,
+				runnerApprove: parseUrl(j.runnerApprove), plainNameMax: parseCount(j.plainNameMax),
+				updater: parseUpdater(j.updater) };
 		} catch (e) { /* unreadable cache: start from live */ }
-		return { network: 'live', capabilities: null, crystalHeight: null };
+		return { network: 'live', capabilities: null, crystalHeight: null, runnerApprove: null, plainNameMax: null, updater: null };
 	}
 	function save(s) {
 		try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { /* private mode: this boot only */ }
@@ -112,7 +133,9 @@
 		} catch (e) { return null; }		// offline, or no gateway in this build
 		if (!j || j.ok !== true) return null;
 		state = { network: parseNet(j.network), capabilities: parseCaps(j.capabilities),
-			crystalHeight: parseHeight(j.crystal_height_writes, j.crystal_height_window_secs) };
+			crystalHeight: parseHeight(j.crystal_height_writes, j.crystal_height_window_secs),
+			runnerApprove: parseUrl(j.runner_approve_url), plainNameMax: parseCount(j.plain_diamond_name_max),
+			updater: parseUpdater(j.updater) };
 		save(state);
 		applyIdentity();
 		announce();
@@ -143,6 +166,12 @@
 		can:      can,
 		/// {writes, windowMs} for a crystal frame's height, or null. See crystal.js heightGate.
 		crystalHeight: function () { return state.crystalHeight; },
+		/// Kimberlite's approve page for this net, or null when the gateway named none.
+		runnerApprove: function () { return state.runnerApprove; },
+		/// The UTF-8 bytes of a diamond's name Kimberlite's plain card carries, or null when the gateway named none.
+		plainNameMax: function () { return state.plainNameMax; },
+		/// The updater's timings as the last answer named them, or null. See updater.js `knob`.
+		updater:  function () { return state.updater; },
 		read:     read,
 		refresh:  refresh,
 		parseNet: parseNet,          // exposed for the dev test

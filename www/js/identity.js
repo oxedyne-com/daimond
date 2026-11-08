@@ -2144,6 +2144,21 @@
 		return new Uint8Array(pt);
 	}
 
+	/// As unwrapBytesAad, but the additional data is RAW BYTES, not a UTF-8 purpose string:
+	/// for a seal whose AAD carries binary, as a submission's diff chunk does (kimberlite
+	/// `relay.rs` `diff_aad`: the domain, the challenge, then k and n as u32 big-endian;
+	/// SUBMIT-ROUTE SR7). Throws (the GCM tag) on a wrong key, a tampered ciphertext or
+	/// any other AAD.
+	async function unwrapBytesAadRaw(bytes, aadBytes) {
+		requireUnlocked();
+		var buf = (bytes instanceof Uint8Array) ? bytes : new Uint8Array(bytes);
+		var aad = (aadBytes instanceof Uint8Array) ? aadBytes : new Uint8Array(aadBytes);
+		var pt = await crypto.subtle.decrypt(
+			{ name: 'AES-GCM', iv: buf.slice(0, IV_BYTES), additionalData: aad },
+			_wrapKey, buf.slice(IV_BYTES));
+		return new Uint8Array(pt);
+	}
+
 	/// The roots a Kimberlite says it may reach, opened from the sealed `reach` of its
 	/// presence beat (UNBLOCK-78). Kimberlite seals the JSON list of roots with the account
 	/// key under `daimond/reach/v1|<device id>`, so the relay carries the bytes but cannot
@@ -2680,6 +2695,8 @@
 		wrapChunk:    wrapChunk,
 		wrapBytesAad:   wrapBytesAad,
 		unwrapBytesAad: unwrapBytesAad,
+		/// Open a seal whose AAD is raw bytes (a submission's diff chunk, SR7).
+		unwrapBytesAadRaw: unwrapBytesAadRaw,
 		/// Open a Kimberlite's sealed `reach` to its roots (UNBLOCK-78).
 		openReach:      openReach,
 		reset:        reset,

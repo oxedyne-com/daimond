@@ -47,11 +47,9 @@ async fn run() -> Outcome<()> {
         // Files panel: the version store is the browser's, and this workspace is the
         // run's own scratch directory.
         keeper: String::new(),
-        // Marked places not yet in force on this device: there are no marks at all.
-        unconfirmed: Vec::new(),
-        // The rest as the native handler sets them (`handler.rs`): no turn tag, no live
-        // marks read per call, no restore this call acts for, no author.
-        turn: String::new(), live: None, by_model: false, restoring: 0, by: None,
+        // The rest as an unscoped native turn has them: no turn tag, no scope, no restore
+        // this call acts for, no author.
+        turn: String::new(), scope: None, by_model: false, restoring: 0, by: None,
         host: Default::default() };
     let registry = ToolRegistry::new(Tool::defaults(), ctx);
 

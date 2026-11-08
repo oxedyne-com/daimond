@@ -177,6 +177,13 @@ pub fn words_abi() -> u32 {
     crate::engine::abi::WORDS_ABI
 }
 
+/// The engine's untrusted-content envelope, for a worker's report a gather round hands its parent
+/// (`Workers.gather`): the same words the `gather` tool wraps it in.
+#[wasm_bindgen]
+pub fn wrap_untrusted(origin: &str, content: &str) -> String {
+    crate::tools::wrap_untrusted(origin, content)
+}
+
 /// The linear memory in whole megabytes, for a trail line.
 ///
 /// Separate from [`heap_bytes`] because the JS side wants bytes and every caller

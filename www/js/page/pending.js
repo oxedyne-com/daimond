@@ -951,6 +951,8 @@ export var Pending = {
 		if (it.kind === 'steer') { steerTile(box, it); return box; }
 		// A runner update is answered on the approve page, never here (KS-p4).
 		if (it.kind === 'runner') { runnerTile(box, it); return box; }
+		// A daimon's change: its card as text, the diff checked, Approve on the approve page (SR7).
+		if (it.kind === 'submit') { submitTile(box, it); return box; }
 		// A runner asking to join is approved here, with his passkey (R2d1).
 		if (it.kind === 'runnerpair') { runnerPairTile(box, it); return box; }
 		// Not recoverable yet: its one act is the enrolment (`offerRecovery`), asked again.
@@ -1254,7 +1256,6 @@ export var Pending = {
 // `RUNNER_TAP_POLL_MS` for `RUNNER_TAP_WINDOW_MS` after the tap (`runnerTapFast`), since the
 // minute poll left the tile up a minute after his tap; then the minute poll alone.
 var RUNNER_POLL_MS    = 60 * 1000;
-var RUNNER_APPROVE    = 'https://runner.daimond.app/approve#';
 var RUNNER_RELAY      = '/api/runner/relay?install=';
 var RUNNER_RELAY_ONE  = '/api/runner/relay?nonce=';
 var RUNNER_INSTALL_RE = /^[A-Za-z0-9_-]{16,64}$/;
@@ -1373,6 +1374,7 @@ async function runnerRead(inst) {
 	// and alarm note are read by the nonce, which this page holds and the install id does not give.
 	return Promise.all(j.entries.map(async function (e) {
 		if (!e || typeof e.body === 'string' || !RUNNER_NONCE_RE.test(String(e.nonce || ''))) return e;
+		if (e.kind === 'submit' && !e.alarmed) return submitRead(e);	// SR7: read once, null when withdrawn
 		if (!e.alarmed && e.kind !== 'release') return e;
 		try {
 			var r1 = await fetch(RUNNER_RELAY_ONE + encodeURIComponent(e.nonce), { cache: 'no-store', credentials: 'omit' });
@@ -1503,6 +1505,7 @@ function runnerSettle(entries) {
 		kept[n] = tp;
 	});
 	if (pruned || tapsChanged) runnerTapsSave(kept);
+	submitSettle(own, list);				// a daimon's change, one item per submission (SR7)
 	Pending.fresh();
 	Pending.render();
 }
@@ -1517,6 +1520,7 @@ function runnerKey(nonce, seq, commit) {
 /// One synced runner item as a Pending tile, or null for a key this build cannot read.
 function runnerItem(a) {
 	var k = String(a.key || '');
+	if (k.indexOf(SUBMIT_KEY) === 0) return submitItem(a);
 	if (k.indexOf(RUNNER_ALARM) === 0) {
 		return { id: 'a:' + a.id, kind: 'notice', priority: 'high', at: a.at, needs: true,
 			headline: t('pending.runner.alarm'), detail: t('pending.runner.alarm_detail', { note: a.detail || '' }) };
@@ -1544,7 +1548,15 @@ async function runnerPoll() {
 		if (full) { runnerSettle(full); read = true; }
 	}
 	if (await runnerTapPoll(inst)) read = true;
+	if (await submitPollOthers(inst)) read = true;
 	return read;
+}
+
+/// Kimberlite's approve page for entry `n`, `q` its query, as the gateway names it per net
+/// (`/api/policy` runner_approve_url); empty when it names none, so no Approve is offered.
+function runnerApproveUrl(q, n) {
+	var net = window.DaimondNet, base = (net && net.runnerApprove && net.runnerApprove()) || '';
+	return base ? base + q + '#' + String(n || '') : '';
 }
 
 /// Start the minute poll, once per page.
@@ -1553,6 +1565,7 @@ export function runnerWatch() {
 	_runnerWatching = true;
 	setInterval(function () { runnerPoll(); }, RUNNER_POLL_MS);
 	document.addEventListener('visibilitychange', function () { if (!document.hidden) { runnerPoll(); runnerTapFast(); } });
+	window.addEventListener('daimond:policy', function () { Pending.render(); });	// the approve address may come later
 	runnerPoll();
 }
 
@@ -1561,12 +1574,13 @@ export function runnerWatch() {
 /// says the request is over.
 function runnerTile(box, it) {
 	var rn = it.runner || {};
-	var url = RUNNER_APPROVE + String(rn.nonce || '');
+	var url = runnerApproveUrl('', rn.nonce);
 	var when = document.createElement('div');
 	when.className = 'rail-note pend-runner';
 	var built = rn.seq ? new Date(rn.seq * 1000).toLocaleString() : '';
 	when.textContent = t('pending.runner.built', { commit: rn.commit || '?', when: built || '?' });
 	box.appendChild(when);
+	if (!url) { submitLine(box, 'status', t('pending.runner.no_approve')); return; }
 	var acts = document.createElement('div');
 	acts.className = 'pend-acts';
 	var go = document.createElement('a');
@@ -1587,6 +1601,536 @@ function runnerTile(box, it) {
 		qr.setAttribute('aria-label', t('pending.runner.qr'));
 		box.appendChild(qr);
 	}
+}
+
+// ── A daimon's change waiting for his tap (SUBMIT-ROUTE SR7) ─────────────────
+//
+// A daimon in a fence built a change and Kimberlite carded it (kimberlite `relay.rs` `card`):
+// one relay entry of kind `submit` per sealed chunk of its diff, every entry carrying the same
+// body (`submit_body`: every card and manifest field as text, the chunk count and each sealed
+// chunk's SHA-256). The entries of one submission are GROUPED BY THAT BODY, which names one
+// challenge, and make ONE tile, on the nonce of chunk 1 (`diff_k` 1), where his answer goes.
+// Several submissions are several tiles: each is its own thing to approve.
+//
+// THE CARD IS SHOWN AS TEXT: the title, the summary under "the daimon says", the branch and
+// commit, the diffstat, each check under its who-label ("this commit's tests, run in a fence"
+// or "the daimon says"), the write paths, the failing-first hash and the review verdict.
+// The card's SHA-256 is rebuilt from the body (the submit_v4 codec, as the approve page does)
+// and must be the body's `card_sha256`, or the tile says so and offers no Approve.
+//
+// "SEE THE DIFF" opens each sealed chunk with the account key (`unwrapBytesAadRaw`), its AAD
+// "kimberlite/submit-diff/v1\0" || challenge(32) || k u32BE || n u32BE, so a chunk lifted from
+// another submission, or moved within this one, does not open. sha256(sealed chunk k) must be
+// `diff_shas[k-1]` (checked with no key, as soon as the chunks are read: "diff k of n" until
+// all are), and sha256 of the joined plain text the card's `diff_sha256`. Anything else
+// says "diff does not match" and the Approve link goes.
+//
+// AFTER THE TAP the tile says what is true: approved, Kimberlite deploys it next, "proof by a
+// driven turn pending"; once the runner marks the entry done, "Deployed: <commit>; proof by
+// a driven turn pending". Never "Live": that is `dk proof`'s word (design §1, tier-proof gate).
+// A withdrawn entry (the relay answers 404 by its nonce, or no longer lists it) drops the
+// tile. The runner's own machine is the one writer of the synced item, as for a release; a
+// device with no runner reads the listing of the install the item names, and only hides.
+var SUBMIT_KEY      = 'submit.';				// alerts.js page key: one tile per submission
+var SUBMIT_D        = 'kimberlite/submit/v3\0';		// fixed: protocol domain (verify/runner_compat/submit_v4)
+var SUBMIT_CARD_D   = 'kimberlite/card/v3\0';		// fixed: protocol domain (submit_v4)
+var SUBMIT_DIFF_AAD = 'kimberlite/submit-diff/v1\0';	// fixed: protocol domain (kimberlite relay.rs SUBMIT_DIFF_AAD)
+var SUBMIT_HEX_RE   = /^[0-9a-f]*$/;
+var SUBMIT_DEC_RE   = /^[0-9]+$/;
+var SUBMIT_ART      = { runner: 1, page: 2 };		// fixed: submit_v4 artefact kind codes
+var SUBMIT_WHO      = { '1': 1, '2': 1 };		// fixed: submit_v4 who codes, 1 fenced, 2 the daimon's
+var SUBMIT_RESULT   = { '0': 1, '1': 1, '2': 1 };	// fixed: submit_v4 result codes, 0 failed, 1 passed, 2 skipped
+var _submitWhole    = {};	// nonce -> its body and chunk, read once by the nonce: a submit entry's bytes never change
+var _submitGone     = {};	// nonce -> true: read by its nonce, 404 (withdrawn, or lapsed)
+var _submitLive     = {};	// chunk 1's nonce -> { inst, e: that entry, parts: { k: entry } }
+var _submitRead     = {};	// install -> true once its listing was read
+var _submitCheck    = {};	// chunk 1's nonce -> { state: 'part' | 'sealed' | 'ok' | 'bad' | 'card', k, n, text }
+var _submitTaps     = {};	// chunk 1's nonce -> true: Approve opened on this device
+var PLAIN_V         = 'plain/1';			// fixed: the plain route's body version (D-20261106-13 (1))
+var PLAIN_D         = 'kimberlite/plain/v1\0';		// fixed: protocol domain (verify/runner_compat/plain_v1)
+var PLAIN_RESULT    = { 1: 1, 2: 1 };			// fixed: plain_v1 result codes, 1 passed, 2 failed
+var _plainOpen      = {};	// nonce -> true: Details opened on this device
+
+/// A submit entry read whole by its nonce, cached: its body and chunk never change, only the
+/// listing's flags, which are kept from `e`. Null when the relay answers 404 (withdrawn).
+async function submitRead(e) {
+	var n = e.nonce, w = _submitWhole[n];
+	if (!w) {
+		var one = null;
+		try {
+			var r = await fetch(RUNNER_RELAY_ONE + encodeURIComponent(n), { cache: 'no-store', credentials: 'omit' });
+			if (r && r.status === 404) { _submitGone[n] = true; return null; }
+			one = (r && r.ok) ? await r.json() : null;
+		} catch (err) { one = null; }
+		if (!one || one.ok !== true || typeof one.body !== 'string') return e;
+		w = _submitWhole[n] = { install: String(one.install || ''), body: one.body,
+			diff_k: Number(one.diff_k), diff_n: Number(one.diff_n), diff_sealed: String(one.diff_sealed || '') };
+	}
+	delete _submitGone[n];
+	return Object.assign({}, e, w);
+}
+
+/// Group install `inst`'s submit entries in `list` by body (one challenge each), as the live
+/// submissions of that install. Returns them, by chunk 1's nonce. A submit entry that could
+/// not be read by its nonce (no body, and no 404) takes nothing down: the install's
+/// submissions stand as last read.
+function submitTake(inst, list) {
+	var out = {};
+	list = Array.isArray(list) ? list : [];
+	if (list.some(function (e) { return e && e.kind === 'submit' && !e.alarmed && typeof e.body !== 'string'; })) {
+		Object.keys(_submitLive).forEach(function (n) { if (_submitLive[n].inst === inst) out[n] = _submitLive[n]; });
+		return out;
+	}
+	Object.keys(_submitLive).forEach(function (n) { if (_submitLive[n].inst === inst) delete _submitLive[n]; });
+	var listed = {};
+	list.forEach(function (e) { if (e && e.nonce) listed[e.nonce] = true; });
+	Object.keys(_submitWhole).forEach(function (n) { if (_submitWhole[n].install === inst && !listed[n]) delete _submitWhole[n]; });
+	var byBody = {};
+	list.forEach(function (e) {
+		if (!e || e.kind !== 'submit' || e.alarmed || typeof e.body !== 'string' || !RUNNER_NONCE_RE.test(String(e.nonce || ''))) return;
+		var g = byBody[e.body] = byBody[e.body] || { inst: inst, e: null, parts: {} };
+		var k = submitIsPlain(e.body) ? 1 : Number(e.diff_k);
+		if (!(k >= 1) || g.parts[k]) return;
+		g.parts[k] = e;
+		if (k === 1) g.e = e;
+	});
+	Object.keys(byBody).forEach(function (b) {
+		var g = byBody[b];
+		if (!g.e) return;				// no chunk 1: nothing to answer
+		out[g.e.nonce] = _submitLive[g.e.nonce] = g;
+	});
+	_submitRead[inst] = true;
+	return out;
+}
+
+/// What a submit entry's body says, as text, or null when it is not one.
+function submitBody(e) {
+	var b = null;
+	try { b = JSON.parse(String((e && e.body) || '')); } catch (err) { b = null; }
+	if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+	var s = function (k) { return typeof b[k] === 'string' ? b[k] : ''; };
+	var seq = SUBMIT_DEC_RE.test(s('seq')) ? Number(s('seq')) : 0;
+	seq = (isFinite(seq) && seq > 0 && seq < 1e12) ? Math.floor(seq) : 0;
+	if (b.v === PLAIN_V) {
+		return {
+			plain: true, raw: b, title: s('summary').split('\n')[0], summary: s('summary'), branch: s('branch'),
+			commit: s('commit'), repo: s('repo'), chat: s('chat'), diamond: s('diamond'), diamond_name: s('diamond_name'), release_ref: s('release_ref'),
+			page_code: s('page_code') === '1', runner_code: s('runner_code') === '1', approve: s('approve') === '1',
+			checks: Array.isArray(b.checks) ? b.checks : [], seq: seq,
+		};
+	}
+	return {
+		raw: b, title: s('title'), summary: s('summary'), branch: s('branch'), commit: s('commit'),
+		diffstat: s('diffstat'), review: s('review'), failing_first: s('failing_first'),
+		write_path: s('write_path') === '1', page_code: s('page_code') === '1', card_sha256: s('card_sha256'), diff_sha256: s('diff_sha256'),
+		write_paths: s('write_paths') === '' ? [] : s('write_paths').split('\n'),
+		pins: s('pins') === '' ? [] : s('pins').split(';'),
+		artefacts: s('artefacts') === '' ? [] : s('artefacts').split(';'),
+		checks: Array.isArray(b.checks) ? b.checks : [],
+		diff_shas: s('diff_shas') === '' ? [] : s('diff_shas').split(','),
+		diff_n: SUBMIT_DEC_RE.test(s('diff_n')) ? Number(s('diff_n')) : 0,
+		seq: seq,
+	};
+}
+
+/// The synced key of one submission: chunk 1's nonce and its seq. Within `KEY_MAX` (64).
+function submitKey(nonce, seq) {
+	return SUBMIT_KEY + nonce + '.' + ((typeof seq === 'number' && seq > 0) ? seq : 0);
+}
+
+/// Raise this machine's submissions, one item each, and clear those no longer listed. The
+/// detail is locale-free, the install first (for a device with no runner of its own), then
+/// the title. `needs` holds until the runner's done mark.
+function submitSettle(inst, list) {
+	var A = window.DaimondAlerts;
+	if (!A || !A.RUNNER) return;
+	var groups = submitTake(inst, list), want = {};
+	Object.keys(groups).forEach(function (n) {
+		var g = groups[n], b = submitBody(g.e);
+		if (!b) return;
+		var key = submitKey(n, b.seq);
+		want[key] = true;
+		A.raise(A.RUNNER, key, 'daimon change', inst + ' ' + b.title.slice(0, 200), g.e.done !== true);
+	});
+	A.live().forEach(function (a) {
+		if (a.diamond === A.RUNNER && a.key.indexOf(SUBMIT_KEY) === 0 && !want[a.key]) A.clear(A.RUNNER, a.key);
+	});
+}
+
+/// The installs named by synced submit items other than this machine's own, read for their
+/// listing: what is withdrawn or done shows here too. Writes nothing synced.
+async function submitPollOthers(own) {
+	var A = window.DaimondAlerts, seen = {}, read = false;
+	if (!A || !A.RUNNER) return false;
+	A.live().forEach(function (a) {
+		if (a.diamond !== A.RUNNER || a.key.indexOf(SUBMIT_KEY) !== 0) return;
+		var inst = String(a.detail || '').split(' ')[0];
+		if (RUNNER_INSTALL_RE.test(inst) && inst !== own) seen[inst] = true;
+	});
+	for (var inst in seen) {
+		var list = await runnerRead(inst);
+		if (!list) continue;
+		submitTake(inst, list);
+		read = true;
+	}
+	if (read) { Pending.fresh(); Pending.render(); }
+	return read;
+}
+
+/// One synced submit item as a Pending tile, or null when withdrawn or unreadable.
+function submitItem(a) {
+	var p = String(a.key || '').slice(SUBMIT_KEY.length).split('.');
+	if (p.length !== 2 || !RUNNER_NONCE_RE.test(p[0])) return null;
+	var n = p[0], d = String(a.detail || ''), sp = d.indexOf(' ');
+	var inst = sp > 0 ? d.slice(0, sp) : '';
+	if (!RUNNER_INSTALL_RE.test(inst)) inst = '';
+	if (_submitGone[n] || (inst && _submitRead[inst] && !_submitLive[n])) return null;
+	var g = _submitLive[n], done = !!(g && g.e && g.e.done === true);
+	var approved = !!(g && g.e && g.e.answered && _submitTaps[n]);		// his tap here: the runner's to do now
+	var title = (sp > 0 ? d.slice(sp + 1) : '') || '?', b = g ? submitBody(g.e) : null;
+	return { id: 'a:' + a.id, kind: 'submit', priority: 'high', at: a.at, needs: !done && !approved && a.needs !== false,
+		headline: (b && b.plain) ? t('pending.plain.headline', { summary: title }) : t('pending.submit.headline', { title: title }),
+		detail: t('pending.submit.detail'), submit: { nonce: n, seq: Number(p[1]) || 0, install: inst } };
+}
+
+function submitUtf8(s) { return new TextEncoder().encode(String(s)); }
+
+function submitCat(parts) {
+	var len = 0, at = 0;
+	parts.forEach(function (p) { len += p.length; });
+	var out = new Uint8Array(len);
+	parts.forEach(function (p) { out.set(p, at); at += p.length; });
+	return out;
+}
+
+/// `n` as `w` big-endian bytes, from a decimal string or a number, refused past its width.
+function submitUint(v, w) {
+	var s = String(v);
+	if (!SUBMIT_DEC_RE.test(s)) throw new Error('submit: not a number: ' + s);
+	var x = window.BigInt(s), out = new Uint8Array(w);
+	if (x >= (1n << window.BigInt(8 * w))) throw new Error('submit: out of range: ' + s);
+	for (var i = w - 1; i >= 0; i--) { out[i] = Number(x & 255n); x >>= 8n; }
+	return out;
+}
+
+function submitStr16(s) {
+	var b = submitUtf8(s);
+	return submitCat([submitUint(b.length, 2), b]);
+}
+
+function submitHex(h, lens) {
+	h = String(h);
+	if (!SUBMIT_HEX_RE.test(h) || lens.indexOf(h.length) < 0) throw new Error('submit: bad hex');
+	var out = new Uint8Array(h.length / 2);
+	for (var i = 0; i < out.length; i++) out[i] = parseInt(h.substr(2 * i, 2), 16);
+	return out;
+}
+
+function submitHexOf(u8) {
+	return Array.from(u8, function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join('');
+}
+
+function submitB64u(s) {
+	var t64 = String(s).replace(/-/g, '+').replace(/_/g, '/');
+	while (t64.length % 4) t64 += '=';
+	var bin = atob(t64), out = new Uint8Array(bin.length);
+	for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+	return out;
+}
+
+async function submitSha(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)); }
+
+/// The card's SHA-256 and the challenge, rebuilt from the body's text with the submit_v4
+/// codec (verify/runner_compat/submit_v4; the approve page's `cardBytes` and
+/// `submitManifestBytes`). Throws on a body the codec cannot encode.
+async function submitChallenge(b) {
+	var r = b.raw, s = function (k) { return typeof r[k] === 'string' ? r[k] : ''; };
+	var id = function (k) { submitHex(s(k), [40, 64]); return submitStr16(s(k)); };
+	var card = [submitUtf8(SUBMIT_CARD_D), submitStr16(s('title')), submitStr16(s('summary')), submitStr16(s('branch')),
+		submitStr16(s('diffstat')), submitHex(s('diff_sha256'), [64]), submitUint(b.checks.length, 1)];
+	b.checks.forEach(function (c) {
+		if (!c || !SUBMIT_WHO[c.who] || !SUBMIT_RESULT[c.result]) throw new Error('submit: bad check');
+		card.push(submitStr16(c.name), submitUint(c.who, 1), submitUint(c.result, 1), submitUint(c.count, 4));
+	});
+	card.push(submitUint(b.write_paths.length, 2));
+	b.write_paths.forEach(function (p) { card.push(submitStr16(p)); });
+	if (s('page_code') !== '1' && s('page_code') !== '0') throw new Error('submit: bad page code flag');
+	card.push(submitUint(s('page_code'), 1), submitStr16(s('review')));
+	var cardSha = await submitSha(submitCat(card));
+	var m = [submitUtf8(SUBMIT_D), submitUint(s('seq'), 8), id('commit'), id('base_commit'), submitUint(b.pins.length, 1)];
+	b.pins.forEach(function (x) {
+		var i = x.indexOf(':');
+		if (i < 1) throw new Error('submit: bad pin');
+		submitHex(x.slice(i + 1), [40, 64]);
+		m.push(submitStr16(x.slice(0, i)), submitStr16(x.slice(i + 1)));
+	});
+	m.push(cardSha, submitStr16(s('nets')), submitUint(b.artefacts.length, 1));
+	b.artefacts.forEach(function (a) {
+		var q = a.split(':');
+		if (q.length < 4 || !SUBMIT_ART[q[0]]) throw new Error('submit: bad artefact');
+		m.push(submitUint(SUBMIT_ART[q[0]], 1), submitHex(q[1], [64]), submitUint(q[2], 8), submitStr16(q.slice(3).join(':')));
+	});
+	if (s('write_path') !== '1' && s('write_path') !== '0') throw new Error('submit: bad write path');
+	m.push(submitUint(s('write_path'), 1), submitHex(s('failing_first'), [64]));
+	return { cardSha: submitHexOf(cardSha), challenge: await submitSha(submitCat(m)) };
+}
+
+/// The AAD diff chunk `k` of `n` was sealed under (kimberlite `relay.rs` `diff_aad`).
+function submitAad(challenge, k, n) {
+	return submitCat([submitUtf8(SUBMIT_DIFF_AAD), challenge, submitUint(k, 4), submitUint(n, 4)]);
+}
+
+/// Check submission `nonce` with no key: the card is the body's `card_sha256`, and each
+/// chunk read so far is the sealed SHA-256 the body names. 'part' while chunks are missing.
+async function submitCheckSealed(nonce) {
+	var g = _submitLive[nonce], b = g && submitBody(g.e);
+	if (!b) return null;
+	if (b.plain) return { state: plainCheck(b) ? 'plain' : 'card', k: 0, n: 0 };
+	var n = b.diff_n, c = null;
+	try { c = await submitChallenge(b); } catch (err) { c = null; }
+	if (!c || c.cardSha !== b.card_sha256) return { state: 'card', k: 0, n: n };
+	if (!(n >= 1) || b.diff_shas.length !== n) return { state: 'bad', k: 0, n: n };
+	var have = 0;
+	for (var k = 1; k <= n; k++) {
+		var part = g.parts[k];
+		if (!part) continue;
+		if (Number(part.diff_n) !== n) return { state: 'bad', k: have, n: n };
+		var sha = null;
+		try { sha = submitHexOf(await submitSha(submitB64u(part.diff_sealed))); } catch (err) { sha = null; }
+		if (sha !== b.diff_shas[k - 1]) return { state: 'bad', k: have, n: n };
+		have++;
+	}
+	return { state: have === n ? 'sealed' : 'part', k: have, n: n };
+}
+
+/// "See the diff": open each chunk with the account key under its own AAD and check the
+/// joined text against the card's `diff_sha256`. Sets `_submitCheck[nonce]`.
+async function submitOpenDiff(nonce) {
+	var ck = await submitCheckSealed(nonce);
+	if (!ck || ck.state !== 'sealed') { _submitCheck[nonce] = ck; return ck; }
+	var g = _submitLive[nonce], b = submitBody(g.e), I = window.DaimondIdentity;
+	if (!I || !I.isUnlocked || !I.isUnlocked() || !I.unwrapBytesAadRaw) {
+		_submitCheck[nonce] = { state: 'locked', k: ck.k, n: ck.n };
+		return _submitCheck[nonce];
+	}
+	var out = null;
+	try {
+		var c = await submitChallenge(b), plain = [];
+		for (var k = 1; k <= ck.n; k++) {
+			plain.push(await I.unwrapBytesAadRaw(submitB64u(g.parts[k].diff_sealed), submitAad(c.challenge, k, ck.n)));
+		}
+		var all = submitCat(plain);
+		if (submitHexOf(await submitSha(all)) === b.diff_sha256) {
+			out = { state: 'ok', k: ck.n, n: ck.n, text: new TextDecoder().decode(all) };
+		}
+	} catch (err) { out = null; }
+	_submitCheck[nonce] = out || { state: 'bad', k: ck.k, n: ck.n };
+	return _submitCheck[nonce];
+}
+
+/// One labelled line of the card, as text.
+function submitLine(box, cls, text) {
+	var d = document.createElement('div');
+	d.className = 'rail-note pend-submit-' + cls;
+	d.textContent = text;
+	box.appendChild(d);
+	return d;
+}
+
+/// The submit tile's body: the card as text, the diff opener, the status and the Approve
+/// link with its QR. See the section header.
+function submitTile(box, it) {
+	var sb = it.submit || {}, n = String(sb.nonce || ''), g = _submitLive[n];
+	var b = g ? submitBody(g.e) : null;
+	if (!b) { submitLine(box, 'wait', t('pending.submit.reading')); return; }
+	if (b.plain) { plainTile(box, n, g, b); return; }
+	submitLine(box, 'summary', t('pending.submit.says') + ': ' + b.summary);
+	if (b.page_code) submitLine(box, 'flag', t('pending.plain.page_code'));
+	submitLine(box, 'branch', t('pending.submit.branch', { branch: b.branch, commit: b.commit.slice(0, 12) }));
+	submitLine(box, 'diffstat', b.diffstat);
+	b.checks.forEach(function (c) {
+		var who = (c && c.who === '1') ? t('pending.submit.fenced') : t('pending.submit.says');
+		var res = (c && c.result === '1') ? t('pending.submit.passed') : (c && c.result === '2') ? t('pending.submit.skipped') : t('pending.submit.failed');
+		submitLine(box, 'check', t('pending.submit.check', { who: who, name: String((c && c.name) || ''), result: res, count: String((c && c.count) || '0') }));
+	});
+	submitLine(box, 'writes', b.write_paths.length ? t('pending.submit.writes', { paths: b.write_paths.join(', ') }) : t('pending.submit.writes_none'));
+	if (b.write_path) submitLine(box, 'failing', t('pending.submit.failing_first', { hash: b.failing_first }));
+	submitLine(box, 'review', t('pending.submit.review', { review: b.review || '?' }));
+	b.artefacts.forEach(function (a) {
+		var q = a.split(':');
+		submitLine(box, 'hash', t('pending.submit.artefact', { kind: q[0] || '?', sha: String(q[1] || '').slice(0, 12) }));
+	});
+	var ck = _submitCheck[n];
+	if (!ck) submitCheckSealed(n).then(function (r) { if (r && !_submitCheck[n]) { _submitCheck[n] = r; Pending.render(); } });
+	var bad = !!(ck && (ck.state === 'bad' || ck.state === 'card'));
+	var st = !ck ? '' : ck.state === 'card' ? t('pending.submit.card_bad')
+		: ck.state === 'bad' ? t('pending.submit.diff_bad')
+		: ck.state === 'ok' ? t('pending.submit.diff_ok')
+		: ck.state === 'locked' ? t('pending.submit.locked')
+		: t('pending.submit.diff_part', { k: String(ck.k), n: String(ck.n) });
+	if (st) submitLine(box, 'diff', st);
+	if (ck && ck.state === 'ok') {
+		var pre = document.createElement('pre');
+		pre.className = 'pend-submit-difftext';
+		pre.textContent = ck.text;
+		box.appendChild(pre);
+	}
+	if (g.e.done === true) submitLine(box, 'status', t('pending.submit.deployed', { commit: b.commit.slice(0, 12) }));
+	else if (_submitTaps[n] && g.e.answered) submitLine(box, 'status', t('pending.submit.approved'));
+	var acts = document.createElement('div');
+	acts.className = 'pend-acts';
+	if (!(ck && ck.state === 'ok')) {
+		var see = document.createElement('button');
+		see.className = 'pend-act pend-submit-see';
+		see.textContent = t('pending.submit.see_diff');
+		see.addEventListener('click', function () { submitOpenDiff(n).then(function () { Pending.render(); }); });
+		acts.appendChild(see);
+	}
+	var url = runnerApproveUrl('', n);
+	if (!url && !bad && g.e.done !== true) submitLine(box, 'status', t('pending.runner.no_approve'));
+	if (url && ck && !bad && g.e.done !== true) {		// fail closed: no Approve before the check
+		var go = document.createElement('a');
+		go.className = 'pend-act pend-go pend-submit-approve';
+		go.href = url;
+		go.target = '_blank';
+		go.rel = 'noopener noreferrer';
+		go.textContent = t('pending.runner.approve');
+		go.addEventListener('click', function () { _submitTaps[n] = true; runnerPoll(); });
+		acts.appendChild(go);
+	}
+	box.appendChild(acts);
+	if (!url || bad || g.e.done === true) return;
+	var qr = null;
+	try {
+		if (window.DaimondPairing && DaimondPairing.ui && DaimondPairing.ui.qrCanvas) qr = DaimondPairing.ui.qrCanvas(url);
+	} catch (e) { qr = null; }
+	if (qr) { qr.setAttribute('aria-label', t('pending.runner.qr')); box.appendChild(qr); }
+}
+
+// ── A daimon's change on the plain route (D-20261106-13 (1)) ─────────────────
+//
+// A daimon's change committed on a branch and sent as it stands: one `submit` entry, no
+// chunks, no diff (his ruling: no diffs on a phone). Its body (`v` 'plain/1') carries the
+// card's bytes beside its fields as text; every field shown here must be the decoded card's,
+// or the tile says the card does not match and offers no Approve. The approve page checks the
+// same before his passkey signs SHA-256 of the card. `page_code` and `runner_code` are Kimberlite's
+// flags, shown as sent ("touches page code that can reach your data", "touches Kimberlite's own
+// code"), never computed here; the diamond is shown by the name the card signs. `approve` '0' is a
+// card whose review is pending: "review: pending" and no Approve until a card with '1' comes.
+//
+// METERED BY HIS APPROVAL LEVEL, read when the tile draws: on Bypass one line and Approve,
+// Details on a further tap (what changed, the checks Kimberlite saw run, the page-code flag,
+// the source chat); on the stricter levels the details show first.
+
+function submitIsPlain(text) {
+	try { var b = JSON.parse(String(text)); return !!b && b.v === PLAIN_V; } catch (err) { return false; }
+}
+
+/// The `plain/v1` card's fields from its bytes, or null when they are not exactly one card.
+function plainDecode(bytes) {
+	var d = submitUtf8(PLAIN_D), at = d.length, dec = new TextDecoder('utf-8', { fatal: true });
+	if (!(bytes instanceof Uint8Array) || bytes.length < at + 8) return null;
+	for (var i = 0; i < at; i++) if (bytes[i] !== d[i]) return null;
+	var dv = new window.DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	var s16 = function () {
+		if (at + 2 > bytes.length) throw new Error('short');
+		var n = dv.getUint16(at, false);
+		if (at + 2 + n > bytes.length) throw new Error('short');
+		var v = dec.decode(bytes.subarray(at + 2, at + 2 + n));
+		at += 2 + n;
+		return v;
+	};
+	try {
+		var f = { seq: dv.getBigUint64(at, false).toString() };
+		at += 8;
+		f.repo = s16(); f.branch = s16(); f.commit = s16(); f.summary = s16(); f.chat = s16(); f.diamond = s16(); f.diamond_name = s16();
+		if (at + 3 > bytes.length) return null;
+		f.page_code = bytes[at];
+		f.runner_code = bytes[at + 1];
+		var n = bytes[at + 2];
+		at += 3;
+		f.checks = [];
+		for (var k = 0; k < n; k++) {
+			var name = s16();
+			if (at + 5 > bytes.length || !PLAIN_RESULT[bytes[at]]) return null;
+			f.checks.push({ name: name, result: String(bytes[at]), runs: String(dv.getUint32(at + 1, false)) });
+			at += 5;
+		}
+	} catch (err) { return null; }
+	var flag = function (x) { return x === 0 || x === 1; };
+	return (at === bytes.length && flag(f.page_code) && flag(f.runner_code)) ? f : null;
+}
+
+/// Does every field the tile shows equal the card's? (The approve page checks it again.)
+function plainCheck(b) {
+	var f = null, r = b.raw;
+	try { f = plainDecode(submitB64u(r.card)); } catch (err) { f = null; }
+	if (!f) return false;
+	var same = ['repo', 'branch', 'commit', 'summary', 'chat', 'diamond', 'diamond_name'].every(function (k) { return r[k] === f[k]; });
+	same = same && r.release_ref === f.commit && String(r.seq) === f.seq && r.page_code === String(f.page_code);
+	same = same && r.runner_code === String(f.runner_code);
+	same = same && (r.approve === '0' || r.approve === '1');
+	return same && b.checks.length === f.checks.length && f.checks.every(function (c, i) {
+		var x = b.checks[i];
+		return !!x && x.name === c.name && String(x.result) === c.result && String(x.runs) === c.runs;
+	});
+}
+
+function plainBypass() {
+	try { return !!(window.DaimondHandMode && DaimondHandMode.get && DaimondHandMode.get() === 'bypass'); }
+	catch (e) { return false; }
+}
+
+/// The plain tile: the flag, Details (or the details, off Bypass), the status and Approve.
+function plainTile(box, n, g, b) {
+	var ck = _submitCheck[n];
+	if (!ck) submitCheckSealed(n).then(function (r) { if (r && !_submitCheck[n]) { _submitCheck[n] = r; Pending.render(); } });
+	var bad = !!(ck && ck.state === 'card');
+	if (bad) submitLine(box, 'diff', t('pending.plain.card_bad'));
+	if (b.diamond_name) submitLine(box, 'diamond', t('pending.plain.diamond', { name: b.diamond_name }));
+	if (b.page_code) submitLine(box, 'flag', t('pending.plain.page_code'));
+	if (b.runner_code) submitLine(box, 'flag', t('pending.plain.runner_code'));
+	var bypass = plainBypass(), open = !bypass || !!_plainOpen[n];
+	if (open) {
+		submitLine(box, 'branch', t('pending.plain.where', { repo: b.repo, branch: b.branch, commit: b.commit.slice(0, 12) }));
+		b.checks.forEach(function (c) {
+			var res = (c && String(c.result) === '1') ? t('pending.submit.passed') : t('pending.submit.failed');
+			submitLine(box, 'check', t('pending.plain.check', { name: String((c && c.name) || ''), result: res, runs: String((c && c.runs) || '0') }));
+		});
+		if (!b.checks.length) submitLine(box, 'check', t('pending.plain.no_checks'));
+		submitLine(box, 'chat', t('pending.plain.chat', { chat: b.chat || '?' }));
+	}
+	if (!b.approve) submitLine(box, 'review', t('pending.plain.review_pending'));
+	if (g.e.done === true) submitLine(box, 'status', t('pending.submit.deployed', { commit: b.commit.slice(0, 12) }));
+	else if (_submitTaps[n] && g.e.answered) submitLine(box, 'status', t('pending.plain.approved'));
+	var acts = document.createElement('div');
+	acts.className = 'pend-acts';
+	if (!open) {
+		var more = document.createElement('button');
+		more.className = 'pend-act pend-plain-details';
+		more.textContent = t('pending.plain.details');
+		more.addEventListener('click', function () { _plainOpen[n] = true; Pending.render(); });
+		acts.appendChild(more);
+	}
+	var url = runnerApproveUrl(bypass ? '?go' : '?details', n);	// ?go: the page asks for the passkey on load
+	if (!url && !bad && b.approve && g.e.done !== true) submitLine(box, 'status', t('pending.runner.no_approve'));
+	if (url && ck && !bad && b.approve && g.e.done !== true) {	// fail closed: no Approve before the check
+		var go = document.createElement('a');
+		go.className = 'pend-act pend-go pend-submit-approve';
+		go.href = url;
+		go.target = '_blank';
+		go.rel = 'noopener noreferrer';
+		go.textContent = t('pending.runner.approve');
+		go.addEventListener('click', function () { _submitTaps[n] = true; runnerPoll(); });
+		acts.appendChild(go);
+	}
+	box.appendChild(acts);
+	if (!url || bad || !b.approve || g.e.done === true) return;
+	var qr = null;
+	try {
+		if (window.DaimondPairing && DaimondPairing.ui && DaimondPairing.ui.qrCanvas) qr = DaimondPairing.ui.qrCanvas(url);
+	} catch (e) { qr = null; }
+	if (qr) { qr.setAttribute('aria-label', t('pending.runner.qr')); box.appendChild(qr); }
 }
 
 // ── A runner asking to join, approved with his passkey (R2d1) ───────────────

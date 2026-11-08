@@ -1773,6 +1773,7 @@ impl Tool {
             Tool::MailDraft  => Self::mail_draft(args_json, ctx.host()).await,
             Tool::PendingNone => pending_none(ctx),
             Tool::StateSet => return Self::state_set(args_json, ctx).await,
+            Tool::SubmitChange => Self::submit_change(args_json, ctx).await,
             // The page keeps the alert under the turn's own Diamond, never the model's word.
             Tool::PendingRaise | Tool::PendingClear => {
                 let raise = matches!(self, Tool::PendingRaise);

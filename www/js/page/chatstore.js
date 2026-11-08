@@ -13,7 +13,7 @@ import { BACKUP_VERSION, diag, toast } from './passkey_phrase.js';
 import { dispatchedAnswerPresent, renderHistory } from './turns.js';
 import { destroyChat, renderEmptyState, setCurrent, updateMeters } from './chats.js';
 import { chatDisplayName, chatOpening, renderSessionList } from './tilestyle.js';
-import { diamondApp, loadDiamonds } from './diamonds.js';
+import { diamondApp, loadDiamonds, taintDaimon } from './diamonds.js';
 import { destroyDiamond, setDiamondWhen, showCentre } from './agentspanel.js';
 import { crystalArrived } from './crystal.js';
 import { tOr } from './settingsui.js';
@@ -529,8 +529,15 @@ export function applyChatTaint(c, app) {
 export function takeReportTaint(report) {
 	if (!report || typeof report.taintedAt !== 'number' || !report.chatId) return;
 	var rec = pg.chats.find(function (c) { return c.id === report.chatId; });
+	if (rec) taintChat(rec, report.taintedAt);
+}
+/// Mark chat record `rec` as having read outside content at `at`: its record, saved, and its
+/// engine. A daimon's conversation is marked through its Diamond (`taintDaimon`), since its
+/// client may be steering another Diamond, whose taint an engine mark with no id would set.
+export function taintChat(rec, at) {
 	if (!rec) return;
-	if (markChatTainted(rec, report.taintedAt)) persistChats();
+	if (rec.diamondId) { taintDaimon(rec.diamondId, at); return; }
+	if (markChatTainted(rec, at)) persistChats();
 	if (rec.app) applyChatTaint(rec, rec.app);
 }
 /// Does this chat record own a model? A chat inside a Diamond does not (UNBLOCK-5, C3): the

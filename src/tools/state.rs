@@ -305,6 +305,7 @@ pub struct ScriptedReport {
     pub usd:      f64,
     pub rounds:   usize,
     pub writes:   usize,    // file writes that succeeded
+    pub tainted:  bool,     // it read outside content, or was sent tainted
     pub terminal: bool,     // false is a worker still running, which a gather waits on
 }
 

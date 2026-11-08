@@ -1663,7 +1663,9 @@ fn one_task(
     // assembled here, so the probe runs under the rules the product runs under and cannot
     // drift from them -- including the `Nowhere` guard, which is what caught the harness's
     // own first mistake by refusing every call rather than quietly widening.
-    let bounds = diamond_bounds("", &[mark], &[]);
+    // A mark grants no reach since D-20261031-11 (attaching is focus), so the probe's daimon is
+    // given the mark as its OWN directory: the one place `diamond_bounds` lets it write.
+    let bounds = diamond_bounds(&mark);
     let ctx = ToolContext {
         workspace:   ws,
         executor:    Executor::local_default(),
@@ -1675,12 +1677,10 @@ fn one_task(
         daimon_of:   String::new(),
         // Nobody's store keeps copies on a native run: the version store is the browser's.
         keeper:      String::new(),
-        // The one mark is made here and now, so nothing waits to be confirmed.
-        unconfirmed: Vec::new(),
-        // The rest as the native handler sets them (`handler.rs`): no turn tag, no live
-        // marks read per call, no restore this call acts for, no author.
+        // The rest as an unscoped native turn has them: no turn tag, no scope, no restore
+        // this call acts for, no author.
         turn:        String::new(),
-        live:        None,
+        scope:       None,
         by_model:    false,
         restoring:   0,
         by:          None,

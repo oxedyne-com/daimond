@@ -506,6 +506,24 @@ function histAwayNet(away) {
 	return box;
 }
 
+/// The words History shows for version `r`'s note.
+///
+/// The engine stores its own notes in lower-case English, and the heal still matches them as
+/// stored, so each is named here in the reader's language; any other note is the person's or
+/// the daimon's, and is shown as written.
+function histNote(r) {
+	var note = r.note, m;
+	if (r.cause === 'share') return note === 'rows from both devices kept' ? t('versions.note_both_kept') : note;
+	if (r.cause !== 'restore' && r.kind !== 'restore') return note;
+	if (note.indexOf('kept before sync') === 0) return t('versions.note_kept');
+	if (note === 'rows an earlier sync dropped, put back') return t('versions.note_healed');
+	if ((m = /^(before )?(restore|undo) v(\d+)$/.exec(note))) {
+		return t('versions.note_' + (m[1] ? 'before_' : '') + m[2], { v: m[3] });
+	}
+	if ((m = /^file_revert (.+)$/.exec(note))) return t('versions.note_file_revert', { path: m[1] });
+	return note;
+}
+
 /// One version: what it was, what it changed, and the two ways back.
 ///
 /// `newer` is the row above it, so the state a restore replaced says so.
@@ -547,7 +565,7 @@ export function histRow(id, r, files, newer) {
 	if (r.note) {
 		var note = document.createElement('div');
 		note.className = 'hist-note';
-		note.textContent = r.note;             // escaped via textContent (H5)
+		note.textContent = histNote(r);        // escaped via textContent (H5)
 		row.appendChild(note);
 	}
 	// A restore took back this turn's change while its chat was gone (UNDO-HISTORY): said here,
@@ -664,6 +682,16 @@ function shownPath(id, path) {
 	return path.indexOf(own) === 0 ? path.slice(own.length) : path;
 }
 
+/// A link row's target as the person reads it: its text, or bytes that are not
+/// text decoded lossily; null where the row does not carry it (an older manifest).
+function linkShown(text, hex) {
+	if (typeof text === 'string') return text;
+	if (typeof hex !== 'string' || !/^(?:[0-9a-fA-F][0-9a-fA-F])*$/.test(hex)) return null;
+	var b = new Uint8Array(hex.length / 2);
+	for (var i = 0; i < b.length; i++) b[i] = parseInt(hex.substr(2 * i, 2), 16);
+	return new TextDecoder('utf-8').decode(b);
+}
+
 /// One file inside a version: its path, what it cost in lines, and the way back.
 ///
 /// The row is drawn at once and the two buttons are settled asynchronously,
@@ -690,6 +718,17 @@ function histFile(id, v, e) {
 		mk.className = 'hist-file-mark';
 		mk.textContent = t('versions.on_machine');
 		row.appendChild(mk);
+	}
+	// A LINK ROW (manifest v3) is its target, inline in the row: no body to read or
+	// compare, and Restore makes the link back through the door.
+	var isLink = function (h) { return /^link:/.test(String(h || '')); };
+	var linkTo = e.gone ? (isLink(e.was) ? linkShown(e.wasLink, e.wasLinkHex) : null)
+		: (isLink(e.hash) ? linkShown(e.link, e.linkHex) : null);
+	if (linkTo !== null) {
+		var lk = document.createElement('span');
+		lk.className = 'hist-file-link';
+		lk.textContent = t('versions.link', { target: linkTo });
+		row.appendChild(lk);
 	}
 	var delta = document.createElement('span');
 	delta.className = 'hist-file-delta';
@@ -731,7 +770,10 @@ function histFile(id, v, e) {
 	// THE BODY THIS ROW DEPENDS ON. A deletion is restored from what the file
 	// WAS; every other change from what it became.
 	var need = e.gone ? e.was : e.hash;
-	if (need) {
+	if (isLink(need)) {
+		if (linkTo === null) { refuse(t('versions.not_here')); return row; }
+		view.disabled = true;
+	} else if (need) {
 		DaimondVersions.body(id, need).then(function (b) {
 			if (b === null) refuse(t('versions.not_here'));
 		});
@@ -808,6 +850,7 @@ function histFile(id, v, e) {
 		}
 		await refreshDiamondAfterChange();
 	}
+	if (before && isLink(e.was) && linkShown(e.wasLink, e.wasLinkHex) === null) before.disabled = true;
 	if (before) before.addEventListener('click', putBack);
 	return row;
 }

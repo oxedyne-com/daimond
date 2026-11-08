@@ -61,6 +61,7 @@
  * `runnerSettle` in daimond.js raises that request here, under `RUNNER` and the page keys
  * `runner.<nonce>.<seq>.<commit>` (the tile) and `runner-alarm.<nonce>` (a witness alarm), both
  * `needs: true`, so it reaches every device he has -- his phone above all. It is the one writer.
+ * A daimon's change waiting for his tap rides the same way, as `submit.<nonce>.<seq>` (SR7).
  *
  * A DISMISS IS NOT A CLEAR. The person took it down; the condition may well still hold, and the
  * daimon -- which runs again on its next trigger -- will raise it again. Raised again with the
@@ -85,7 +86,7 @@
 	var STATES       = { up: 0, clear: 1, dismissed: 2 };
 	var KEY_RE       = /^[A-Za-z0-9._-]+$/;
 	var QUIET_MS     = 24 * 3600 * 1000;		// a needs:false alert lapses a day after it is raised
-	var PAGE_KEYS    = { 'turn-failed': 1, 'mail-note': 1, 'runner': 1, 'runner-alarm': 1 };	// the page's own: outside LIVE_MAX, never the model's
+	var PAGE_KEYS    = { 'turn-failed': 1, 'mail-note': 1, 'runner': 1, 'runner-alarm': 1, 'submit': 1 };	// the page's own: outside LIVE_MAX, never the model's
 	// The runner's own items (daimond.js `runnerSettle`, KS-p4) are held under this name in
 	// place of a Diamond's id: a runner update is the machine's, not any Diamond's. No Diamond id
 	// starts with `@`, so no Diamond's alert can sit under it.

@@ -522,6 +522,9 @@
 	/// The engine's refusal of a second open restore of one Diamond (`claim_restore`
 	/// in src/wasm/diamond.rs).
 	var BUSY = /A restore of this Diamond is waiting for your answer/;
+	/// A link row's tagged hash (manifest v3), and the store close's refusal of one.
+	var LINK = /^link:/;
+	var LINK_LEFT = /a link is put back only on the machine that has it/;
 
 	/// An engine refusal as the person reads it, through the shared `plainError`.
 	/// The engine throws its whole chain (ANSI colour, source frames, error kinds);
@@ -614,15 +617,19 @@
 		// outcome; `why` is the person's, so a hand's failure (the engine's whole error
 		// chain) is put in the shared plainError's words, as every refusal is.
 		var said = (r && r.text) ? bare(r.text) : '';
-		var why = (r && r.outcome === 'failed' && r.text)
-			? plain(said)
-			: /bytes Daimond keeps a copy of|larger than the machine hand returns whole/.test(said)
-				? tOr('versions.too_big', 'Too large to keep')
-				: /carries text only|was written in a different folder/.test(said) || UNPLACED.test(said) || CHANGED.test(said)
-					? tOr('versions.gone_kept', 'Left in your folder')
-					: /is not on this device/.test(said)
-						? tOr('versions.not_here', 'Not on this device')
-						: tOr('versions.refused', 'Outside this diamond’s reach');
+		// A link is made back only where Kimberlite saw it stand: a browser, or a runner
+		// that never saw it, refuses in its own words, and the row says where it can go.
+		var why = LINK.test(String(e.hash || ''))
+			? tOr('versions.link_here', 'A link; put back on the machine that has it')
+			: (r && r.outcome === 'failed' && r.text)
+				? plain(said)
+				: /bytes Daimond keeps a copy of|larger than the machine hand returns whole/.test(said)
+					? tOr('versions.too_big', 'Too large to keep')
+					: /carries text only|was written in a different folder/.test(said) || UNPLACED.test(said) || CHANGED.test(said)
+						? tOr('versions.gone_kept', 'Left in your folder')
+						: /is not on this device/.test(said)
+							? tOr('versions.not_here', 'Not on this device')
+							: tOr('versions.refused', 'Outside this diamond’s reach');
 		refused.push({ path: e.path, why: why, said: said });
 	}
 
@@ -874,7 +881,11 @@
 		if (!res) return { outcome: 'refused', why: '' };
 		res.outcome = 'restored';
 		res.machine = opened.machine || [];
-		res.refused = (res.refused || []).concat(refused);
+		res.refused = (res.refused || []).map(function (x) {
+			return (x && LINK_LEFT.test(String(x.why || '')))
+				? { path: x.path, why: tOr('versions.link_here', 'A link; put back on the machine that has it'), said: x.why }
+				: x;
+		}).concat(refused);
 		return res;
 	}
 

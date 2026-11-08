@@ -286,6 +286,53 @@ async function main() {
 			.ID.unlock(PASS2)).ok);
 	}
 
+	console.log('\nidentity: unwrapBytesAadRaw opens a diff chunk under its raw AAD (SUBMIT-ROUTE SR7)');
+	{
+		// Kimberlite seals each chunk with the account key (the session's PBKDF2 bits) under
+		// AES-GCM, iv(12) || ct, its AAD kimberlite relay.rs `diff_aad`: the domain, the
+		// 32-byte challenge, then k and n as u32 big-endian.
+		const t = load({ tab: new Map(), mobile: false });
+		await t.ID.create('Tester', PASS);
+		const bits = Buffer.from(JSON.parse(t.tab.get(S_KEY)).k, 'base64');
+		const acct = await webcrypto.subtle.importKey('raw', bits, { name: 'AES-GCM' }, false, ['encrypt']);
+		const DOMAIN = new TextEncoder().encode('kimberlite/submit-diff/v1\0');	// fixed: protocol domain
+		const aad = (ch, k, n) => {
+			const a = new Uint8Array(DOMAIN.length + 40);
+			const v = new DataView(a.buffer);
+			a.set(DOMAIN, 0); a.set(ch, DOMAIN.length);
+			v.setUint32(DOMAIN.length + 32, k); v.setUint32(DOMAIN.length + 36, n);
+			return a;
+		};
+		const seal = async (key, plain, ad) => {
+			const iv = webcrypto.getRandomValues(new Uint8Array(12));
+			const ct = new Uint8Array(await webcrypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: ad }, key, plain));
+			const out = new Uint8Array(12 + ct.length); out.set(iv, 0); out.set(ct, 12);
+			return out;
+		};
+		const opens = async (bytes, ad) => {
+			try { return await t.ID.unwrapBytesAadRaw(bytes, ad); } catch (e) { return null; }
+		};
+		const ch = webcrypto.getRandomValues(new Uint8Array(32));
+		const ch2 = ch.slice(); ch2[31] ^= 1;
+		const plain = new TextEncoder().encode('diff --git a/x b/x\n+one line\n');
+		const sealed = await seal(acct, plain, aad(ch, 2, 3));
+		const got = await opens(sealed, aad(ch, 2, 3));
+		check('the right AAD opens the chunk', !!got && Buffer.from(got).equals(Buffer.from(plain)));
+		check('an AAD given as a plain array opens it too', !!(await opens(sealed, Array.from(aad(ch, 2, 3)))));
+		check('a wrong k does not', (await opens(sealed, aad(ch, 1, 3))) === null);
+		check('a wrong n does not', (await opens(sealed, aad(ch, 2, 4))) === null);
+		check('another challenge does not', (await opens(sealed, aad(ch2, 2, 3))) === null);
+		const other = await webcrypto.subtle.importKey('raw', webcrypto.getRandomValues(new Uint8Array(32)),
+			{ name: 'AES-GCM' }, false, ['encrypt']);
+		check('a chunk sealed under another key does not', (await opens(await seal(other, plain, aad(ch, 2, 3)), aad(ch, 2, 3))) === null);
+		const bad = sealed.slice(); bad[bad.length - 1] ^= 1;
+		check('a tampered chunk does not', (await opens(bad, aad(ch, 2, 3))) === null);
+		t.ID.lock();
+		let refused = false;
+		try { await t.ID.unwrapBytesAadRaw(sealed, aad(ch, 2, 3)); } catch (e) { refused = true; }
+		check('a locked identity refuses to open it', refused);
+	}
+
 	console.log('');
 	console.log(passes + ' passed, ' + failures + ' failed');
 	if (failures) process.exit(1);

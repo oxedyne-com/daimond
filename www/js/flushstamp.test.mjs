@@ -104,12 +104,12 @@ async function dispatchWith(fl, auto) {
 		'diag', 'turnHold', 'selfDeviceId', 'markTurnDispatched', 't', 'touchChat', 'persistChats',
 		'ownsChat', 'renderHistory', 'recoverOneLocally', 'storedPre', 'storedEffort', 'autonomousPosture',
 		'msgTombsOwed', 'msgTombsShipped', 'dsEvent', 'turnEffortOf', 'errandModelOf', 'errandFence',
-		'honoursModelSet', 'errandScope', 'errandClean', 'errandLocked', 'errandLimits',
+		'honoursModelSet', 'errandScope', 'errandClean', 'errandLocked', 'errandLimits', 'errandDiamondName',
 		'errandSession', 'errandFocus', 'errandToday', 'errandWords', 'errandWordsFor', 'errandProdBase',
 		dispatchSrc + '\nreturn dispatchToPeer;');
 	const fn = make(win, Peer, Post, S, {}, noop, () => null, () => 'dev-a', noop, (k) => k, noop, noop,
 		() => false, noop, noop, () => '', () => null, () => auto === true, () => [], noop, noop, turnEffortOf,
-		(c) => ({ provider: c.provider || '', model: c.model || '', url: '' }), async () => null, () => true, (c, h) => h, () => false, () => undefined, () => undefined,
+		(c) => ({ provider: c.provider || '', model: c.model || '', url: '' }), async () => null, () => true, (c, h) => h, () => false, () => undefined, () => undefined, () => '',
 		() => undefined, async () => undefined, () => '', async () => undefined, async () => undefined, () => null);
 	const chat = { id: 'c1', messages: [], provider: '', model: '' };
 	const out = await fn(chat, 'turn-1', 'hello', [], {});

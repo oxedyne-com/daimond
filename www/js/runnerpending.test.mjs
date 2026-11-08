@@ -86,7 +86,7 @@ function patch(src) {
 const NAMES = ['Pending', 'runnerPoll', 'runnerSettle', 'runnerTapped'];
 // Pending reaches most of the file (its tile, execute and discuss), so EVERYTHING it reaches but these
 // names and the runner's own is stubbed: what the exercised paths touch gets a stand-in below, and the rest is left undefined.
-const OWN = /^(runner|RUNNER_|_runner)/;			// the unit under test, lifted as written
+const OWN = /^(runner|RUNNER_|_runner|submit|SUBMIT_|_submit)/;			// the unit under test, lifted as written
 const STUBS = liftSource(NAMES, []).ordered.filter((n) => !NAMES.includes(n) && !OWN.test(n));
 
 const INSTALL = 'IiIiIiIiIiIiIiIiIiIiIg';

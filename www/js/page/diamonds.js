@@ -131,6 +131,9 @@ export async function dispatchToPeer(chat, turnId, promptText, scopePaths, opts,
 		// through `steer_crystal`. '' for an ordinary chat. Falls back to the chat's own
 		// `diamondId` when the caller did not name one.
 		diamondId: (opts && opts.diamondId) || (chat && chat.diamondId) || '',
+		// Its name as he sees it, which Kimberlite signs on a plain card, and the bound it must fit.
+		diamondName: errandDiamondName(cleanDia),
+		diamondNameMax: (window.DaimondNet && window.DaimondNet.plainNameMax && window.DaimondNet.plainNameMax()) || 0,
 		prompt: promptText,
 		// The note the person's message took when it was sent, READ from that record. A
 		// re-dispatch, a parked re-run and a recovery all come through here, and none
@@ -3219,17 +3222,18 @@ function daimonRecordTainted(id) { return !!chatTaintOf(daimonRecordOf(id)); }
 /// Put the daimon's taint on its conversation's record, one-way, and save it when it changed.
 /// A Diamond with no record yet has nothing to carry it; `daimonChat` makes one on first use,
 /// before any turn can read anything.
-function markDaimonRecord(id) {
-	if (markChatTainted(daimonRecordOf(id))) persistChats();
+function markDaimonRecord(id, at) {
+	if (markChatTainted(daimonRecordOf(id), at)) persistChats();
 }
 
 /// Mark `diamondId`'s daimon as having read something from outside: on its client, and in
-/// `_daimonTaint`, so a client built again for it starts tainted.
-export function taintDaimon(diamondId) {
+/// `_daimonTaint`, so a client built again for it starts tainted. `at` stamps the record (default
+/// the clock).
+export function taintDaimon(diamondId, at) {
 	var id = String(diamondId || '');
 	if (!id) return false;
 	_daimonTaint.add(id);
-	markDaimonRecord(id);
+	markDaimonRecord(id, at);
 	var da = daimonApp(id);
 	if (da && da.set_tainted) { da.set_tainted(id); return true; }
 	return false;
@@ -3266,6 +3270,12 @@ function errandClean(chat, diamondId, held) {
 	} catch (e) {
 		return false;
 	}
+}
+
+/// The name of the diamond `id` as he sees it, '' for none.
+export function errandDiamondName(id) {
+	var f = id ? (pg.diamonds || []).find(function (x) { return x && x.id === id; }) : null;
+	return (f && typeof f.name === 'string') ? f.name : '';
 }
 
 /// The limits this page puts on an agent for `chat`'s turn, for an errand to carry (KT-2, engine

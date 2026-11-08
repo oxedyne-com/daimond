@@ -9,7 +9,9 @@
 //!
 //! `<status json>` is what `DaimondHand.status()` resolves: `{"paired":true,"root":...,"caps":[...]}`.
 //! With no mark the turn is unscoped and the fence is the granted root, which is the owner's own
-//! case; each mark is a folder, relative to the root, attached to one Diamond.
+//! case.  Any mark makes it a Diamond's turn, fenced to that Diamond's own directory: a mark
+//! grants no reach since D-20261031-11 (attaching is focus), so which folders are named does not
+//! change the fence.
 
 use oxedyne_daimond::tools::{
     command_fence,
@@ -32,7 +34,7 @@ fn main() -> Outcome<()> {
     let bounds = if marks.is_empty() {
         Vec::new()
     } else {
-        diamond_bounds("diamonds/verify", &marks, &[])
+        diamond_bounds("diamonds/verify")
     };
     println!(r#"{{"command":{},"spec":{}}}"#,
         command_fence(&bounds, &m, false).to_json(),

@@ -648,8 +648,8 @@ export function offerTurnUndo(ev, shown, turn) {
 /// inside a folder open on this computer, `px` refused. Never a path, never an
 /// argument, never the result: a tool result is a file read or a command's output.
 ///
-/// A call the engine did not complete is the exception (D-20261008-02, owner's ruling):
-/// its row also names the Diamond and the chat, and carries the engine's own refusal or
+/// Every row names the Diamond and the chat by id. A call the engine did not complete is
+/// the exception (D-20261008-02, owner's ruling): its row carries the engine's own refusal or
 /// error sentence as `full`, which `DEBUG_SHARE` scrubs of keys, caps at 300 characters
 /// and ships as a chunked set the row points at (`mref`), with its head as `msg`.
 ///
@@ -664,12 +664,10 @@ export function lensToolRow(ev, args, turn, step, ctx) {
 		ab:   args ? String(args).length : 0,
 		rb:   String(ev.content || '').length,
 		out:  String(ev.outcome || '').slice(0, 16),
+		dia:  String((ctx && ctx.dia) || ''),
+		chat: String((ctx && ctx.chat) || ''),
 	};
-	if (ev.outcome !== 'done') {
-		row.dia  = String((ctx && ctx.dia) || '');
-		row.chat = String((ctx && ctx.chat) || '');
-		row.full = String(ev.content || '');
-	}
+	if (ev.outcome !== 'done') row.full = String(ev.content || '');
 	var c = null;
 	try { c = ev.class ? JSON.parse(String(ev.class)) : null; } catch (e) { c = null; }
 	if (c && typeof c === 'object') {
@@ -859,8 +857,14 @@ export function install() { // page-split: install
 			try {
 				var adminEl = document.getElementById('admin');
 				var menuEl  = document.getElementById('settings-menu');
+				// On a phone the stack's top page is what he sees: `#settings-menu` stays
+				// unhidden inside the Settings page once built, whichever page is on top.
+				var Sh = window.DaimondShell, St = window.DaimondStack;
+				var phone = !!(Sh && Sh.isPhone && Sh.isPhone() && St && St.started && St.started());
+				var top = phone ? String(St.top() || '') : '';
 				if (adminEl && adminEl.classList && adminEl.classList.contains('admin-open')) view = 'admin';
-				else if (menuEl && !menuEl.hidden) view = 'settings';
+				else if (phone ? /^settings(-group|-view)?$/.test(top) : (menuEl && !menuEl.hidden)) view = 'settings';
+				else if (phone && top === 'home') view = 'home';
 				else if (pg.centreMode === 'focus') view = 'diamond';
 				else if (pg.centreMode === 'daimon') view = 'daimon';
 			} catch (e) { /* the DOM is not up yet */ }

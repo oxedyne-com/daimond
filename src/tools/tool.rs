@@ -377,6 +377,9 @@ pub enum Tool {
     /// outcome.  Read-only by construction is what lets the compound itself be batchable and what
     /// lets a refused op keep its slot without anything having happened.
     Compound,
+    /// Send a tested commit on a branch for his approval (SUBMIT-ROUTE SR2a): one `submit`
+    /// control frame on a Kimberlite run's pipe.  See `tools/submit.rs`.
+    SubmitChange,
 }
 
 
@@ -1411,6 +1414,10 @@ impl Tool {
             // withholds it and this line costs a round nothing meanwhile -- see
             // `ToolRegistry::offered`.
             Tool::Compound,
+            // A tested change to Daimond, sent for his approval (SUBMIT-ROUTE SR2a).  The daimon's
+            // alone: it is answerable for the change.  Deferred, so a turn that never submits pays
+            // one index line; a host with no Kimberlite under it refuses the call with its reason.
+            Tool::SubmitChange,
         ];
         // A daimon needs the web tools to orchestrate work over a page that a user is reading.
         // The owner decided on 2026-08-24 to offer them here. A turn which has read untrusted
@@ -2076,6 +2083,7 @@ impl Tool {
             Tool::PendingNone  => "pending_none",
             Tool::StateSet     => "state_set",
             Tool::Compound    => "compound",
+            Tool::SubmitChange => "submit_change",
         }
     }
 
@@ -2577,6 +2585,7 @@ impl Tool {
             "pending_none"  => Some(Tool::PendingNone),
             "state_set"     => Some(Tool::StateSet),
             "compound"     => Some(Tool::Compound),
+            "submit_change" => Some(Tool::SubmitChange),
             _              => None,
         }
     }
@@ -2640,6 +2649,7 @@ impl Tool {
             Tool::PendingNone  => "Pending-only turns: nothing needs the user, so call this, then end with no reply.",
             Tool::StateSet     => "Set one '## key' section of STATE.md; empty text drops it; 'replaces' renames one. Past 4 KiB the oldest go to the archive.",
             Tool::Compound    => "Several READS in one round, answered in order, each under a '--- [n]' header. Each op in 'ops' names one read and carries that read's own arguments: {\"op\":\"list\",\"path\":\"src\"}, {\"op\":\"read\",\"paths\":[\"a.js\",\"b.js\"]}, {\"op\":\"search\",\"query\":\"fmt\",\"glob\":\"**/*.js\"}. Use it whenever reads go together. A refused op keeps its slot and says why; the rest still run. The ops share one byte budget, and the header names any op it cut. READS only.",
+            Tool::SubmitChange => SUBMIT_CHANGE_DESC,
         }
     }
 
@@ -2706,6 +2716,7 @@ impl Tool {
             Tool::PendingNone  => "Note that nothing needed your Pending panel.",
             Tool::StateSet     => "Update one section of where things stand.",
             Tool::Compound    => "Make several reads of your files in one go, and get all the answers together.",
+            Tool::SubmitChange => "Send a change it made and tested to you for approval; nothing ships until you approve it.",
         }
     }
 
@@ -2771,6 +2782,7 @@ impl Tool {
             Tool::PendingNone  => r#"{"type":"object","properties":{}}"#,
             Tool::StateSet     => r#"{"type":"object","properties":{"key":{"type":"string"},"text":{"type":"string"},"replaces":{"type":"string"}},"required":["key","text"]}"#,
             Tool::Compound => r#"{"type":"object","properties":{"ops":{"type":"array","minItems":1,"maxItems":12,"description":"The reads, in order. An op's other keys are that read's own arguments.","items":{"type":"object","properties":{"op":{"type":"string","enum":["list","read","search","glob","outline"]},"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"pattern":{"type":"string"},"query":{"type":"string"},"glob":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"},"end":{"type":"integer"},"context":{"type":"integer"},"depth":{"type":"integer"},"name":{"type":"string"}},"required":["op"]}},"budget":{"type":"integer","description":"Most bytes all ops return (default 32768, most 80000)."}},"required":["ops"]}"#,
+            Tool::SubmitChange => SUBMIT_CHANGE_PARAMS,
         }
     }
 
@@ -2978,6 +2990,7 @@ impl Tool {
                 route; this is the native build, which has neither."; Unimplemented)),
             Tool::MailList | Tool::MailSearch | Tool::MailRead | Tool::MailDraft =>
                 Self::mail_unavailable(),
+            Tool::SubmitChange => Self::submit_change(args_json, ctx).await,
             Tool::PendingNone => pending_none(ctx),
             Tool::StateSet => Err(err!(
                 "Tool 'state_set' sets a section of a Diamond's STATE.md in the browser's storage; \
@@ -3434,13 +3447,14 @@ impl Tool {
     /// gathers it.  Two paths, one vocabulary, so a daimon reading a capped worker's report meets
     /// the same words whichever way it arrived.
     ///
-    /// Returns the result text, what the gathered reports cost, and the run ids gathered -- the
-    /// last two so the caller can charge the ledger once per run.
+    /// Returns the result text, what the gathered reports cost, the run ids gathered -- those two
+    /// so the caller can charge the ledger once per run -- and whether any report came from a
+    /// tainted worker, so the caller taints the turn that reads it.
     ///
     /// # Arguments
     /// * `json` - The source's answer; see `www/js/daimond.js`'s `awaitReports`.
     /// * `args` - The call, as [`Self::gather_args`] read it.
-    pub(super) fn gather_result(json: &str, args: &GatherArgs) -> (String, f64, Vec<String>) {
+    pub(super) fn gather_result(json: &str, args: &GatherArgs) -> (String, f64, Vec<String>, bool) {
         let reports = extract_json_objects(json, "reports").unwrap_or_default();
         let pending = extract_json_objects(json, "pending").unwrap_or_default();
         let cancelled = extract_json_bool(json, "cancelled").unwrap_or(false);
@@ -3463,12 +3477,13 @@ impl Tool {
             return (fmt!(
                 "Stopped: the user stopped the turn while waiting for {}. The workers are still \
                  running and their reports will reach you as a later turn.\n\n[gather: n=0 \
-                 pending={} usd=0.0000]", who, still.len()), 0.0, Vec::new());
+                 pending={} usd=0.0000]", who, still.len()), 0.0, Vec::new(), false);
         }
 
         let mut usd = 0.0_f64;
         let mut ids: Vec<String> = Vec::new();
         let mut blocks: Vec<String> = Vec::new();
+        let mut tainted = false;
         for o in reports.iter() {
             let id     = extract_json_string(o, "id").unwrap_or_default();
             let name   = extract_json_string(o, "name").unwrap_or_default();
@@ -3495,11 +3510,21 @@ impl Tool {
             }
             let who = if name.is_empty() { id.clone() } else { name };
             let text = body.trim();
+            // A worker that read outside content -- or was sent tainted -- hands back a stranger's
+            // words, so they reach this turn as a fetched page does.  A report that does not say
+            // fails closed: its worker's verdict is unknown.
+            let from_stranger = extract_json_bool(o, "tainted").unwrap_or(true);
+            tainted |= from_stranger;
+            let text = match (text.is_empty(), from_stranger) {
+                (true, _)      => fmt!("(no report)"),
+                (false, true)  => wrap_untrusted(&fmt!("worker {}", who), text),
+                (false, false) => text.to_string(),
+            };
             blocks.push(fmt!("### {}{}{}\n{}",
                 who,
                 kind,
                 Self::gather_ending_note(&status, rounds, spent, live_ms, writes, &why, transient),
-                if text.is_empty() { "(no report)" } else { text }));
+                text));
         }
 
         // Nothing came back, and nothing this turn started is still running either: every name
@@ -3513,7 +3538,7 @@ impl Tool {
                 fmt!("{}\n\n[gather: n=0 pending=0 usd=0.0000]",
                     refusal_line(&Self::unresolved_reason(&unresolved)))
             };
-            return (out, 0.0, Vec::new());
+            return (out, 0.0, Vec::new(), false);
         }
 
         // Nothing finished in the time allowed.  A FACT rather than a failure: the workers are
@@ -3528,7 +3553,7 @@ impl Tool {
                 args.timeout_s, who, if still.len() == 1 { "is" } else { "are" });
             Self::gather_push_unresolved(&mut out, &unresolved);
             out.push_str(&fmt!("\n\n[gather: n=0 pending={} usd=0.0000]", still.len()));
-            return (out, 0.0, Vec::new());
+            return (out, 0.0, Vec::new(), false);
         }
 
         let done = blocks.len();
@@ -3552,7 +3577,7 @@ impl Tool {
         }
         Self::gather_push_unresolved(&mut out, &unresolved);
         out.push_str(&fmt!("\n\n[gather: n={} pending={} usd={:.4}]", done, still.len(), usd));
-        (out, usd, ids)
+        (out, usd, ids, tainted)
     }
 
     /// Name the gather targets that were neither started by this turn nor recovered by name.
@@ -3664,9 +3689,9 @@ impl Tool {
             match script.iter().find(|r| r.name == w.name) {
                 Some(r) if r.terminal => reports.push(fmt!(
                     "{{\"id\":\"{}\",\"name\":\"{}\",\"status\":\"{}\",\"rounds\":{},\
-                     \"usd\":{},\"writes\":{},\"report\":\"{}\"}}",
+                     \"usd\":{},\"writes\":{},\"tainted\":{},\"report\":\"{}\"}}",
                     json_escape(&w.id), json_escape(&r.name), json_escape(&r.status),
-                    r.rounds, r.usd, r.writes, json_escape(&r.report))),
+                    r.rounds, r.usd, r.writes, r.tainted, json_escape(&r.report))),
                 _ => pending.push(fmt!("{{\"id\":\"{}\",\"name\":\"{}\"}}",
                     json_escape(&w.id), json_escape(&w.name))),
             }
@@ -3680,9 +3705,9 @@ impl Tool {
             match script.iter().find(|r| &r.name == n && r.terminal) {
                 Some(r) => reports.push(fmt!(
                     "{{\"id\":\"{}\",\"name\":\"{}\",\"status\":\"{}\",\"rounds\":{},\
-                     \"usd\":{},\"writes\":{},\"report\":\"{}\"}}",
+                     \"usd\":{},\"writes\":{},\"tainted\":{},\"report\":\"{}\"}}",
                     json_escape(&r.name), json_escape(&r.name), json_escape(&r.status),
-                    r.rounds, r.usd, r.writes, json_escape(&r.report))),
+                    r.rounds, r.usd, r.writes, r.tainted, json_escape(&r.report))),
                 None => unresolved.push(fmt!("\"{}\"", json_escape(n))),
             }
         }
@@ -3692,7 +3717,10 @@ impl Tool {
              \"cancelled\":false,\"waited_ms\":{}}}",
             reports.join(","), pending.join(","), unresolved.join(","), timed_out,
             if timed_out { args.timeout_s * 1_000 } else { 0 });
-        let (text, usd, ids) = Self::gather_result(&json, &args);
+        let (text, usd, ids, tainted) = Self::gather_result(&json, &args);
+        if tainted {
+            ctx.set_tainted();
+        }
         Self::charge_gathered(ctx, &ids, usd);
         Ok(text)
     }
@@ -3868,7 +3896,10 @@ impl Tool {
                 "the workers could not be waited for: {}. Finish your answer -- anything still \
                  running reports back as a later turn.", e.plain())))),
         };
-        let (text, usd, got) = Self::gather_result(&answered, &args);
+        let (text, usd, got, tainted) = Self::gather_result(&answered, &args);
+        if tainted {
+            ctx.set_tainted();
+        }
         Self::charge_gathered(ctx, &got, usd);
         Ok(MessageContent::text(text))
     }

@@ -44,6 +44,37 @@ pub enum UiAct {
     Mail,       // the mail tools
 }
 
+/// What a host without a Kimberlite run under it answers `submit_change` (SUBMIT-ROUTE SR2a): a
+/// Here turn, the native build, a test.  Said to the daimon as it stands.
+pub const SUBMIT_NO_KIMBERLITE: &str = "This turn is not running on Kimberlite, and only a \
+    Kimberlite run can submit a change: his approval card starts there. Tell \
+    him the branch and commit, and that it can be submitted from a chat that runs on Kimberlite.";
+
+/// Where a `submit_change` can go from this host (SUBMIT-ROUTE SR2a; design 20261105 §2.3 step 1).
+#[derive(Clone, Debug, PartialEq)]
+pub enum SubmitReach {
+    /// Nowhere: the reason, a sentence the daimon reads as it stands.
+    Absent(String),
+    /// A Kimberlite run, which carries one `submit` control frame to its parent.
+    Kimberlite {
+        /// The branches the route refuses, Kimberlite's `submit.protected_refs`: a name, or a
+        /// prefix ending in `*` (`release/*`).  The parent checks them again (SR2b).
+        protected:      Vec<String>,
+        /// Why a page change cannot ship from this machine (`ship.enabled=false`), or `None`
+        /// where it can.
+        page_refused:   Option<String>,
+    },
+}
+
+/// The parent's answer to one `submit` frame.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SubmitAnswer {
+    /// Taken: the submission's id; its card is on his phone.
+    Submitted(String),
+    /// Refused, in the parent's own sentence.
+    Refused(String),
+}
+
 #[allow(async_fn_in_trait)]
 pub trait HostUi {
     /// Can this host do `act` at all?  A tool needing an act its host cannot do is not offered,
@@ -100,4 +131,15 @@ pub trait HostUi {
     /// for a `recall` call's `args` JSON; the matches as JSON text.  A host with no transcript
     /// refuses, saying so.
     async fn transcript_search(&self, diamond: &str, args: &str) -> Outcome<String>;
+    /// Where `submit_change` can go from here.  Only a Kimberlite run's port says anything but
+    /// [`SubmitReach::Absent`].
+    fn submit_reach(&self) -> SubmitReach {
+        SubmitReach::Absent(SUBMIT_NO_KIMBERLITE.to_string())
+    }
+    /// Send one checked `submit_change` (`payload`, its JSON) to the parent as a single `submit`
+    /// control frame on the run's pipe, and wait for the parent's answer.  Called only where
+    /// [`Self::submit_reach`] is not absent.
+    async fn submit(&self, _payload: &str) -> Outcome<SubmitAnswer> {
+        Ok(SubmitAnswer::Refused(SUBMIT_NO_KIMBERLITE.to_string()))
+    }
 }

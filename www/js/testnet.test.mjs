@@ -174,6 +174,13 @@ await tryRun('(a) parse', async () => {
 	const tab = makeTab({ reply: { ok: true }, scripts: ['policy.js'] });
 	await tick();
 	check('(a) a capability the gateway did not name is allowed', tab.win.DaimondNet.can('runner') === true);
+	check('(a) no approve address named: none', tab.win.DaimondNet.runnerApprove() === null);
+	for (const [url, want] of [['https://runner.test.daimond.app/approve', 'https://runner.test.daimond.app/approve'],
+		['http://runner.daimond.app/approve', null], ['https://runner.daimond.app/approve#x', null], [42, null]]) {
+		const t2 = makeTab({ reply: { ok: true, runner_approve_url: url }, scripts: ['policy.js'] });
+		await tick();
+		check('(a) approve address ' + JSON.stringify(url) + ' reads as ' + JSON.stringify(want), t2.win.DaimondNet.runnerApprove() === want);
+	}
 });
 
 // (b) one fetch per boot, shared with trash.js

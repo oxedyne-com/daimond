@@ -1,6 +1,6 @@
 // page-split: imports (by hand; dev/pagesplit/modcheck.mjs checks every name)
 import { chatOutput, diamondBusy, pg } from './state.js';
-import { dsFold, readJson, t } from './util.js';
+import { dsEvent, dsFold, readJson, t } from './util.js';
 import { ChatStore, chatTaintOf, ensureDispatchedResident, loadChatMessages, msgJoin, msgTombstone, newMid,
 	onChatsChangedElsewhere, persistChats, stampMessages, takeReportTaint, touchChat, touchMsg } from './chatstore.js';
 import { DEVICE_ID_RE, loadDevices, nominatedDeviceId } from './parcel_collect.js';
@@ -16,6 +16,7 @@ import { errandModelOf, storedEffort, storedPre, turnEffortOf } from './rating.j
 import { _electionTrace, _handoffStart, answerUnhanded, autoLogHandoffLatency, continueTurn,
 	notRunCause, presenceTick, renderSeatSwitch, seatReason, seatSwitchFor } from './sourcemenu.js';
 import { diag, toast } from './passkey_phrase.js';
+import { lensToolRow } from './boot.js';
 import { logArrivals, logCursor, panelIntent, readChat, transcriptWhole, turnEnded, turnView, viewMessages } from './turnlog.js';
 import { cutAccount, dispatchedAnswerPresent, followActivity, followsEnd, handoffTargetLabel,
 	isLostRow, renderHistory, sigsOf, tilePeek } from './turns.js';
@@ -1710,8 +1711,9 @@ function refreshHandoffWatch() {
 			var m = chat ? dispatchedPlaceholderIn(chat, k) : null;
 			if (!m) continue;
 			var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(k) : null;
-			var fin = dispatchedTurnFinished(chat, k) || dispatchedAnswerPresent(chat, m);
-			if (DaimondPeer.watchDecision(m, lease, fin, self, now)) next[k] = true;
+			var v = turnLogState(k, chat.id), open = !!v && v.state === 'open';
+			var fin = !open && (dispatchedTurnFinished(chat, k) || dispatchedAnswerPresent(chat, m));
+			if (DaimondPeer.watchDecision(m, lease, fin, self, now, open)) next[k] = true;
 		} catch (e) { /* peer or lease not up: nothing is watched on a guess */ }
 	}
 	_watchIx = next;
@@ -1808,6 +1810,7 @@ export async function readChatLog(chat) {
 				onRows: function (c, t, fresh, changed) {
 					logArrivals(c, fresh, Date.now() - ARRIVE_FRESH_MS).forEach(function (r) { noteArrive(r.k, r); });
 					onLogRows(c, t, fresh, changed);
+					lensToolLog(c, t, fresh, changed);
 				},
 				onEnd:  onLogEnd,
 			});
@@ -1858,6 +1861,25 @@ function onLogEnd(chat, turnId, view) {
 	((view && view.rows) || []).forEach(function (f) { if (f && f.role === 'assistant') mids[String(f.mid)] = 1; });
 	(chat.messages || []).forEach(function (m) { if (m && mids[String(m.mid)]) foldRunnerTotals(chat, m, ph); });
 	dropDispatchedPlaceholder(turnId);
+}
+
+// ── A Kimberlite turn's tool calls on the lens ──────────────────
+var _toolLensed = Object.create(null);		// tool row mid -> its `tool` event sent from here
+var _toolSteps  = Object.create(null);		// turn -> tool rows sent, the next row's `r`
+
+/// One lens `tool` event per Kimberlite tool call whose result has landed, once per row on
+/// this device: the Here seat's row (`lensToolRow`), marked `src` `kimb`. A call is logged
+/// before its result, so a row with no outcome yet waits for its edit.
+function lensToolLog(chat, turnId, fresh, changed) {
+	(fresh || []).concat(changed || []).forEach(function (m) {
+		var id = String((m && m.mid) || '');
+		if (!m || m.role !== 'tool_log' || !id || !m.outcome || _toolLensed[id]) return;
+		_toolLensed[id] = 1;
+		var step = _toolSteps[turnId] = (_toolSteps[turnId] || 0) + 1;
+		var row = lensToolRow(m, m.args, turnId, step, { dia: chat && chat.diamondId, chat: chat && chat.id });
+		row.src = 'kimb';
+		dsEvent('tool', row);
+	});
 }
 
 // ── What a handed-off turn shows the asker (P2.3a5) ──────────────

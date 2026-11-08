@@ -660,5 +660,83 @@ await (async () => {
 		reads.indexOf(chat.id) !== -1, JSON.stringify(reads));
 })();
 
+// ── STOP-STUCK: a Kimberlite turn's end row is read even when its tap is missed (08 Nov 2026). ──
+// Kimberlite closes a run with two log posts: the last msg rows, then the End row. On argonaut
+// (R12n2 T1) the msg rows were read, the End row's tap was lost, and the lease settled; the watch
+// took the settled lease for the turn's end and stopped reading the log, so the view stayed open
+// and Stop held until a reload. While this device's view of the turn is open, the watch must keep
+// reading the chat's log until the End row folds.
+await (async () => {
+	const src = readPage(join(HERE, 'daimond.js'), 'utf8');
+	const { liftSource } = await import('../../dev/syncprobe.mjs');
+	const FNS = ['rebuildDispatchedIndex', 'isUndoNote', 'refreshHandoffWatch', 'dispatchedPlaceholderIn', 'dispatchedTurnFinished',
+		'dispatchedTurnSettled', 'handoffLeaseSettled', 'turnLogState', 'dispatchedAnswerPresent', 'updateExpedite',
+		'readWatchedLogs', 'dropOtherRunRows', 'isNotRunRow', 'isLostRow', 'dropDispatchedPlaceholder', 'dispatchedChat', 'chatHoldingTurn',
+		'chatHoldsTurn'];
+	const lifted = FNS.map((n) => extractFn(src, n));
+	check('STOP-STUCK: the page functions exist', lifted.every(Boolean), FNS.filter((n, i) => !lifted[i]).join(','));
+	if (!lifted.every(Boolean)) return;
+	const stampSrc = readPage(join(HERE, 'stamp.js'), 'utf8');
+	let clock = Date.now();
+	const D = { now: () => clock };
+	const leases = {}, reads = [];
+	let endInLog = false;
+	const W = {};
+	W.DaimondPeer = P;
+	W.DaimondLease = { record: (t) => leases[t] || null, holder: (t) => (leases[t] && leases[t].holder) || '' };
+	W.DaimondPresence = { snapshot: () => ({}) };
+	const S = {
+		chats: [], current: null, peerReports: {}, _progressView: {}, _dispatchedIx: {}, _watchIx: {}, _abiRefused: {},
+		_handoffStart: {}, _watchTick: 1, _expediting: false, _renderedSigs: null,
+		WATCH_RECHECK_MS: 1000, ARRIVE_FRESH_MS: 60000, REASON_DISPATCHED_STR: 'dispatched',
+		turnView: TLV.turnView,
+		ChatStore: { stored: () => [], compact: () => {} },
+		diag: () => {}, persistChats: () => {}, touchChat: () => {}, ownsChat: () => false, renderHistory: () => {},
+		renderDispatchedBadges: () => {}, sigsOf: () => null,
+		selfDeviceId: () => 'DEVICE-A', deviceLabelFor: () => 'argonaut', handoffTargetLabel: () => 'argonaut',
+		autoLogHandoffLatency: () => {}, clearDispatchFallback: () => {}, drainHeldQueues: () => {},
+		foldRunnerTotals: () => {}, msgTombstone: () => {}, noteArrive: () => {},
+		// The log seam: a read folds the End row once Kimberlite has posted it.
+		readChatLog: async (c) => { reads.push(c.id); if (endInLog) { c.logEnds = { [T]: 'done' }; delete c.logViews[T]; } return null; },
+		loadMsgTombs: () => ({}),
+	};
+	const keys = Object.keys(S);
+	const api = new Function('S', 'window', 'Date',
+		'var DaimondPeer = window.DaimondPeer, DaimondLease = window.DaimondLease, DaimondSync = window.DaimondSync,'
+		+ ' DaimondPresence = window.DaimondPresence;\n'
+		+ 'var DaimondStamp = (function () { var window = {}; ' + stampSrc + '\n return window.DaimondStamp; })();\n'
+		+ keys.map((k) => 'var ' + k + ' = S.' + k + ';').join('\n') + '\n'
+		+ liftSource(['mergeMessages'], ['loadMsgTombs', 'window', 'DaimondStamp']).src + '\n'
+		+ lifted.join('\n') + '\n'
+		+ 'return { ' + FNS.map((n) => n + ': ' + n).join(', ') + ', mergeMessages: mergeMessages,'
+		+ ' watchIx: function () { return _watchIx; }, chats: chats };')(S, W, D);
+
+	// A dispatched turn T to Kimberlite, which holds it: its streaming rows drawn, the view open.
+	const T = 'mvss-1-stuck';
+	const chat = { id: 'css', _loaded: true, logViews: { [T]: { turn: T, state: 'open', rows: [] } }, messages: [
+		{ role: 'user', content: 'go', mid: T, iturn: T, ts: clock - 5000 },
+		{ role: 'assistant', content: '', mid: T + '-ph', interrupted: true, why: 'dispatched', iturn: T, itext: 'go',
+			dispatchedBy: 'DEVICE-A', toDevice: 'KIMBERLITE', toNative: 1, ts: clock - 4900 }] };
+	S.chats.push(chat);
+	leases[T] = { turnId: T, holder: 'KIMBERLITE', mode: 'running', expiry: clock + 10 * MIN, renewedAt: clock - 4000 };
+	api.rebuildDispatchedIndex();
+	api.updateExpedite();
+	check('STOP-STUCK [ctl]: the running turn is watched', !!api.watchIx()[T], JSON.stringify(api.watchIx()));
+	// Kimberlite posts the last msg rows and the End row, and settles the lease; the End row's tap is lost.
+	clock += 2000;
+	endInLog = true;
+	leases[T] = { turnId: T, holder: 'KIMBERLITE', mode: 'done', expiry: 0, renewedAt: clock, settled: true };
+	reads.length = 0;
+	api.updateExpedite();
+	check('STOP-STUCK (a): a settled lease does not end the watch while the turn\'s view is open',
+		!!api.watchIx()[T], JSON.stringify(api.watchIx()));
+	check('STOP-STUCK (b): so the chat\'s log is read again and the End row folds',
+		reads.indexOf(chat.id) !== -1 && TLV.turnView(chat, T) && TLV.turnView(chat, T).state === 'ended',
+		JSON.stringify({ reads, logEnds: chat.logEnds }));
+	await Promise.resolve();
+	api.updateExpedite();
+	check('STOP-STUCK (c): once the End row folds the watch ends', !api.watchIx()[T], JSON.stringify(api.watchIx()));
+})();
+
 console.log('\n' + (checks - failures) + '/' + checks + ' passed');
 if (failures) process.exit(1);

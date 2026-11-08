@@ -11,7 +11,11 @@ use crate::{
             Read,
             Shot,
         },
-        ui::HostUi,
+        ui::{
+            HostUi,
+            SubmitAnswer,
+            SubmitReach,
+        },
     },
     tools::{
         FileRoot,
@@ -27,6 +31,15 @@ use oxedyne_fe2o3_core::prelude::*;
 pub struct TestUi {
     change: std::rc::Rc<std::cell::RefCell<ChangeAsk>>,
     mail:   std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>, // (listing, one message)
+    submit: std::rc::Rc<std::cell::RefCell<SubmitFake>>,
+}
+
+/// A fake Kimberlite parent for `submit_change` (SUBMIT-ROUTE SR2a): where it says the route goes,
+/// how it answers, and every frame it was sent.  Absent until a test serves it.
+#[derive(Debug, Default)]
+struct SubmitFake {
+    reach:  Option<(SubmitReach, SubmitAnswer)>,
+    frames: Vec<String>,
 }
 
 /// How the change ask answers, what it was shown, and what lands while it waits.
@@ -55,6 +68,15 @@ impl TestUi {
     pub fn serve_mail(&self, listing: &str, raw: &[u8]) {
         *self.mail.borrow_mut() = Some((listing.to_string(), raw.to_vec()));
     }
+
+    /// Stand in for a Kimberlite run's parent: `submit_change` reaches `reach`, and every frame
+    /// is answered `answer`.
+    pub fn serve_submit(&self, reach: SubmitReach, answer: SubmitAnswer) {
+        self.submit.borrow_mut().reach = Some((reach, answer));
+    }
+
+    /// Each `submit` frame's payload the parent was sent, in order.
+    pub fn submits(&self) -> Vec<String> { self.submit.borrow().frames.clone() }
 
     /// Each change ask put, in order: the path and the bytes shown as what stands there.
     pub fn changes_asked(&self) -> Vec<(String, Vec<u8>)> { self.change.borrow().asked.clone() }
@@ -137,5 +159,21 @@ impl HostUi for TestUi {
     }
     async fn transcript_search(&self, diamond: &str, args: &str) -> Outcome<String> {
         LocalUi.transcript_search(diamond, args).await
+    }
+    fn submit_reach(&self) -> SubmitReach {
+        match &self.submit.borrow().reach {
+            Some((r, _))    => r.clone(),
+            None            => LocalUi.submit_reach(),
+        }
+    }
+    async fn submit(&self, payload: &str) -> Outcome<SubmitAnswer> {
+        let served = self.submit.borrow().reach.as_ref().map(|(_, a)| a.clone());
+        match served {
+            Some(a) => {
+                self.submit.borrow_mut().frames.push(payload.to_string());
+                Ok(a)
+            },
+            None    => LocalUi.submit(payload).await,
+        }
     }
 }

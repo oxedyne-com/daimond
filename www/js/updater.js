@@ -43,8 +43,19 @@
 	/// One line in the durable trail, for a bug that can only be seen on a phone.
 	function trail(w, d) { try { window.DaimondTrail.note(w, d); } catch (e) {} }
 
+	/// One of this file's timings: the operator's, as `/api/policy` served it to an earlier
+	/// boot (policy.js, which runs in the head), else the shipped figure, which
+	/// gateway/src/handlers/policy.rs `UPDATER` holds too.
+	function knob(name, shipped) {
+		try {
+			var u = window.DaimondNet && DaimondNet.updater && DaimondNet.updater();
+			if (u && u[name] >= 1) return u[name];
+		} catch (e) {}
+		return shipped;
+	}
+
 	var SRC      = 'build.json';   // the version stamp, at the site root
-	var POLL_MS  = 120000;         // re-check on this timer while in the foreground
+	var POLL_MS  = knob('pollMs', 120000);  // re-check on this timer while in the foreground
 	var KEY      = 'daimond-updated-to';
 	var FKEY     = 'daimond-forced-from';   // the build a forced reload last left, to break loops
 	// The last-resort cap on forced reloads, in localStorage.
@@ -63,8 +74,8 @@
 	// app is a loop that clears a sessionStorage guard. Three forced reloads in
 	// ninety seconds is not an update arriving, it is a tab that cannot settle.
 	var TKEY      = 'daimond-forced-at';
-	var COOLDOWN  = 90000;
-	var MAX_FORCED = 3;            // in one cooldown window, before it stops for good
+	var COOLDOWN  = knob('forcedWindowMs', 90000);
+	var MAX_FORCED = knob('forcedMax', 3);        // in one cooldown window, before it stops for good
 	var NKEY      = 'daimond-forced-n';
 
 	// ── The stuck-worker escape ────────────────────────────────
@@ -110,8 +121,8 @@
 	// short pause after the last keystroke rather than yank the page mid-sentence.
 	// `lastActive` is user INPUT only -- a turn ending is not input, so a forced
 	// reload applies as soon as a turn finishes (unless a key was just pressed).
-	var QUIESCE_MS = 600000;       // ~10 min of no input: a safe moment for a soft update
-	var GRACE_MS   = 20000;        // a short pause after the last keystroke before a forced reload
+	var QUIESCE_MS = knob('quiesceMs', 600000);  // ~10 min of no input: a safe moment for a soft update
+	var GRACE_MS   = knob('graceMs', 20000);     // a short pause after the last keystroke before a forced reload
 	var lastActive = Date.now();   // epoch-ms of the last keydown/pointerdown (a fresh tab counts as just-active)
 	var graceTimer = null;
 	function quietFor() { return Date.now() - lastActive; }
@@ -131,13 +142,13 @@
 	// mismatched engine pair, and the user's own click all still reload at once:
 	// those are not "an update is available", they are "you cannot keep working",
 	// and a countdown in front of one only delays the fix.
-	var TICK_MS     = 10000;        // re-ask "is it safe yet?" this often
-	var COUNT_MS    = 20000;        // the visible countdown before an automatic reload
-	var DEFER_MS    = 600000;       // Cancel puts it off this long -- not off for good
-	var GIVEUP_MS   = 1800000;      // never safe for this long: stop trying, leave a button
-	var BOOT_MS     = 60000;        // never reload within this of boot
-	var GAP_MS      = 600000;       // and never more than one automatic reload per this
-	var SYNC_YIELD_MS = 120000;     // sync alone has held this build this long: yield to it (see safeNow)
+	var TICK_MS     = knob('tickMs', 10000);          // re-ask "is it safe yet?" this often
+	var COUNT_MS    = knob('countMs', 20000);         // the visible countdown before an automatic reload
+	var DEFER_MS    = knob('deferMs', 600000);        // Cancel puts it off this long -- not off for good
+	var GIVEUP_MS   = knob('giveupMs', 1800000);      // never safe for this long: stop trying, leave a button
+	var BOOT_MS     = knob('bootMs', 60000);          // never reload within this of boot
+	var GAP_MS      = knob('gapMs', 600000);          // and never more than one automatic reload per this
+	var SYNC_YIELD_MS = knob('syncYieldMs', 120000);  // sync alone has held this build this long: yield to it (see safeNow)
 	var SKEY        = 'daimond-soft-at';   // when the last automatic reload went, across boots
 	var bootedAt    = Date.now();
 	var tick        = null;         // the safety re-evaluation interval
@@ -414,7 +425,7 @@
 		if (bw) return bw;
 		if (composerHasUnsavedText()) return 'typed';
 		if (recordsOwed()) return 'owed';
-		if (!syncQuiet()) return 'sync:' + syncBusyWith();
+		if (!syncQuiet() && !syncYield) return 'sync:' + syncBusyWith();
 		try {
 			// Split from one bare 'lease': `idleUnlocked` refuses for two different
 			// reasons (see its own header) and a reader benefits from knowing which --
@@ -645,9 +656,14 @@
 	// finally goes, since another tab may have spent the guard in between. It is spent
 	// only when the reload is really starting (`spendForce`), never on an attempt that
 	// is only waiting.
-	var DOOR_POLL_MS    = 5000;     // a hand run's end sends no `daimond:idle`: look again this often
-	var STOP_NOTICE_MS  = 8000;     // how long the standing-run notice stands before the reload goes
-	var STANDING_ASK_MS = 2500;     // how long to wait for the hand to list what it holds
+	var DOOR_POLL_MS     = knob('doorPollMs', 5000);      // a hand run's end sends no `daimond:idle`: look again this often
+	var STOP_NOTICE_MS   = knob('stopNoticeMs', 8000);    // how long the standing-run notice stands before the reload goes
+	var STANDING_ASK_MS  = knob('standingAskMs', 2500);   // how long to wait for the hand to list what it holds
+	var RELOAD_SAFETY_MS = knob('reloadSafetyMs', 3000);  // the reload goes after this whatever its cache work is doing
+	var WORKER_FRESH_MS  = knob('workerFreshMs', 2500);   // a soft reload's wait for the service worker to refresh
+	var LATEST_MS        = knob('latestMs', 1400);        // a check by hand that found the latest: how long the chip says so
+	var DONE_MARK_MS     = knob('doneMarkMs', 6000);      // how long the chip says a new build was applied
+	var STOPPED_NOTE_MS  = knob('stoppedNoteMs', 30000);  // how long the note of what a reload stopped stands
 	var STOP_KEY        = 'daimond-update-stopped';  // what the reload stopped, for the next boot to say
 	var launching       = false;    // a reload has been let through and is not yet away
 	var waiting         = null;     // { door, go, ok, again }: the reload held for idle
@@ -811,7 +827,7 @@
 			went = true;
 			try { location.reload(); } catch (e) {}
 		};
-		var safety = setTimeout(go, 3000);
+		var safety = setTimeout(go, RELOAD_SAFETY_MS);
 		var pwa = window.DaimondPWA;
 		var fresh;
 		if (hard) {
@@ -824,7 +840,7 @@
 				}
 			} catch (e) { /* no Cache Storage; the reload alone is still worth taking */ }
 		} else {
-			fresh = ((pwa && pwa.freshenWorker) ? pwa.freshenWorker(2500) : Promise.resolve())
+			fresh = ((pwa && pwa.freshenWorker) ? pwa.freshenWorker(WORKER_FRESH_MS) : Promise.resolve())
 				.then(function () { return (pwa && pwa.clearShell) ? pwa.clearShell() : null; });
 		}
 		fresh.then(function () { clearTimeout(safety); go(); },
@@ -845,7 +861,7 @@
 				chip.dataset.state = 'done';
 				chip.title = t('update.latest');
 				chip.hidden = false;
-				setTimeout(reflect, 1400);
+				setTimeout(reflect, LATEST_MS);
 			}
 		});
 	}
@@ -1342,7 +1358,7 @@
 		} else if (booted && was && was === booted) {
 			note = first && typeof first.note === 'string' ? first.note : '';
 			setChip('done');
-			setTimeout(function () { if (!pending && !stuck) setChip('current'); }, 6000);
+			setTimeout(function () { if (!pending && !stuck) setChip('current'); }, DONE_MARK_MS);
 		} else if (booted) {
 			setChip('current');
 		} else if (chip) {
@@ -1357,7 +1373,7 @@
 				if (!stoppedNote) return;
 				stoppedNote = '';
 				if (!pending && !notice && !stale && !stuck) hideBanner();
-			}, 30000);
+			}, STOPPED_NOTE_MS);
 		}
 
 		// User input, for the quiescence and typing-grace thresholds above. Capture

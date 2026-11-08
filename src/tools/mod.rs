@@ -62,6 +62,7 @@ use std::sync::{Arc, Mutex};
 mod shown;	// what a chat was shown, and D1's payload test (UNBLOCK-88)
 #[macro_use] mod context;	// what a run leaves, `ToolContext`, the licence, spend
 #[macro_use] mod pending;	// a daimon's lines on the Pending panel
+#[macro_use] mod submit;	// `submit_change`: a daimon's tested commit, for his approval
 #[macro_use] mod tool;	// `Tool`: belts, names, descriptions, parameters
 #[macro_use] mod dispatch;	// `Tool::execute_inner`, reads, search, mail, OCR
 #[macro_use] mod file_ops;	// the page's file writes, edits, moves and holds
@@ -80,6 +81,7 @@ pub use shown::*;
 pub use context::*;
 pub(crate) use pending::*;	// nothing in it is wider than the crate
 pub use pending::OcrConf;	// but this, which `TurnLimits` carries to the runner (P2.5d)
+pub(crate) use submit::*;	// SR2a: the tool's text, schema and refusal, for the tables and the doors
 pub use tool::*;
 pub use verify::*;
 pub use registry::*;
@@ -138,13 +140,18 @@ mod crystal_hot_mend;
 #[path = "../../tests/unit/tools/tests_pending.rs"]
 mod tests_pending;
 
+/// SUBMIT-ROUTE SR2a (D-20261105-01): `submit_change` sends one frame, or refuses and sends none.
+#[cfg(test)]
+#[path = "../../tests/unit/tools/tests_submit.rs"]
+mod tests_submit;
+
 #[cfg(test)]
 #[path = "../../tests/unit/tools/made1.rs"]
 mod made1;
 
 // The pieces' own text, in their order above, for the tests that read the tools' source.
 #[cfg(test)]
-const SOURCE: [&str; 13] = [
+const SOURCE: [&str; 14] = [
     include_str!("state.rs"),
     include_str!("doc.rs"),
     include_str!("run.rs"),
@@ -152,6 +159,7 @@ const SOURCE: [&str; 13] = [
     include_str!("web.rs"),
     include_str!("context.rs"),
     include_str!("pending.rs"),
+    include_str!("submit.rs"),
     include_str!("tool.rs"),
     include_str!("dispatch.rs"),
     include_str!("file_ops.rs"),
