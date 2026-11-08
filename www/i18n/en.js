@@ -534,8 +534,24 @@
 
 	// ── A chat tile in the rail ────────────────────────────────
 	'chat.tool_refused':   'refused',
+	// i18n-family: chat.tool_verb_ = open -- a tool without a verb of its own is drawn under its tool name
+	'chat.tool_verb_file_read': 'Read',
+	'chat.tool_verb_file_edit': 'Edit',
+	'chat.tool_verb_file_write': 'Write',
+	'chat.tool_verb_file_list': 'List',
+	'chat.tool_verb_file_search': 'Search',
+	'chat.tool_verb_file_glob': 'Find',
+	'chat.tool_verb_file_delete': 'Delete',
+	'chat.tool_verb_file_move': 'Move',
+	'chat.tool_verb_run': 'Run',
+	'chat.tool_verb_shell': 'Run',
+	'chat.tool_verb_web_fetch': 'Fetch',
+	'chat.tool_verb_web_search': 'Search',
+	'chat.tool_verb_spawn_agent': 'Agent',
+	'chat.tool_exit': 'exit {n}',
+	'chat.tool_secs': '{n} s',
+	'chat.tool_mins': '{m} min {s} s',
 	'chat.tool_failed':    'failed',
-	'chat.tool_ok':        'ok',
 	'chat.copy_message':   'Copy message',
 	'chat.include_turn':   'Include this turn when folding',
 
@@ -1142,6 +1158,7 @@
 	'wire.schemas_why':   'every turn',
 	'chat.copy_all':        'Copy',
 	'chat.copy_all_help':   'Copy conversation',
+	'chat.gap_later': '{n} later messages: scroll down or tap to show them',
 	'chat.copy_all_said':   'The conversation was copied to the clipboard.',
 	'chat.copy_all_empty':  'There is nothing in this conversation to copy yet.',
 	'chat.copy_all_failed': 'Daimond could not reach the clipboard. Select the text and copy it yourself.',

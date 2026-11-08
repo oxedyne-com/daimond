@@ -2141,37 +2141,29 @@ pub(crate) fn normalise(path: &str) -> String {
     parts.join("/")
 }
 
-/// The refusal a file tool gives for an absolute path, or `None` where the path is relative.
+/// The refusal for a machine path the resolver could not bring into the workspace.
 ///
-/// There are three path conventions here and nothing in a model's training says which is which:
-/// the file tools address the workspace, `run`'s `argv` addresses the machine, and `run`'s `cwd`
-/// addresses the workspace again.  An absolute path handed to a file tool was read as a chain of
-/// folders *inside* the workspace -- `/home/u/x` became `home/u/x` -- so the browser answered
-/// "OPFS: open dir 'home' failed", which names neither the convention nor the fix, and a turn went
-/// on it every session.  The convention is therefore said here, at the moment it is met.
-///
-/// # Arguments
-/// * `tool` - The tool asked, named so the model knows which of the three conventions it met.
-/// * `path` - The path as the model wrote it.
-pub(super) fn absolute_path_refusal(tool: &Tool, path: &str) -> Option<String> {
-    if !path.starts_with('/') {
-        return None;
+/// [`Workspace::based`] has already turned `~/…` and an absolute path inside the root into the
+/// root-relative path, so what reaches here is outside what the run may reach, or `~` with no
+/// home known, or a machine path in the browser's store, which is no folder on the machine.
+/// Each is said with the path as resolved and the rule that refused it.
+pub(super) fn machine_path_refusal(tool: &Tool, path: &str, ws: &Workspace) -> String {
+    if ws.machine_root().is_none() {
+        return fmt!(
+            "Refused: '{}' is a path on the machine, and {} in this tab reaches the browser's \
+            storage and the folder opened in it, whose place on the machine the tab is not told. \
+            Give the path from the workspace root down, e.g. 'src/main.rs'; run reaches the \
+            machine by its own paths.", path, tool.name());
     }
-    // The first segment is the recognition hook: it is the folder name the OPFS edge used to
-    // complain about, so a model that has seen that message can join the two.
-    let norm = normalise(path);
-    let head = norm.split('/').next().unwrap_or("");
-    let inside = if head.is_empty() {
-        String::new()
-    } else {
-        fmt!(" -- read as written it names a folder called '{}' inside the workspace, which is \
-            not there", head)
-    };
-    Some(fmt!(
-        "Refused: '{}' is an absolute path on the machine, and {} takes a path relative to the \
-        workspace{}. Give the path from the workspace root down, e.g. 'src/main.rs'. Absolute \
-        paths belong only in run's 'argv'; run's 'cwd' is workspace-relative, like this one.",
-        path, tool.name(), inside))
+    let root = ws.root().to_string_lossy();
+    if path == "~" || path.starts_with("~/") {
+        return fmt!(
+            "Refused: '{}' names the home folder, and this run was not told where the home is on \
+            this machine. Give the path from the workspace root '{}', or as an absolute path.",
+            path, root);
+    }
+    fmt!("Refused: '{}' is outside the workspace '{}', the folder this run may reach, so {} did \
+        not touch it.", path, root, tool.name())
 }
 
 /// The keys of `tool`'s arguments that name a workspace path, for [`based_args`].
@@ -2189,6 +2181,21 @@ pub(super) fn path_keys(tool: &Tool) -> &'static [&'static str] {
         Tool::ImageEdit                                        => &["path", "out"],
         _                                                      => &[],
     }
+}
+
+/// The key of `tool`'s glob, whose leading literal folders are a place like a path's.
+pub(super) fn glob_key(tool: &Tool) -> Option<&'static str> {
+    match tool {
+        Tool::FileGlob      => Some("pattern"),
+        Tool::FileSearch    => Some("glob"),
+        _                   => None,
+    }
+}
+
+/// Does `path` name a place on the machine -- absolute, or from the home -- rather than one
+/// relative to the workspace?
+pub(crate) fn machine_spelt(path: &str) -> bool {
+    path.starts_with('/') || path == "~" || path.starts_with("~/")
 }
 
 /// The byte range of `key`'s array value in `args`, brackets included, or `None`.
@@ -2341,22 +2348,21 @@ pub(super) fn start_key(tool: &Tool, key: &str) -> bool {
     }
 }
 
-/// `args` with every path `tool` names rebased on the workspace's base (UNBLOCK-32 F2b), or
-/// `None` where there is no base or nothing changed.
+/// `args` with every path `tool` names resolved by [`Workspace::based`] -- read from the base
+/// (UNBLOCK-32 F2b), `~` and absolute paths brought into the root -- or `None` where nothing
+/// changed.
 ///
 /// **The root of the folder's fence**: made once, at the door every call passes, before the
 /// guard, so every check after it -- the path convention, the bounds, the licence, the link
 /// proofs -- judges the root-relative path the act reaches ([`Workspace::based`]), never the
 /// path as written.  A walk or a command that names no start starts at the base.
-///
-/// With no base, only an absolute path inside a machine root is rebased (UNBLOCK-58), and a walk
-/// that names no start is left to start at the root.
 pub(crate) fn based_args(tool: &Tool, args: &str, ws: &Workspace) -> Option<String> {
-    let rebase = !ws.base().is_empty() && !folder_root_off();
-    if !rebase && ws.machine_root().is_none() {
-        return None;
-    }
-    let place = |p: &str| if rebase { ws.based(p) } else { ws.based_absolute(p) };
+    // A test's switch: the folder's base is not applied, and only the machine's paths resolve.
+    let unbased;
+    let ws = match folder_root_off() && !ws.base().is_empty() {
+        true    => { unbased = ws.clone().with_base(""); &unbased },
+        false   => ws,
+    };
     let mut out = args.to_string();
     for key in path_keys(tool) {
         if *key == "paths" {
@@ -2366,25 +2372,37 @@ pub(crate) fn based_args(tool: &Tool, args: &str, ws: &Workspace) -> Option<Stri
             };
             if let Some((from, to)) = array_span(&out, key) {
                 let items: Vec<String> = list.iter()
-                    .map(|p| fmt!("\"{}\"", json_escape(&place(p.as_str())))).collect();
+                    .map(|p| fmt!("\"{}\"", json_escape(&ws.based(p.as_str())))).collect();
                 out = fmt!("{}[{}]{}", &out[..from], items.join(","), &out[to..]);
             }
             continue;
         }
         match (extract_json_string(&out, key), crate::profile::string_span(&out, key)) {
             (Some(p), Some((from, to))) => {
-                out = fmt!("{}\"{}\"{}", &out[..from], json_escape(&place(p.as_str())), &out[to..]);
+                out = fmt!("{}\"{}\"{}", &out[..from], json_escape(&ws.based(p.as_str())), &out[to..]);
             },
             // A walk that names no start, and a command that names no `cwd` (F2-FIX H1), start
             // at the base: the briefing says "You start in ~/<folder>", so `run ["rm","-rf",
             // "build"]` acts there, never on the home, and every check after judges the base.
-            _ => if rebase && start_key(tool, key) {
+            _ => if start_key(tool, key) && !ws.base().is_empty() {
                 if let Some(i) = out.find('{') {
                     let rest = out[i + 1..].trim_start();
                     let sep = if rest.starts_with('}') { "" } else { "," };
                     out = fmt!("{}\"{}\":\"{}\"{}{}", &out[..=i], key, json_escape(ws.base()), sep, &out[i + 1..]);
                 }
             },
+        }
+    }
+    // A glob written from the machine's root or the home is resolved as a path is: wildcards are
+    // whole segments, so its tail inside the root is the root-relative glob.  A relative glob is
+    // left alone, since it matches a name anywhere under the walk's start.
+    if let Some(key) = glob_key(tool) {
+        if let (Some(g), Some((from, to))) =
+            (extract_json_string(&out, key), crate::profile::string_span(&out, key))
+        {
+            if machine_spelt(g.trim()) {
+                out = fmt!("{}\"{}\"{}", &out[..from], json_escape(&ws.based(g.trim())), &out[to..]);
+            }
         }
     }
     if out == args { None } else { Some(out) }
@@ -2398,21 +2416,30 @@ pub(crate) fn based_args(tool: &Tool, args: &str, ws: &Workspace) -> Option<Stri
 /// `" .."`, and [`normalise`] read `../B/x.png` as `B/x.png` (CAPTURE-FENCE QA B F1, F2).  So a
 /// non-canonical path is refused rather than mended, and the refusal names the one spelling to
 /// write where there is one.  `""` and `"."` name the workspace root and pass.
-pub(crate) fn path_refusal(tool: &Tool, path: &str) -> Option<String> {
-    path_refusal_said(tool, path).map(|s| refusal_line(&s))
+pub(crate) fn path_refusal(tool: &Tool, path: &str, ws: &Workspace) -> Option<String> {
+    path_refusal_said(tool, path, ws).map(|s| refusal_line(&s))
 }
 
 // The sentence alone; path_refusal composes it as a refusal (TOOLROW-STATUS).
-fn path_refusal_said(tool: &Tool, path: &str) -> Option<String> {
+fn path_refusal_said(tool: &Tool, path: &str, ws: &Workspace) -> Option<String> {
     if path.is_empty() || path == "." {
         return None;
+    }
+    let machine_path = machine_spelt(path);
+    // The browser's store is no folder on the machine, but a command runs on one: `run_exec`
+    // resolves its `cwd` against the hand's grant.
+    if machine_path && ws.machine_root().is_none() && matches!(tool, Tool::Run) {
+        return None;
+    }
+    if path == "~" || path.starts_with("~/") {
+        return Some(machine_path_refusal(tool, path, ws));
     }
     let fault = match RelPath::fault(path) {
         Some(f) => f,
         None    => return None,
     };
     match fault {
-        Fault::Absolute     => absolute_path_refusal(tool, path),
+        Fault::Absolute     => Some(machine_path_refusal(tool, path, ws)),
         Fault::EdgeSpace    => padded_name_refusal(tool.name(), path),
         Fault::DotDot       => Some(dotdot_refusal(tool.name(), path)),
         // ONE trailing '/' on a path that is otherwise canonical (HATE-15, rc-b ruling of 26 Oct
@@ -2551,20 +2578,20 @@ pub(crate) fn dotdot_fold(raw: &str) -> Option<String> {
 ///
 /// # Arguments
 /// * `raw` - The path as the model wrote it.
-pub(super) fn delete_path_refusal(raw: &str) -> Option<String> {
-    delete_path_refusal_said(raw).map(|s| refusal_line(&s))
+pub(super) fn delete_path_refusal(raw: &str, ws: &Workspace) -> Option<String> {
+    delete_path_refusal_said(raw, ws).map(|s| refusal_line(&s))
 }
 
 // The sentence alone; delete_path_refusal composes it as a refusal (TOOLROW-STATUS).
-fn delete_path_refusal_said(raw: &str) -> Option<String> {
+fn delete_path_refusal_said(raw: &str, ws: &Workspace) -> Option<String> {
     let t = raw;
-    if t.starts_with('/') || t.starts_with('\\') || t.get(1..2) == Some(":") {
+    if t.starts_with('\\') || t.get(1..2) == Some(":") {
         return Some(fmt!(
-            "'{}' is an absolute path, and file_delete takes one file named relative to the \
-            workspace, e.g. 'notes/old.md'. Nothing was deleted.", raw));
+            "'{}' is a Windows path, and file_delete takes one file named from the workspace \
+            root, e.g. 'notes/old.md'. Nothing was deleted.", raw));
     }
     // Defence in depth: the guard has answered this already, in the same words.
-    if let Some(why) = path_refusal(&Tool::FileDelete, t) {
+    if let Some(why) = path_refusal(&Tool::FileDelete, t, ws) {
         return Some(why);
     }
     if normalise(t).is_empty() {
@@ -3216,7 +3243,7 @@ fn move_into_itself_refusal_said(from: &str, to: &str) -> String {
 /// are two different questions, and answering them alike would turn a write fence into a read
 /// fence: see the note in [`walk_starts`], where three tests caught that within the hour.
 ///
-/// An absolute `cwd` is passed through unchanged so that [`run_cwd_refusal`] still meets it.
+/// An absolute or `~` `cwd` is passed through unchanged for [`Workspace::based`] to resolve.
 ///
 /// # Arguments
 /// * `args` - The raw tool arguments, read for an explicit `cwd`.
@@ -3225,36 +3252,3 @@ pub(super) fn asked_cwd(args: &str) -> Option<String> {
         .filter(|c| c.starts_with('/') || !normalise(c).is_empty())
 }
 
-/// The refusal a `run` call gets for an absolute `cwd`.
-///
-/// `run` is the one tool with a different convention on each side -- `argv` is the machine's,
-/// `cwd` is the workspace's -- and an absolute `cwd` was joined onto the granted root and sent, so
-/// the hand answered about `/home/u/proj/home/u/proj/src`.  The doubling is at least visible, but
-/// the fix is not, and the fix is computable here: the granted root is known at this point, so
-/// what the model should have written is the tail of the path it already wrote.
-///
-/// # Arguments
-/// * `cwd` - The absolute directory the model asked for.
-/// * `root` - The folder the hand granted, which is the workspace root on this machine.
-pub(super) fn run_cwd_refusal(cwd: &str, root: &str) -> String {
-    let root = root.trim_end_matches('/');
-    // Where it would have been looked for, spelled out, because that is the sentence the model
-    // will have seen come back from the hand.
-    let doubled = fmt!("{}/{}", root, normalise(cwd));
-    let inside = cwd.strip_prefix(root)
-        .filter(|tail| tail.is_empty() || tail.starts_with('/'))
-        .map(normalise);
-    let fix = match inside {
-        Some(rel) if rel.is_empty() =>
-            fmt!("That folder IS the workspace root, so leave 'cwd' out."),
-        Some(rel) =>
-            fmt!("Pass '{}' instead.", rel),
-        None =>
-            fmt!("The workspace is '{}', and a command runs nowhere else, so name a directory \
-                inside it.", root),
-    };
-    fmt!(
-        "Refused: 'cwd' is relative to the workspace and '{}' is absolute, so it would be looked \
-        for at '{}'. {} Only 'argv' takes the machine's own paths.",
-        cwd, doubled, fix)
-}

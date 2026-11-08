@@ -2457,7 +2457,11 @@ export function foldJournalTurn(chat, t, opts) {
 			: !tl.failed ? 'done'
 			: outcomeOfStoredText(tl.result || '') === 'refused' ? 'refused' : 'failed';
 		if (have) {
-			if (!have.outcome) { have.content = tl.done ? (tl.result || '') : '(interrupted)'; have.outcome = oc; touchMsg(have); }
+			if (!have.outcome) {
+				have.content = tl.done ? (tl.result || '') : '(interrupted)'; have.outcome = oc;
+				if (tl.doneAt) have.done = tl.doneAt;
+				touchMsg(have);
+			}
 			clock = Math.max(clock, +have.ts || 0);
 			return;
 		}
@@ -2467,9 +2471,11 @@ export function foldJournalTurn(chat, t, opts) {
 			logThinking(chat, tl.said, iturn);
 			if (chat.messages.length > n0) chat.messages[n0].ts = tick(tl.at);
 		}
-		chat.messages.push({ role: 'tool_log', name: tl.name || '', args: tl.args || '',
+		var row = { role: 'tool_log', name: tl.name || '', args: tl.args || '',
 			content: tl.done ? (tl.result || '') : '(interrupted)',
-			outcome: oc, mid: tl.mid || newMid(), iturn: iturn, ts: tick(tl.at) });
+			outcome: oc, mid: tl.mid || newMid(), iturn: iturn, ts: tick(tl.at) };
+		if (tl.doneAt) row.done = Math.max(tl.doneAt, row.ts);
+		chat.messages.push(row);
 	});
 
 	// The partial reply, badged interrupted, carrying the prompt so Continue can re-run it.

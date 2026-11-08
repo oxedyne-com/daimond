@@ -42,7 +42,7 @@ impl Tool {
                 left.push(path.clone());
                 continue;
             }
-            if let Some(why) = path_refusal(&Tool::FileRead, path) {
+            if let Some(why) = path_refusal(&Tool::FileRead, path, &ctx.workspace) {
                 out.push_str(&fmt!("== {} == {}\n\n", path, why));
                 continue;
             }
@@ -348,7 +348,7 @@ impl Tool {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn local_file_delete<H: Host>(args: &str, ctx: &ToolContext<H>) -> Outcome<String> {
         let path = res!(Self::arg(args, "path"));
-        if let Some(why) = delete_path_refusal(&path) {
+        if let Some(why) = delete_path_refusal(&path, &ctx.workspace) {
             return Ok(refusal_line(&why));
         }
         // Held, not just checked: the delete acts in the folder that was proved inside the root.
@@ -896,7 +896,7 @@ impl Tool {
         // Defanged before the cut, for the reason given in `mark_if_untrusted`: quoting a forged
         // marker lengthens the text, and the cut can only drop a tail, never make a new marker.
         s = defang(&s);
-        let tail = fmt!("\n[exit code: {}]", out.exit_code);
+        let tail = fmt!("{}{}]", EXIT_MARK, out.exit_code);
         // The same gate `run` goes through, for the same reason: this door is the one
         // `examples/devcycle_probe.rs` gives a model, and it had the same hole.
         let room = MAX_OUTPUT.saturating_sub(envelope_overhead(&origin) + tail.len());
@@ -1117,13 +1117,22 @@ impl Tool {
                 ctx.run_cwd(root_start(&caps))
             }
         };
-        // Before the bounds, and for the same reason the file tools' check comes first: an
-        // absolute `cwd` normalises into the allow-list check as `home/u/...` and is refused as
-        // out of this Diamond's workspace, which is the wrong problem to hand back. `default_cwd`
-        // normalises, so this only ever fires on a path the model wrote.
-        if cwd_rel.starts_with('/') {
-            return Ok(Exec::Refused(run_cwd_refusal(&cwd_rel, &root)));
-        }
+        // A machine path the turn's workspace could not resolve -- the browser's is no folder on
+        // the machine -- resolved against the hand's grant, by the same resolver and refusal as
+        // every path, before the bounds judge it.
+        let cwd_rel = match machine_spelt(&cwd_rel) {
+            true    => {
+                let grant = Workspace::unchecked(std::path::PathBuf::from(&root))
+                    .with_home(machine.home.as_deref().unwrap_or(""));
+                let at = grant.based(&cwd_rel);
+                let asker = Tool::from_name(tool).unwrap_or(Tool::Run);
+                if let Some(why) = path_refusal(&asker, &at, &grant) {
+                    return Ok(Exec::Refused(why));
+                }
+                at
+            },
+            false   => cwd_rel,
+        };
         // Asked as a RUN and not as a read. Reading is free now (see `Bound::OnlyWriteUnder`), so
         // `may_read` would answer yes for every path in the workspace and this guard would have
         // quietly stopped guarding -- leaving a command to be refused two layers down by the hand,
@@ -1485,7 +1494,7 @@ impl Tool {
             fmt!("\n[the command did not finish, so it reported no exit code -- \
                 the machine hand stopped or lost it]")
         } else {
-            fmt!("\n[exit code: {}]", exit)
+            fmt!("{}{}]", EXIT_MARK, exit)
         };
         // What this result COULD carry, and what this call agreed to carry. The second is the
         // budget the model can see before it spends; the first has always been here and is a
