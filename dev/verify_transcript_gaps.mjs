@@ -272,8 +272,11 @@ const MEASURE = () => {
 	const named = (e) => { const r = e.getBoundingClientRect(); return { top: r.top, id: e.id ? '#' + e.id : '.' + String(e.className).split(' ')[0] }; };
 	const after = nextShown(out), undoNext = undoUp ? nextShown(undo) : null;
 	const txt = (el) => { if (!el) return null; const cs = getComputedStyle(el), r = el.getBoundingClientRect(); return r.left + px(cs.borderLeftWidth) + px(cs.paddingLeft); };
+	// A solo work group draws its one step with no label, so a hidden step leaves nothing to open.
+	const lone = [...out.querySelectorAll(':scope > .crollup.solo[data-t="work"]')]
+		.map((g) => [...g.querySelectorAll(':scope > .crollup-body > .ctile')].some(shown));
 	return {
-		entries, groups,
+		entries, groups, lone,
 		flow: ocs.display + '/' + ocs.flexDirection,
 		outBottom: or.bottom, outPadB: px(ocs.paddingBottom), outPadL: px(ocs.paddingLeft), outLeft: or.left,
 		scrolled: out.scrollHeight - out.clientHeight - out.scrollTop,
@@ -442,6 +445,7 @@ const SESSIONS = [
 const STRAY = '#chat-output .ctile.chat-msg-assistant { margin-bottom: 3px; }';
 const dumped = {};
 const seenRoles = new Set(), seenPairs = new Set();
+const lone = { shown: 0, hidden: 0 };
 
 for (const S of SESSIONS) {
 	const profile = PROFILE + '-' + S.kind;
@@ -505,6 +509,7 @@ for (const S of SESSIONS) {
 			judge(cfg + ' rest', d, { width: w });
 			for (const e of d.entries) seenRoles.add(e.role);
 			for (let i = 1; i < d.entries.length; i++) seenPairs.add(d.entries[i - 1].role + '→' + d.entries[i].role);
+			for (const v of d.lone) lone[v ? 'shown' : 'hidden']++;
 			// One group opened in every theme, so a step's ground is judged against its group's in each
 			// (r556tx QA F3: the step contrast held in two themes and not in the rest).
 			const opened1 = await page.evaluate(() => {
@@ -674,6 +679,7 @@ for (const p of ['user→work', 'work→answer', 'user→answer', 'answer→user
 	check('fixture: the thread holds ' + p, seenPairs.has(p), [...seenPairs].join(' '));
 for (const r of ['ask', 'ask-open', 'handoff'])
 	check('fixture: the thread holds a ' + r + ' tile', seenRoles.has(r), [...seenRoles].join(' '));
+check('fixture: a lone step is shown', lone.shown > 0 && lone.hidden === 0, `${lone.shown} shown, ${lone.hidden} hidden`);
 check('fixture: a step was measured against its group', tally.grounds > 0, tally.grounds + ' step ground(s)');
 const unknown = [...seenRoles].filter((r) => r[0] === '?' || r.startsWith('tile:'));
 check('every entry in the thread has a role the rule knows', unknown.length === 0, unknown.slice(0, 4).join(' | '));

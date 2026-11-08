@@ -19,7 +19,7 @@ import { turnHold } from './chats.js';
 import { changeDiamondModel } from './tilestyle.js';
 import { DEFAULT_IDS, Triggers, _daimonApps, _diamondAppModel, _diamondAppProvider, claimDaimon,
 	daimonApp, daimonChat, daimonSettled, diamondAppKey, diamondCanRun, diamondEffort, diamondModel,
-	everyDiamondClient, loadDiamonds, relTime } from './diamonds.js';
+	everyDiamondClient, loadDiamonds, relTime, taintDaimon } from './diamonds.js';
 import { renderDiamondList, selectDiamond } from './agentspanel.js';
 import { refreshDiamondAfterChange, setCrystalBusy, setCrystalStatus } from './crystal.js';
 import { rebuildChatApp } from './marks.js';
@@ -3279,6 +3279,8 @@ export async function foldDeltaInto(diamondId, delta, sourceName, sourceRun) {
 		chatId: null, chatName: sourceName, sourceRun: sourceRun || null,
 	};
 	var landed;
+	// A worker that read outside content folds a stranger's words in: the Diamond is held first.
+	if (sourceRun && sourceRun.tainted) taintDaimon(diamondId);
 	try {
 		landed = await commitFold(diamondId, st);
 	} catch (e) {

@@ -2,7 +2,7 @@
 import { SEND_ARROW, TOMBS_KEY, aiMeter, chatInput, chatInputBar, chatOutput, chatSend, chatStop,
 	daimonOnScreen, diamondBusy, pg, sessionNameEl } from './state.js';
 import { CFG_KEY, cfgReady, dsEvent, friendlyError, readJson, t, tabViewSet, tn } from './util.js';
-import { CHAT_MODEL_FIELDS, ChatStore, bumpDiamonds, loadChatMessages, newMid, persistChats,
+import { CHAT_MODEL_FIELDS, ChatStore, bumpDiamonds, chatTaintJoin, chatTaintOf, loadChatMessages, newMid, persistChats,
 	storageAlarm, storedChats, tombMark, tombstone, touchChat, touchChatMeta, touchChatModel,
 	trashRestore } from './chatstore.js';
 import { newChatId, peekDiamondLabel, takeDiamondLabel } from './parcel_apply.js';
@@ -21,7 +21,7 @@ import { COG_D, chatDisplayName, chatName, clearDaimonSession, commitDaimonClear
 	updateActiveSession } from './tilestyle.js';
 import { meterDiamondTurn } from './pending.js';
 import { Triggers, claimDaimon, daimonApp, daimonSettled, diamondApp, diamondCanRun, diamondEffort,
-	diamondModel, loadDiamonds, setDiamondModel, triggerLabel } from './diamonds.js';
+	diamondModel, loadDiamonds, setDiamondModel, taintDaimon, triggerLabel } from './diamonds.js';
 import { clearDiamondFilters, isBuiltInDiamond, renderDiamondList, selectDiamond, showCentre,
 	updateActiveDiamond } from './agentspanel.js';
 import { crystalJson, hideCrystalSpinner, refreshDiamondAfterChange, setCrystalBusy,
@@ -967,6 +967,7 @@ export async function keepAsDiamond(chatId) {
 	// copy, so the mirror's summary object is not mutated.
 	var _kept = await ChatStore.loadMessages(chatId);
 	chat = Object.assign({}, chat, { messages: _kept.messages, session: chat.session || _kept.session });
+	chatTaintJoin(chat, _kept);
 
 	// Prefilled with the name the chat already carries, which is empty unless
 	// somebody set one — so for almost every chat this opens on a blank field
@@ -998,6 +999,9 @@ export async function keepAsDiamond(chatId) {
 	// and asking again at the moment they are naming something is one
 	// question too many.
 	setDiamondModel(id, diamondPickFromChat(chat));
+	// The chat's outside words land in the Diamond with its transcript, so the Diamond is held
+	// before they do: no daimon of it may read them as its own on a clean client.
+	if (chatTaintOf(chat)) taintDaimon(id, chatTaintOf(chat));
 
 	// The transcript, then the link that makes it an artefact. The link is
 	// attempted even if the write failed, and vice versa, because a Diamond
@@ -1409,6 +1413,8 @@ export async function foldChatInto(chat, diamondId, turns) {
 	var wasMsgs = (chat.messages || []).slice();
 	var wasMids = wasMsgs.map(function (m) { return m.mid; });
 	var landed;
+	// The folded chat's outside words go into the crystal: the Diamond is held before they land.
+	if (chatTaintOf(chat)) taintDaimon(diamondId, chatTaintOf(chat));
 	try {
 		foldStageSay(frun, 'commit');
 		landed = await commitFold(diamondId, st);

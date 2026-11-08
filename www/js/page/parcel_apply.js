@@ -3,7 +3,7 @@ import { Wasm } from './wasm.js';
 import { DIAMOND_TOMBS_KEY, MSG_TOMBS_KEY, TOMBS_KEY, pg } from './state.js';
 import { dsEvent, friendlyError, readJson, t, tn, trail } from './util.js';
 import { ChatStore, bumpDiamonds, chatDiamondOk, chatIdOk, chatMatOf, chatMsgCount, jsonBytes,
-	loadDiamondTombs, loadMsgTombs, loadTombs, mergeChatRecords, newMid, noteCloudIndexStuck,
+	chatTaintJoin, loadDiamondTombs, loadMsgTombs, loadTombs, mergeChatRecords, newMid, noteCloudIndexStuck,
 	onChatsChangedElsewhere, onDiamondsChangedElsewhere, persistChats, slimChat, storedChats,
 	transcriptOk, transcriptShape } from './chatstore.js';
 import { DEVICE_ID_RE, DEVICE_TOMBS_KEY, SYNC_CHATS_INLINE_MAX, SYNC_CLOUDBASE_KEY,
@@ -997,8 +997,8 @@ async function collectChatsRefs(inlineBudget) {
 						b = jsonBytes(serU);
 						meas[u.id] = { bytes: b, fp: fileHash(serU) };
 						fixes.push({ id: u.id, bytes: b, fp: meas[u.id].fp, seed: useed });
-						if (b <= SYNC_FILE_MAX && spent + b <= budget) kept[u.id] = { fp: meas[u.id].fp, messages: msgsU };
-						else early[u.id] = await packRef(u, msgsU, serU, meas[u.id].fp, DaimondCloud.contentGet('@c/' + u.id));
+						if (b <= SYNC_FILE_MAX && spent + b <= budget) kept[u.id] = { fp: meas[u.id].fp, messages: msgsU, taintedAt: gotU.taintedAt };
+						else early[u.id] = await packRef(u, msgsU, serU, meas[u.id].fp, DaimondCloud.contentGet('@c/' + u.id), gotU);
 						msgsU = null;
 						serU = null;
 					}
@@ -1011,7 +1011,8 @@ async function collectChatsRefs(inlineBudget) {
 
 	// The transcript (serialised `serial`, fingerprint `fp`) as a REF: the stored
 	// manifest when it names this serial, otherwise a fresh offload. Null when the
-	// chat sits this round out.
+	// chat sits this round out. `read` is the `loadMessages` answer the words came from,
+	// whose taint the entry joins.
 	//
 	// A FAILED OFFLOAD OR INDEX WRITE NEVER MOVES THE TRANSCRIPT INLINE (UNBLOCK-4).
 	// It did, outside the budget: a 507 on /api/chunk put three big chats in the
@@ -1021,10 +1022,11 @@ async function collectChatsRefs(inlineBudget) {
 	// transcript is an append-only union, so a gap is never read as a deletion -- or,
 	// with none, waits a round. The fingerprint still differs from the stored one, so
 	// the next collect tries the offload again.
-	async function packRef(sum, msgs, serial, fp, stored) {
+	async function packRef(sum, msgs, serial, fp, stored, read) {
 		var ckey = '@c/' + sum.id;
 		var entry = slimChat(sum);
 		entry.session = null;
+		chatTaintJoin(entry, read);
 		var ref;
 		if (stored && stored.fp === fp && Array.isArray(stored.chunks)) {
 			ref = { v: stored.v, size: stored.size, key: stored.key, chunks: stored.chunks };
@@ -1095,10 +1097,12 @@ async function collectChatsRefs(inlineBudget) {
 				// trust the ref reuse below makes. A copy per parcel, so a consumer that
 				// edits the array cannot reach the held one.
 				entryI.messages = hI.messages.slice();
+				chatTaintJoin(entryI, hI);
 				held[id] = hI;
 			} else {
 				var gotI = await ChatStore.loadMessages(id);
 				entryI.messages = gotI.messages || [];
+				chatTaintJoin(entryI, gotI);
 				// Kept for the next collect only with the fingerprint of what was read,
 				// and only within the budget: with nowhere to offload the inline set is
 				// every chat, and holding that would be the whole store.
@@ -1106,7 +1110,7 @@ async function collectChatsRefs(inlineBudget) {
 					var serI = JSON.stringify(entryI.messages);
 					var fpI = fileHash(serI);
 					fixes.push({ id: id, bytes: jsonBytes(serI), fp: fpI, seed: seed0 });
-					held[id] = { fp: fpI, messages: entryI.messages.slice() };
+					held[id] = { fp: fpI, messages: entryI.messages.slice(), taintedAt: gotI.taintedAt };
 					serI = null;
 				}
 				gotI = null;						// released before the next chat
@@ -1151,10 +1155,10 @@ async function collectChatsRefs(inlineBudget) {
 			}
 			continue;
 		}
-		got = null;
 		var serial = JSON.stringify(msgs);
 		var fp = fileHash(serial);
-		var entry = await packRef(sum, msgs, serial, fp, stored);
+		var entry = await packRef(sum, msgs, serial, fp, stored, got);
+		got = null;
 		// Record the AUTHORITATIVE fingerprint and byte length -- of the exact serial
 		// just read -- on the summary, so the next collect reuses this manifest with no
 		// load. A reused stale manifest keeps its own fp, so the two differ and the
@@ -2200,8 +2204,9 @@ async function applyChats(remote, from) {
 		// nothing -- leaving the merged mirror, the summary count and the legacy
 		// shadow all SHORT of the local history. (`loadMessages` also seeds this
 		// chat's append cursor, so the write path appends a true delta.)
+		var lg = null;
 		if (localMsgs === null || (localMsgs.length === 0 && chatMsgCount(st) > 0)) {
-			var lg = await ChatStore.loadMessages(r.id);
+			lg = await ChatStore.loadMessages(r.id);
 			localMsgs = lg.messages; localSession = localSession || lg.session;
 		}
 		var localLen  = Array.isArray(localMsgs) ? localMsgs.length : 0;
@@ -2220,6 +2225,7 @@ async function applyChats(remote, from) {
 			localMsgs:     localMsgs,    remoteMsgs:    r.messages,
 			localSession:  localSession, remoteSession: r.session,
 			mtombs:        mtombs });
+		chatTaintJoin(merged, lg);
 		var mergedLen = merged.messages.length;
 		// The union OUTCOME per chat. `RESURRECT` when the merged transcript is
 		// longer than either side alone -- the union has re-admitted messages one

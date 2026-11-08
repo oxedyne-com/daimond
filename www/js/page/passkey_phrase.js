@@ -5,7 +5,7 @@ import { agentsList, aiMeter, chatInputBar, chatOutput, crystalControls, diamond
 import { dsEvent, friendlyError, getSecret, hideSecret, loadCfg, saveCfg, secretEye, setSecret,
 	setSecretRevealed, syncCfgFromModels, t, tabViewGet, tn, trail } from './util.js';
 import { CHATS_DB, CHATS_LEGACY, ChatStore, bumpDiamonds, chatDiamondOk, chatIdOk, chatMsgCount,
-	chatsWithTranscripts, loadDiamondTombs, loadMsgTombs, loadTombs, mergeChatRecords,
+	chatTaintJoin, chatsWithTranscripts, loadDiamondTombs, loadMsgTombs, loadTombs, mergeChatRecords,
 	onChatsChangedElsewhere, storedChats, sweepWhenTold, transcriptOk, transcriptShape, trashSweep } from './chatstore.js';
 import { browserOf, fileHash, fileRecord, inlinePrint } from './parcel_collect.js';
 import { dropInlineHeld, healPageLogsAll } from './parcel_apply.js';
@@ -2752,8 +2752,9 @@ export async function doImport() {
 				// [] on a non-resident summary means "not loaded", not "empty" (seq 213):
 				// load the authoritative transcript before merging, or the restore unions
 				// the backup against nothing and the summary/shadow land short.
+				var lg = null;
 				if (localMsgs === null || (localMsgs.length === 0 && chatMsgCount(st) > 0)) {
-					var lg = await ChatStore.loadMessages(r.id);
+					lg = await ChatStore.loadMessages(r.id);
 					localMsgs = lg.messages; localSession = localSession || lg.session;
 				}
 				// Field-appropriate, the same rule sync uses (S-SYNC #5): a backup older
@@ -2764,6 +2765,7 @@ export async function doImport() {
 					localMsgs:     localMsgs,    remoteMsgs:    r.messages,
 					localSession:  localSession, remoteSession: r.session,
 					mtombs:        mtombs });
+				chatTaintJoin(merged, lg);
 				byId[r.id] = merged;
 			}
 			ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));

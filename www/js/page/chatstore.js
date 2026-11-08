@@ -13,7 +13,7 @@ import { BACKUP_VERSION, diag, toast } from './passkey_phrase.js';
 import { dispatchedAnswerPresent, renderHistory } from './turns.js';
 import { destroyChat, renderEmptyState, setCurrent, updateMeters } from './chats.js';
 import { chatDisplayName, chatOpening, renderSessionList } from './tilestyle.js';
-import { diamondApp, loadDiamonds, taintDaimon } from './diamonds.js';
+import { diamondApp, diamondTaintOf, loadDiamonds, taintDaimon } from './diamonds.js';
 import { destroyDiamond, setDiamondWhen, showCentre } from './agentspanel.js';
 import { crystalArrived } from './crystal.js';
 import { tOr } from './settingsui.js';
@@ -493,7 +493,7 @@ export function chatTaintOf(c) { return c ? DaimondStamp.taint(c.taintedAt, 0) :
 /// Join `a`'s and `b`'s taint onto `out`: the earlier SET stamp, set beating unset in either
 /// order (`DaimondStamp.taint`). The ONE assignment every merge of two chat records makes,
 /// `mergeChatRecords` and the tab adoption alike, and never a deletion of a stamp `out` holds.
-function chatTaintJoin(out, a, b) {
+export function chatTaintJoin(out, a, b) {
 	var ta = DaimondStamp.taint(DaimondStamp.taint(chatTaintOf(a), chatTaintOf(b)), chatTaintOf(out));
 	if (ta) out.taintedAt = ta;
 	return ta;
@@ -1329,10 +1329,12 @@ async function downloadChatsNow() {
 		if (m && m._loaded && Array.isArray(m.messages)) {
 			rec.messages = m.messages;
 			if (m.session) rec.session = m.session;
+			chatTaintJoin(rec, m);
 		} else {
 			var got = await ChatStore.loadMessages(s.id);
 			rec.messages = got.messages || [];
 			if (got.session) rec.session = got.session;
+			chatTaintJoin(rec, got);
 		}
 		list.push(rec);
 	}
@@ -2192,6 +2194,7 @@ export function threadStarted(c) {
 export async function loadChatMessages(c) {
 	if (!c || !c.id || (c._loaded && !c._short)) return c;
 	var got = await ChatStore.loadMessages(c.id);
+	if (got.taintedAt) taintChat(c, got.taintedAt);
 	if (c._loaded && !c._short) return c;          // another caller won the race
 	var live = Array.isArray(c.messages) ? c.messages : [];
 	c.messages = live.length ? mergeMessages(got.messages, live, c.id) : got.messages;
@@ -2262,6 +2265,7 @@ export async function chatsWithTranscripts(summaries) {
 		var rec = slimChat(c);
 		rec.messages = got.messages || [];
 		if (!rec.session && got.session) rec.session = got.session;
+		chatTaintJoin(rec, got);
 		out.push(rec);
 	}
 	return out;
@@ -2290,12 +2294,17 @@ export async function onChatsChangedElsewhere(touchedIds) {
 		.filter(function (c) { return c && c.id && !tombs[c.id] && !trashed(c.id); });
 	var mine = {}, mtombs = loadMsgTombs();		// one tombstone parse for the whole merge
 	pg.chats.forEach(function (c) { mine[c.id] = c; });
+	var joinedNew = false;
 	var merged = stored.map(function (s) {
 		var c = mine[s.id];
 		if (!c) {
-			// A record new here marks its taint as a merge into a held one does, below.
+			// A record new here marks its taint as a merge into a held one does, below. A
+			// conversation of a Diamond that holds outside words takes the Diamond's taint too,
+			// so it carries it if the Diamond's other records leave.
 			var h = hydrateChat(s);
-			if (chatTaintOf(h)) taintChat(h, chatTaintOf(h));
+			var ht = DaimondStamp.taint(chatTaintOf(h), h.diamondId ? diamondTaintOf(h.diamondId) : 0);
+			if (ht && ht !== chatTaintOf(h)) joinedNew = true;
+			if (ht) taintChat(h, ht);
 			return h;
 		}
 		// The taint under NO guard (H3): it only narrows, so a turn in flight loses nothing by
@@ -2387,6 +2396,7 @@ export async function onChatsChangedElsewhere(touchedIds) {
 	var railBefore = {};
 	pg.chats.forEach(function (c) { if (c && c.id) railBefore[c.id] = true; });
 	pg.chats = merged;
+	if (joinedNew) persistChats();
 	takePendingTaint();
 	try {
 		var added = merged.map(function (c) { return c && c.id; })
@@ -2422,6 +2432,7 @@ export async function onChatsChangedElsewhere(touchedIds) {
 		// when their summary shows growth.
 		if (mc === pg.current || grew) {
 			var fresh = await ChatStore.loadMessages(mc.id);
+			if (fresh.taintedAt) taintChat(mc, fresh.taintedAt);
 			mc.messages = mergeMessages(fresh.messages, mc.messages, mc.id, mtombs);
 			mc.msgCount = mc.messages.length;
 			if (fresh.session && !mc.session) mc.session = fresh.session;
@@ -3656,6 +3667,11 @@ export function install() { // page-split: install
 				}
 				var res = { messages: toStore, session: (row && row.session) || null };
 				if (cold) { res.failed = true; }
+				// The taint the row and summary held when read, AFTER the chunks: the writer commits
+				// all three in one transaction, so any word served here is covered by it. A caller
+				// that puts these words on a record joins it there, or the words outrun their stamp.
+				var ta = DaimondStamp.taint(chatTaintOf(row), chatTaintOf(sum));
+				if (ta) { res.taintedAt = ta; }
 				return res;
 			} catch (e) {
 				return { messages: [], session: null, failed: true };

@@ -5168,7 +5168,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    what the turn did (K1); the line opens to the call's arguments and output. */
 .crollup.collapsed.live:not(.solo) > .crollup-body,
 .crollup[data-t="work"].collapsed:not(.solo):has(> .crollup-body > .ctile[data-t="tool"]) > .crollup-body { display: flex; }
-.crollup[data-t="work"].collapsed > .crollup-body > :not(.live-latest, .ctile[data-t="tool"]) { display: none; }
+.crollup[data-t="work"].collapsed:not(.solo) > .crollup-body > :not(.live-latest, .ctile[data-t="tool"]) { display: none; }
 .crollup.collapsed.live .crollup-peek { display: none; }
 /* Nested tiles sit on a slightly lifted ground so the nesting reads. */
 .crollup[data-t="work"] > .crollup-body > .ctile[data-t="think"] { background: color-mix(in srgb, var(--text-secondary) 4%, var(--bg-tertiary)); }

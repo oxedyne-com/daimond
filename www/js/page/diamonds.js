@@ -420,6 +420,29 @@ var DIAMOND_EFFORT_HALF = ['effort', 'effortProvider', 'effortModel'];
 
 export function diamondModels() { return readJson(DIAMOND_MODELS_KEY, {}) || {}; }
 
+/// Diamond `id`'s own one-way taint stamp (DIAMOND-TAINT), or 0 when nothing from outside has
+/// been put into it. It rides the Diamond's model record as `taintedAt`, so it travels in every
+/// parcel round beside its picks. A build before it reads the record by its named fields only
+/// (`mergeDiamondModel` builds its answer from them), so it ignores the field and never clears
+/// it here: every merge below is a join.
+export function diamondTaintOf(id) {
+	var r = id ? diamondModels()[id] : null;
+	return DaimondStamp.taint(r && r.taintedAt, 0);
+}
+/// Join `at` (default the clock) onto Diamond `id`'s own taint, saved and sent. Answers whether
+/// it moved. The words a Diamond holds stay in it whichever of its records leaves, so this, not
+/// the records, is what the hand-out finally answers to.
+function markDiamondTainted(id, at) {
+	var all = diamondModels(), r = all[id] || {};
+	var was = DaimondStamp.taint(r.taintedAt, 0);
+	var ta = DaimondStamp.taint(was, (typeof at === 'number') ? at : Date.now());
+	if (ta === was) return false;
+	all[id] = Object.assign({}, r, { taintedAt: ta });
+	try { localStorage.setItem(DIAMOND_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+	bumpDiamonds();
+	return true;
+}
+
 /// Record what a Diamond thinks with, and what its workers think with.
 ///
 /// `pick` carries every pair -- `{ provider, model, workerProvider, workerModel,
@@ -507,6 +530,7 @@ export function setDiamondModel(id, pick, at) {
 	next.at  = Math.max(ps[0], ps[1], ps[2]);
 	next.eat = em ? stamp(was.eat) : (+was.eat || 0);
 	DIAMOND_MODEL_PAIRS.forEach(function (p, i) { if (i ? ps[i] : ps[i] !== next.at) next[p[0]] = ps[i]; });
+	if (was.taintedAt) next.taintedAt = was.taintedAt;
 	all[id] = next;
 	try { localStorage.setItem(DIAMOND_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 	// Another model is another client, and the notes are chosen per model (C6). The last-run
@@ -555,13 +579,15 @@ function mergeDiamondModel(mine, theirs, importing) {
 		return Math.max(t, mn);
 	});
 	take(DIAMOND_EFFORT_HALF, te, me);
-	if (!moved) return null;
+	var tw = DaimondStamp.taint(m.taintedAt, 0), ta = DaimondStamp.taint(tw, theirs.taintedAt);
+	if (!moved && ta === tw) return null;
 	// The stamps in the order `setDiamondModel` writes them.
 	out.at  = Math.max(ps[0], ps[1], ps[2]);
 	out.eat = Math.max(te, me);
 	DIAMOND_MODEL_PAIRS.forEach(function (p, i) { if (i ? ps[i] : ps[i] !== out.at) out[p[0]] = ps[i]; });
 	// An Effort paired with no model in force is the model's own default: kept as a level.
 	if (!out.effort) { out.effortProvider = ''; out.effortModel = ''; }
+	if (ta) out.taintedAt = ta;
 	return out;
 }
 
@@ -569,11 +595,14 @@ function mergeDiamondModel(mine, theirs, importing) {
 export function adoptDiamondModel(id, theirs, importing) {
 	if (!id) return false;
 	var all = diamondModels();
+	var tw = DaimondStamp.taint(all[id] && all[id].taintedAt, 0);
 	var next = mergeDiamondModel(all[id], theirs, importing);
 	if (!next) return false;
 	all[id] = next;
 	try { localStorage.setItem(DIAMOND_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
 	try { if (typeof Notes === 'object' && Notes) Notes.reapply(id); } catch (e) { /* the notes are not up yet */ }
+	// A taint new here holds the Diamond as a read here would: its records and its clients.
+	if (next.taintedAt && next.taintedAt !== tw) taintDaimon(id, next.taintedAt);
 	return true;
 }
 
@@ -1195,6 +1224,7 @@ export function daimonChat(f) {
 			lastPrompt: 0,
 			updatedAt: 0,
 		};
+		if (diamondTaintOf(f.id)) rec.taintedAt = diamondTaintOf(f.id);
 		pg.chats.push(rec);
 		persistChats();
 	}
@@ -3133,7 +3163,7 @@ export function daimonApp(diamondId, pick, eff) {
 	// On every hand-out, not only a build: the daimon's record remembers past a reload what
 	// `_daimonTaint` forgets (H3), and a cached client, one built for another model among them,
 	// was built before another device's taint reached the record.
-	if (id && daimonRecordTainted(id)) _daimonTaint.add(id);
+	if (id && daimonTainted(id)) _daimonTaint.add(id);
 	if (id && _daimonTaint.has(id) && typeof app.set_tainted === 'function') {
 		try { app.set_tainted(id); } catch (e) { /* an older engine has no taint */ }
 	}
@@ -3203,27 +3233,38 @@ function trimDaimonApps() {
 	}
 }
 
-/// The daimon conversation's record for Diamond `id`, if this device holds one.
-function daimonRecordOf(id) {
-	return pg.chats.find(function (c) { return c && c.diamondId === id; }) || null;
+/// Every record this device holds for Diamond `id`'s daimon conversation. A Diamond can hold
+/// more than one (a seeded errand chat beside its own), in an order the store's keys set.
+function daimonRecordsOf(id) {
+	return pg.chats.filter(function (c) { return c && c.diamondId === id; });
 }
-/// Has Diamond `id`'s daimon conversation read outside content, by its RECORD (H3)? What a
-/// reload or another device knows, where `_daimonTaint` is this page load's alone.
-function daimonRecordTainted(id) { return !!chatTaintOf(daimonRecordOf(id)); }
-/// Put the daimon's taint on its conversation's record, one-way, and save it when it changed.
-/// A Diamond with no record yet has nothing to carry it; `daimonChat` makes one on first use,
-/// before any turn can read anything.
+/// Has outside content been put into Diamond `id`, by its own stamp or any of its RECORDS (H3)?
+/// What a reload or another device knows, where `_daimonTaint` is this page load's alone. A
+/// record's stamp is joined onto the Diamond's, so the taint stays when that record leaves: a
+/// record stamped by a build before the Diamond carried its own, or restored from a backup.
+function daimonTainted(id) {
+	var ta = diamondTaintOf(id);
+	daimonRecordsOf(id).forEach(function (c) { ta = DaimondStamp.taint(ta, chatTaintOf(c)); });
+	if (ta) { markDiamondTainted(id, ta); markDaimonRecord(id, ta); }
+	return !!ta;
+}
+/// Put the daimon's taint on every record of its conversation, one-way, and save when one
+/// changed. A Diamond with no record yet carries it on its own stamp (`markDiamondTainted`).
 function markDaimonRecord(id, at) {
-	if (markChatTainted(daimonRecordOf(id), at)) persistChats();
+	var changed = false;
+	daimonRecordsOf(id).forEach(function (c) { if (markChatTainted(c, at)) changed = true; });
+	if (changed) persistChats();
 }
 
-/// Mark `diamondId`'s daimon as having read something from outside: in `_daimonTaint` and on its
-/// record, which `daimonApp` puts on every client it hands out, and on every client already built
-/// for it, a draining one too. `at` stamps the record (default the clock).
+/// Mark `diamondId`'s daimon as having read something from outside, or the Diamond as holding
+/// outside words: in `_daimonTaint`, on the Diamond's own stamp and its records, which `daimonApp`
+/// puts on every client it hands out, and on every client already built for it, a draining one
+/// too. `at` stamps them (default the clock).
 export function taintDaimon(diamondId, at) {
 	var id = String(diamondId || '');
 	if (!id) return false;
 	_daimonTaint.add(id);
+	markDiamondTainted(id, at);
 	markDaimonRecord(id, at);
 	// No client is built here: a sync merge marks through this, and a build that threw would
 	// refuse the merge.
@@ -3254,7 +3295,7 @@ function errandClean(chat, diamondId, held) {
 		return !!app.is_tainted() || (!!id && !!app.is_tainted(id));
 	}
 	try {
-		if (id && _daimonTaint.has(id)) return false;
+		if (id && (_daimonTaint.has(id) || daimonTainted(id))) return false;
 		var any = false;
 		if (id) {
 			_daimonApps.forEach(function (a) { if (_daimonOf.get(a) === id && marked(a)) any = true; });
