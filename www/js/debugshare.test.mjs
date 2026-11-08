@@ -157,7 +157,7 @@ function makeEnv(cfg) {
 	};
 	// The page going away, which is what turns a killed request into an `aborted`
 	// one rather than a failure.
-	const firePagehide = () => { (listeners.pagehide || []).forEach((fn) => fn({})); };
+	const firePagehide = (e) => { (listeners.pagehide || []).forEach((fn) => fn(e || {})); };
 
 	// The capture: every POST body, parsed. When `cfg.gateFetch` is set, each POST
 	// resolves only when the test releases it, so a snapshot can be held mid-drain and
@@ -2500,6 +2500,60 @@ async function main() {
 			env.posts.slice(before).some((p) => p.body && (p.body.rows || []).some((r) => r.tag === 'ev after.throw')));
 		env.halt();
 		DS.setEnabled(false);
+	}
+
+
+	console.log('debugshare: the tab -- one id per page load, its heap, and its unload (BEAT-TAB-HEAP)');
+	{
+		// Chrome's `performance.memory`: the beat carries the used heap, the boot the limit too.
+		const env = makeEnv({ fastTimers: true, respond: () => 500 });
+		const DS = env.win.DEBUG_SHARE;
+		env.win.performance = { memory: { usedJSHeapSize: 1900000000, totalJSHeapSize: 2000000000, jsHeapSizeLimit: 4294705152 } };
+		DS.setEnabled(true);
+		DS.event('boot', { ua: 'desktop' });
+		DS._beatTick();
+		env.firePagehide({ persisted: false });
+		const evs = (tag) => DS._outbox().filter((r) => r.tag === tag).map((r) => JSON.parse(r.data));
+		const boot = evs('ev boot')[0] || {}, beat = evs('ev beat')[0] || {}, bye = evs('ev unload')[0];
+		check('boot carries a tab id', typeof boot.tab === 'string' && /^[0-9a-f]{6}$/.test(boot.tab));
+		check('the beat carries the same tab id as the boot', beat.tab === boot.tab);
+		check('the beat carries the used heap', beat.heap === 1900000000);
+		check('boot carries the heap and its limit', boot.heap === 1900000000 && boot.heapMax === 4294705152);
+		check('pagehide sends an unload carrying the tab and its heap',
+			!!bye && bye.tab === boot.tab && bye.heap === 1900000000 && !('bf' in bye));
+		env.firePagehide({ persisted: true });
+		check('a pagehide into the back/forward cache says so', (evs('ev unload')[1] || {}).bf === 1);
+		check('the unload is persisted with the outbox, to post on the next load',
+			String(env.store.get('daimond-debugshare-outbox') || '').includes('ev unload'));
+		env.halt();
+		DS.setEnabled(false);
+	}
+	{
+		// A second page load is a second tab id; a browser without `performance.memory`
+		// sends no heap at all, never a guess.
+		const env1 = makeEnv({ fastTimers: true, respond: () => 500 });
+		const env2 = makeEnv({ fastTimers: true, respond: () => 500 });
+		const ids = [env1, env2].map((env) => {
+			const DS = env.win.DEBUG_SHARE;
+			DS.setEnabled(true);
+			DS._beatTick();
+			const b = DS._outbox().filter((r) => r.tag === 'ev beat').map((r) => JSON.parse(r.data))[0] || {};
+			check('a beat with no performance.memory carries no heap', !('heap' in b) && !('heapMax' in b));
+			env.halt();
+			DS.setEnabled(false);
+			return b.tab;
+		});
+		check('two page loads have two tab ids', !!ids[0] && !!ids[1] && ids[0] !== ids[1]);
+		const doc = { wasDiscarded: true };
+		const env3 = makeEnv({ fastTimers: true, respond: () => 500 });
+		Object.assign(env3.document, doc);
+		const DS3 = env3.win.DEBUG_SHARE;
+		DS3.setEnabled(true);
+		DS3.event('boot', { ua: 'desktop' });
+		const boot3 = JSON.parse(DS3._outbox().filter((r) => r.tag === 'ev boot')[0].data);
+		check('a boot of a tab the browser discarded says so', boot3.disc === 1);
+		env3.halt();
+		DS3.setEnabled(false);
 	}
 
 	console.log('');

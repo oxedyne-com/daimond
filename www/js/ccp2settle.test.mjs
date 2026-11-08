@@ -209,7 +209,7 @@ for (const [what, kind] of [['a runner silent past its lease', 'lease'], ['a han
 
 // ── MED-2: a row the engine never held is laid by the next build, streamed or not ──
 {
-	const names = ['settleRunnerSession', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint', 'sessionMarker', 'engineHolds', 'tailAfter', 'sessionDoubt'];
+	const names = ['settleRunnerSession', 'sessionGate', 'sessionUpto', 'dropSessionStayed', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint', 'sessionMarker', 'engineHolds', 'tailAfter', 'sessionDoubt'];
 	const st = { held: null, diags: [] };
 	const deps = { loadMsgTombs: () => ({}), window: { DaimondPeer: { settlingReport: (r) => !!r && r.t === 'report' } },
 		diag: (t, d) => st.diags.push(t + ' ' + d), chatHoldingTurn: () => st.held, touchChat() {}, persistChats() {}, markChatTainted: () => false };

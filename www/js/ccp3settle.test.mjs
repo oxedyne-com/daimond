@@ -125,7 +125,7 @@ await section('R2', async () => {
 
 // ── R1: a runner's session holds only the turns it heard ──
 await section('R1', async () => {
-	const names = ['settleRunnerSession', 'staleEngine', 'captureSession', 'keepChatTaint', 'sessionMarker', 'engineHolds', 'tailAfter', 'sessionDoubt', 'sessionHeld'];
+	const names = ['settleRunnerSession', 'sessionGate', 'sessionUpto', 'dropSessionStayed', 'staleEngine', 'captureSession', 'keepChatTaint', 'sessionMarker', 'engineHolds', 'tailAfter', 'sessionDoubt', 'sessionHeld'];
 	const st = { held: null };
 	const api = build(names, { loadMsgTombs: () => ({}), window: { DaimondPeer: { settlingReport: (r) => !!r && r.t === 'report' } },
 		diag() {}, chatHoldingTurn: () => st.held, touchChat() {}, persistChats() {}, markChatTainted: () => false });

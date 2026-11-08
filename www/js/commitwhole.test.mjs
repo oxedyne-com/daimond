@@ -111,7 +111,7 @@ function loadGate(win, env) {
 		text = text.replace(needle, broken);
 	}
 	return new Function('window', 'env',
-		'var Files = env.Files, localStorage = env.ls;\n'
+		'var Files = env.Files, localStorage = env.ls, ChatStore = env.ChatStore;\n'
 		+ 'function filesSyncable() { return env.syncable(); }\n'
 		+ 'function offloadAllowed() { return !!window.DaimondCloud && filesSyncable(); }\n'
 		+ 'with (window) {\n' + text + '\n'
@@ -132,6 +132,7 @@ function device(opts = {}) {
 	const env = {
 		ls,
 		syncable: () => !folder,
+		ChatStore: { read: () => !opts.unread },
 		Files: { machineFolderKept: async () => remembers || folder },
 	};
 	const gate = loadGate(win, env);
@@ -170,6 +171,14 @@ console.log('\n1. a fresh device learns wholeness from the empty mailbox, and ke
 	check('an empty mailbox is the whole account', d.may() && d.cloud.wholeAt() === 0);
 	check('its own push carries chunkedFull and keeps it whole', d.push() === true && d.may(), 'at v' + d.v);
 	check('and again', d.push() === true && d.may());
+}
+
+console.log('\n1b. a whole index over a chat store whose read never landed is not committed (UNBLOCK-111)');
+{
+	const d = device({ unread: true });
+	d.gate.syncIndexAt(0, 'empty', null);
+	check('whole and durable, but its chats unread: it may not commit', !d.may() && d.cloud.wholeAt() === 0);
+	check('the reason is chats-unread', d.why() === 'chats-unread', d.why());
 }
 
 console.log('\n2. a whole device stays whole over a peer\'s parcel, whole or not');

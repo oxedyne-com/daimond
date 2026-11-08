@@ -65,7 +65,7 @@ const st = {
 	dedupeSession: (m) => m, loadMsgTombs: () => ({}), ChatStore: { compact() {} }, newMid: () => 'n1',
 	peerUiStateFor: () => '', selfDeviceId: () => 'D1', leaseClockNow: () => T0,
 };
-const names = ['settleRunnerSession', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint', 'markChatTainted', 'chatTaintOf',
+const names = ['settleRunnerSession', 'sessionGate', 'sessionUpto', 'dropSessionStayed', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint', 'markChatTainted', 'chatTaintOf',
 	'tailAfter', 'sessionDoubt', 'sessionMarker', 'engineHolds', 'seedEngine'];
 const missing = names.filter((n) => !lift(SRC, n));
 check('every lifted function is in daimond.js', missing.length === 0, missing);

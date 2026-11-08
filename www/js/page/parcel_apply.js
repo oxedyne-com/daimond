@@ -911,6 +911,15 @@ export function dropInlineHeld() { inlineHeld = {}; }
 ///   files and the Diamonds, which is what stops the three inline sections summing
 ///   past the front door. Overflow offloads; nothing is dropped.
 async function collectChatsRefs(inlineBudget) {
+	// NOT FROM A CHAT STORE THAT WAS NOT READ, so `collectSync` refuses too. This names, and
+	// its reap keeps, only the chats in the mirror; over an unread store that is the legacy rows
+	// and what was saved since, so every other chat's `@c/` manifest would be reaped and
+	// a commit would hand its transcript to the gateway's sweep. The push
+	// owes the work until the store's read lands (`ChatStore.read`).
+	if (!ChatStore.read()) {
+		diag('collect REFUSED', 'the chat store has not been read');
+		throw new Error('the chat store has not been read; not collecting from it');
+	}
 	// SUMMARIES, never transcripts. `storedChats()` hands back the summary mirror
 	// (seq 213), so this loop begins holding nothing heavier than the rail already
 	// does. A transcript is loaded ONE AT A TIME in pass 2 and released before the

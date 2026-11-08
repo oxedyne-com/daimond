@@ -2,13 +2,13 @@
 import { chatOutput, diamondBusy, pg } from './state.js';
 import { dsEvent, dsFold, readJson, t } from './util.js';
 import { ChatStore, chatTaintOf, ensureDispatchedResident, loadChatMessages, msgJoin, msgTombstone, newMid,
-	onChatsChangedElsewhere, persistChats, stampMessages, takePendingTaint, takeReportTaint, touchChat, touchMsg } from './chatstore.js';
+	onChatsChangedElsewhere, persistChats, stampMessages, taintChat, takePendingTaint, takeReportTaint, touchChat, touchMsg } from './chatstore.js';
 import { DEVICE_ID_RE, loadDevices, nominatedDeviceId } from './parcel_collect.js';
 import { ARRIVE_FRESH_MS, noteArrive } from './parcel_apply.js';
-import { _threadScope, captureSession, ensureApp, honourGone, scopeTurnApp, settleRunnerAlerts,
+import { _threadScope, captureSession, ensureApp, fetchRunnerSession, honourGone, scopeTurnApp, settleRunnerAlerts,
 	settleRunnerAsk, settleRunnerSession, settleRunnerWords, syncComposer, threadScopeKey } from './send.js';
-import { drainAfterHeld, drainHeldQueues, drainQueue, drainSteerQueue, heedUnheard, interjectMessage,
-	leaseDoorRead, requeueUnheard, runTurn } from './steer.js';
+import { bgNoteFromRunner, drainAfterHeld, drainHeldQueues, drainQueue, drainSteerQueue, heedUnheard,
+	interjectMessage, leaseDoorRead, requeueUnheard, runTurn } from './steer.js';
 import { PeerAgents, Workers } from './workers.js';
 import { Files } from './files_view.js';
 import { _enginePoison, endTurnEngine } from './layout.js';
@@ -368,11 +368,11 @@ async function graftSeed(errand, opts) {
 			updatedAt: 0,
 			metaAt:    0,
 		};
-		// What the dispatcher's record says the conversation has read (H3): one-way, so a seed
-		// can only narrow the chat it builds.
-		if (chatTaintOf(seed)) chat.taintedAt = chatTaintOf(seed);
 		chat._loaded = true;					// its transcript is what we are about to write
 		pg.chats.push(chat);
+		// What the dispatcher's record says the conversation has read (H3): one-way, so a seed
+		// can only narrow the chat it builds.
+		if (chatTaintOf(seed)) taintChat(chat, chatTaintOf(seed));
 		takePendingTaint([chat]);
 		diag('seed chat', 'chat=' + chat.id + ' from the errand (never synced here)');
 	}
@@ -1465,9 +1465,14 @@ function registerPeerRunner() {
 	// HIS WORDS ARE FILED BEFORE THE SESSION LANDS (U2): a report carrying words its run's folds
 	// staged waits for them to be in this tab's words log, so a session is never stored ahead of
 	// the words it folded away. A report with none settles at once, as it always has.
-	DaimondPeer.onReport(async function (report) {
+	DaimondPeer.onReport(async function (report, row, fromTab) {
 		try {
 			var tid = String(report.turnId);
+			// HANDED ON BY THE TAB THAT COLLECTED IT: settled here only where this tab
+			// holds the turn; the collector has settled the store.
+			if (fromTab && !dispatchedChat(tid) && !chatHoldingTurn(tid)) return;
+			diag('handoff report', 'turn=' + tid + ' ' + String(report.status) + ' tab=' + DaimondPeer.tabId()
+				+ (fromTab ? ' from=' + fromTab : ' collected'));
 			// A REPORT ON ANOTHER ERRAND of this turn id is not this hand-off's, and settles nothing.
 			if (otherErrandReport(report)) {
 				diag('handoff report ignored', 'turn=' + tid + ' eid=' + String(report.eid).slice(0, 12)
@@ -1498,8 +1503,11 @@ function registerPeerRunner() {
 			}
 			peerReports[tid] = report;
 			takeReportTaint(report);
+			// The tab that sent the turn may be closed: its chat is loaded here, so the report
+			// settles into the store whichever tab collects it.
+			await chatHoldingReport(report);
 			var filed = report.words ? await settleRunnerWords(report) : true;
-			settleRunnerSession(report, filed);
+			settleRunnerSession(await fetchRunnerSession(report, filed), filed);
 			await settleRunnerAlerts(report);
 			await settleRunnerAsk(report);
 			// THE TURN'S ROWS COME HOME WITH IT (RUN-HIST): a settling report that names the
@@ -1587,6 +1595,8 @@ function registerPeerRunner() {
 		});
 		// A runner's account of a turn it undid (RUN-HIST), and the asks still waiting on one.
 		if (DaimondPeer.onUndone) DaimondPeer.onUndone(undoneFromRunner);
+		// A background command's end after its turn (BG-WAKE): its row in the chat, which wakes a turn.
+		if (DaimondPeer.onBgNote) DaimondPeer.onBgNote(bgNoteFromRunner);
 		// An ask the relay let lapse goes again when its runner is seen back.
 		window.addEventListener('daimond:presence', function () {
 			if (!window.DaimondVersions || !DaimondVersions.undoTurnAgain) return;

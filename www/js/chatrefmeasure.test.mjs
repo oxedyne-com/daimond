@@ -71,6 +71,7 @@ function world(specs, opts) {
 	});
 	const ChatStore = {
 		stored:       () => mirror,
+		read:         () => true,
 		settled:      () => Promise.resolve(),
 		loadMessages: async (id) => {
 			if (failOnce === id) { failOnce = null; throw new Error('transient read fault on ' + id); }

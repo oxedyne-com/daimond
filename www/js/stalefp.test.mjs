@@ -67,6 +67,7 @@ async function scenario(landFirst) {
 
 	const ChatStore = {
 		stored:       () => mirror,
+		read:         () => true,
 		loadMessages: async (id) => ({ messages: disk.slice() }),		// the disk as it is when the read begins
 		settled:      () => writeLands || Promise.resolve(),
 		noteFps: (fixes) => {											// the mirror half of the real one

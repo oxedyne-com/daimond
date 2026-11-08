@@ -142,25 +142,27 @@ console.log('\n(b) merge: the taint survives either side and either order\n');
 		}
 		check('on ' + N + ' generated pairs, the merge is the earlier set stamp, both orders', held === N, held + '/' + N);
 	}
-	// The tab adoption, lifted from the tree: the block that updates `c` from the store's `s`.
-	const at = APP.indexOf('var sMeta = (typeof s.metaAt');
-	const end = APP.indexOf('return c;', at);
+	// The tab adoption's taint join, lifted from the tree: it runs before the skip of a chat the
+	// pull did not name, so every held record takes its summary's stamp.
+	const at = APP.indexOf('var taWas = chatTaintOf(c);');
+	const end = APP.indexOf('if (only && !only[s.id]) return c;', at);
 	const block = at >= 0 && end > at ? APP.slice(at, end) : '';
-	check('the tab adoption joins the taint under no guard and tells the engine',
-		/\n\t+if \(chatTaintJoin\(c, s, c\) && c\.app\) applyChatTaint\(c, c\.app\);/.test(block));
-	const G = lift(makeWindow({ now: NOW }), ['chatTaintJoin', 'applyChatTaint', 'hereOf', 'nativeJoin', 'deriveNativeTotals']);	// and the derived totals (RT-C)
+	check('the tab adoption joins the taint under no guard, before the skip, and marks a new stamp through taintChat',
+		/\n\t+var ta = chatTaintJoin\(c, s, c\);\n\t+if \(ta && ta !== taWas\) taintChat\(c, ta\);/.test(block));
+	const G = lift(makeWindow({ now: NOW }), ['chatTaintOf', 'chatTaintJoin', 'taintChat', 'hereOf', 'nativeJoin', 'deriveNativeTotals'],
+		{ persistChats() {} });	// and the derived totals (RT-C)
 	if (G && block) {
 		const has = (n) => new RegExp('\\n\\t+function ' + n + '\\(').test(APP);
 		const extra = ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].filter(has);
 		const H = lift(makeWindow({ now: NOW }), ['slimChat', 'chatFields'].concat(extra), { loadMsgTombs: () => ({}) });
 		if (H) {
 			const ADOPT = new Function('s', 'c', 'DaimondStamp', 'slimChat', 'chatFields', 'CHAT_TURN_FIELDS', 'CHAT_META_FIELDS',
-				'chatTaintJoin', 'applyChatTaint', 'hereOf', 'nativeJoin', 'deriveNativeTotals', ...extra, block + '\nreturn c;');
+				'chatTaintOf', 'chatTaintJoin', 'taintChat', 'hereOf', 'nativeJoin', 'deriveNativeTotals', ...extra, block + '\nreturn c;');
 			const w2 = makeWindow({ now: NOW });
 			const e = engine(false);
 			const c = { id: 'c1', name: 'Plan', updatedAt: 300, metaAt: 300, _generating: true, app: e };	// a turn in flight here
 			const s = H.slimChat({ id: 'c1', name: 'Old', updatedAt: 100, metaAt: 100, taintedAt: 70 });
-			const out = ADOPT(s, c, w2.DaimondStamp, H.slimChat, H.chatFields, [], [], G.chatTaintJoin, G.applyChatTaint, G.hereOf, G.nativeJoin, G.deriveNativeTotals, ...extra.map((n) => H[n]));
+			const out = ADOPT(s, c, w2.DaimondStamp, H.slimChat, H.chatFields, [], [], G.chatTaintOf, G.chatTaintJoin, G.taintChat, G.hereOf, G.nativeJoin, G.deriveNativeTotals, ...extra.map((n) => H[n]));
 			check('the adoption takes an older store copy\'s taint, mid-turn', out.taintedAt === 70, out.taintedAt);
 			check('...and tells the engine this tab holds at once', e.told === 1 && e.tainted, e.told);
 		}

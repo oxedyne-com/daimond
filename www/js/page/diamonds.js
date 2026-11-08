@@ -3110,8 +3110,8 @@ export function diamondApp(diamondId, pick, eff) {
 
 /// The client `diamondId`'s daimon conversation runs on: its own, on the Diamond's own provider
 /// and model, built and seeded as `diamondApp`'s is. Every hand-out makes it the most recently
-/// used, and a build trims the idle ones past `DAIMON_IDLE_KEPT`. Taint marked on the Diamond
-/// this page load is put back on a client built again.
+/// used, and a build trims the idle ones past `DAIMON_IDLE_KEPT`. The Diamond's taint, this page
+/// load's and its record's, is put on every client it hands out.
 ///
 /// # Arguments
 /// * `diamondId` - The Diamond.
@@ -3125,24 +3125,22 @@ export function daimonApp(diamondId, pick, eff) {
 	var a = appCfgFor(m);
 	var k = diamondAppKey(a) + '\u0000' + id;
 	if (typeof eff !== 'string' && pick && pick.model) eff = pick.effort || '';
-	var app = _daimonApps.get(k);
-	if (app) {
-		_daimonApps.delete(k);
-		_daimonApps.set(k, app);
-		noteSteer(app, id, a.model);
-		if (typeof eff === 'string') applyEffort(app, a.provider || '', a.model || '', eff);
-		return app;
-	}
-	app = buildDiamondClient(a, eff);
-	if (id) _daimonOf.set(app, id);
-	// The daimon's record remembers past a reload what `_daimonTaint` forgets (H3).
+	var app = _daimonApps.get(k), built = !app;
+	if (built) {
+		app = buildDiamondClient(a, eff);
+		if (id) _daimonOf.set(app, id);
+	} else _daimonApps.delete(k);
+	// On every hand-out, not only a build: the daimon's record remembers past a reload what
+	// `_daimonTaint` forgets (H3), and a cached client, one built for another model among them,
+	// was built before another device's taint reached the record.
 	if (id && daimonRecordTainted(id)) _daimonTaint.add(id);
 	if (id && _daimonTaint.has(id) && typeof app.set_tainted === 'function') {
 		try { app.set_tainted(id); } catch (e) { /* an older engine has no taint */ }
 	}
 	_daimonApps.set(k, app);
 	noteSteer(app, id, a.model);
-	trimDaimonApps();
+	if (built) trimDaimonApps();
+	else if (typeof eff === 'string') applyEffort(app, a.provider || '', a.model || '', eff);
 	return app;
 }
 
@@ -3174,14 +3172,7 @@ function keepDaimonTaint(app) {
 	if (!id) return;
 	var t = false;
 	try { t = typeof app.is_tainted === 'function' && !!app.is_tainted(id); } catch (e) { t = false; }
-	if (!t) return;
-	_daimonTaint.add(id);
-	markDaimonRecord(id);
-	_daimonApps.forEach(function (other) {
-		if (other !== app && _daimonOf.get(other) === id && typeof other.set_tainted === 'function') {
-			try { other.set_tainted(id); } catch (e) { /* an older engine has no taint */ }
-		}
-	});
+	if (t) taintDaimon(id);
 }
 
 /// A turn on `app` has settled: its taint is kept, its claim goes, a client a reset left
@@ -3226,17 +3217,23 @@ function markDaimonRecord(id, at) {
 	if (markChatTainted(daimonRecordOf(id), at)) persistChats();
 }
 
-/// Mark `diamondId`'s daimon as having read something from outside: on its client, and in
-/// `_daimonTaint`, so a client built again for it starts tainted. `at` stamps the record (default
-/// the clock).
+/// Mark `diamondId`'s daimon as having read something from outside: in `_daimonTaint` and on its
+/// record, which `daimonApp` puts on every client it hands out, and on every client already built
+/// for it, a draining one too. `at` stamps the record (default the clock).
 export function taintDaimon(diamondId, at) {
 	var id = String(diamondId || '');
 	if (!id) return false;
 	_daimonTaint.add(id);
 	markDaimonRecord(id, at);
-	var da = daimonApp(id);
-	if (da && da.set_tainted) { da.set_tainted(id); return true; }
-	return false;
+	// No client is built here: a sync merge marks through this, and a build that threw would
+	// refuse the merge.
+	function mark(app) {
+		if (_daimonOf.get(app) !== id || typeof app.set_tainted !== 'function') return;
+		try { app.set_tainted(id); } catch (e) { /* an older engine has no taint */ }
+	}
+	_daimonApps.forEach(mark);
+	_daimonDraining.forEach(mark);
+	return true;
 }
 
 /// Has this chat read nothing from outside, so its errand may say `clean` (U4 ERRAND-TAINT)?

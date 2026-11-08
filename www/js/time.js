@@ -94,6 +94,7 @@
 			when:         { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' },
 			whenFull:     { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' },
 			clock:        { hour: 'numeric', minute: '2-digit' },
+			hm:           { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' },
 		};
 		// A date in words, in the language `loc` (the app's, from the window's own
 		// copy), on the account's calendar. `v` is an epoch, a Date, a bare day or

@@ -65,7 +65,7 @@ const stubs = {
 	peerReports: {}, _localEnding: {}, _localRecovering: {}, _lapseReading: {}, _lapseRead: {}, armHeldWake() {},
 	drainAfterHeld: (c) => api.drainQueue(c, false),
 };
-const names = ['settleRunnerSession', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint', 'sessionMarker', 'engineHolds',
+const names = ['settleRunnerSession', 'sessionGate', 'sessionUpto', 'dropSessionStayed', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint', 'sessionMarker', 'engineHolds',
 	'reconcileEngine', 'sessionPlan', 'tailAfter', 'sessionDoubt', 'sessionCut', 'daimonPrior', 'dedupeSession',
 	'foldGap', 'foldCover', 'foldHeld', 'dispatchInFlight', 'lapsedByClock', 'lapseConfirmed', 'lapseMark', 'confirmLapse', 'leaseDoorRead', 'drainQueue'];
 const api = new Function(...Object.keys(stubs), 'var current = null, _unloading = false, chats = [];\n'

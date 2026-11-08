@@ -48,7 +48,7 @@ function balanced(brace) {
 }
 /// The callback daimond.js hands `DaimondPeer.onReport`.
 function reportHandler() {
-	const at = src.indexOf('DaimondPeer.onReport(async function (report) {');
+	const at = src.indexOf('DaimondPeer.onReport(async function (report');
 	if (at < 0) return '';
 	const open = src.indexOf('async function', at);
 	return '(' + src.slice(open, balanced(src.indexOf('{', open))) + ')';
@@ -116,8 +116,8 @@ function page(ls, o) {
 	const stubs = {
 		currentDiamond: { id: 'd1' }, diamonds: [], selfDeviceId: () => 'PHONE', deviceNameFor: () => '',
 		relTime: () => 'just now', showCrystalHistory: () => { calls.redrawn = (calls.redrawn | 0) + 1; },
-		peerReports: {}, requeueUnheard() {}, takeReportTaint() {}, settleRunnerWords: async () => true, settleRunnerSession() {}, settleRunnerAlerts() {}, settleRunnerAsk() {}, renderDispatchedBadges() {}, updateExpedite() {},
-		otherErrandReport: () => false, _openAsk: {}, histFile: () => makeEl('div'),
+		peerReports: {}, requeueUnheard() {}, takeReportTaint() {}, settleRunnerWords: async () => true, fetchRunnerSession: async (r) => r, settleRunnerSession() {}, settleRunnerAlerts() {}, settleRunnerAsk() {}, renderDispatchedBadges() {}, updateExpedite() {},
+		otherErrandReport: () => false, chatHoldingReport: async () => null, diag() {}, _openAsk: {}, histFile: () => makeEl('div'),
 		diamondTurning: (id) => !!(o.turning && o.turning(id)), refreshDiamondAfterChange: async () => {},
 		noticeDialog: (title, body) => { (calls.notices = calls.notices || []).push([title, body]); },
 	};

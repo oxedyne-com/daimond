@@ -333,7 +333,7 @@ console.log('\n(g) pending: the taint of a chat with no record here waits for th
 	const mod = (n) => readFileSync(join(TREE, 'www', 'js', 'page', n), 'utf8');
 	const boot = mod('boot.js').slice(mod('boot.js').indexOf('pg.chats = await loadChatsHeld();'));
 	check('the boot\'s load takes the pending taint', /^pg\.chats = await loadChatsHeld\(\);[^\n]*\n\s*takePendingTaint\(\);/.test(boot), boot.slice(0, 160));
-	check('an errand\'s seeded chat takes the pending taint', /pg\.chats\.push\(chat\);\n\s*takePendingTaint\(\[chat\]\);\n\s*diag\('seed chat'/.test(mod('handoff.js')), 'no take beside the seed');
+	check('an errand\'s seeded chat takes the pending taint', /pg\.chats\.push\(chat\);\n(?:[^\n]*\n)*?\s*takePendingTaint\(\[chat\]\);\n\s*diag\('seed chat'/.test(mod('handoff.js')), 'no take beside the seed');
 }
 
 console.log('\n' + (checks - failures) + '/' + checks + ' checks passed');

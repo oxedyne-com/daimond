@@ -4269,9 +4269,11 @@ async function runSteerHeld(f, presetArg, depthArg, detached, how, held, models)
 			dsEvent('tool', toolRow);
 			// The outcome is stored with the log, as it is in a chat: this conversation
 			// is durable, and a reload must not have to guess at prose to redraw it.
-			if (last && last.role === 'tool_log' && !last.content) {
+			var doneRow = last && last.role === 'tool_log' && !last.content ? last : null;
+			if (doneRow) {
 				last.content = ev.content || '';
 				last.outcome = ev.outcome || '';
+				last.done = Date.now();
 				if (sJ) sJ.toolDone(dumid, rec.id, last.callId || last.mid, ev.content || '', ev.outcome || '');
 				if (ev.paused) last.paused = String(ev.paused);
 				// A finished write goes into this Diamond's Recent.
@@ -4284,7 +4286,7 @@ async function runSteerHeld(f, presetArg, depthArg, detached, how, held, models)
 				touchMsg(last);
 			}
 			busySay(rec, tOr('chat.busy_next', 'Tool call {n} done, thinking…', { n: callN }));
-			if (onScreen()) renderToolResult(ev.name || '', ev.content || '', ev.outcome, ev.paused || '');
+			if (onScreen()) renderToolResult(ev.name || '', ev.content || '', ev.outcome, ev.paused || '', doneRow);
 		} else if (ev.type === 'interjected') {
 			// HIS WORDS LANDED IN THE DAIMON'S TURN (UNBLOCK-27 R7), at the seam, as a chat's do.
 			var saidD = ev.content || '';

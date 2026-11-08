@@ -23,7 +23,7 @@ function lift(src, name) {
 }
 test('a mid-less note in the runner\'s turn keeps t3/a3 out of the held set (QA ccp3r A LOW-1)',
 	{ skip: process.env.QA_FLOW ? false : 'FLOW: the runner sends its own held set (settle.rs ~1892), with U2 in ccp4' }, () => {
-	const names = ['settleRunnerSession', 'staleEngine', 'captureSession', 'keepChatTaint', 'sessionMarker', 'engineHolds', 'tailAfter', 'sessionDoubt', 'sessionHeld'];
+	const names = ['settleRunnerSession', 'sessionGate', 'sessionUpto', 'dropSessionStayed', 'staleEngine', 'captureSession', 'keepChatTaint', 'sessionMarker', 'engineHolds', 'tailAfter', 'sessionDoubt', 'sessionHeld'];
 	const st = { held: null, diags: [] };
 	const deps = { loadMsgTombs: () => ({}), window: { DaimondPeer: { settlingReport: (r) => !!r && r.t === 'report' } },
 		diag: (t, d) => st.diags.push(t + ' ' + d), chatHoldingTurn: () => st.held, touchChat() {}, persistChats() {}, markChatTainted: () => false };

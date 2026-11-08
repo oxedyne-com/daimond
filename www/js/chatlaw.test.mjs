@@ -51,7 +51,7 @@ const w = makeWindow({ now: 1_000_000_000 });
 const want = ['mergeChatRecords', 'slimChat', 'chatFields'];
 // The one-way taint (H3 TAINT-DURABLE), where the tree has it: its join and its reader.
 // And the derived totals of the native runs (RT-C), which both merges make beside it.
-const TAINT = ['chatTaintOf', 'chatTaintJoin', 'applyChatTaint', 'runKeyCmp', 'hereOf', 'nativeBaseWinner', 'nativeJoin', 'deriveNativeTotals'];
+const TAINT = ['chatTaintOf', 'chatTaintJoin', 'applyChatTaint', 'taintChat', 'runKeyCmp', 'hereOf', 'nativeBaseWinner', 'nativeJoin', 'deriveNativeTotals'];
 const has = (n) => new RegExp('\\n\\t+function ' + n + '\\(').test(APP);
 for (const n of ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].concat(TAINT)) if (has(n)) want.push(n);
 const F = loadPage({ window: w, want: want, stub: { loadMsgTombs: () => ({}) } });
@@ -131,12 +131,15 @@ console.log('\nA. the join laws on the record\'s bytes (2000 generated pairs and
 	check('a record travels with `name` a string even when it was never set', slimChat({ id: 'c1' }).name === '');
 }
 
-// ── The tab adoption, lifted from the tree: the block that updates `c` from `s`. ──
+// ── The tab adoption, lifted from the tree: the blocks that update `c` from `s`, the taint join
+// (before the skip of a chat the pull did not name) and the fields after the transcript union. ──
 function adoptionFn() {
-	const at = APP.indexOf('var sMeta = (typeof s.metaAt');
+	const ta = APP.indexOf('var taWas = chatTaintOf(c);');
+	const skip = APP.indexOf('if (only && !only[s.id]) return c;', ta);
+	const at = APP.indexOf('var sMeta = (typeof s.metaAt', skip);
 	const end = APP.indexOf('return c;', at);
-	if (at < 0 || end < 0) throw new Error('the tab adoption block was not found');
-	const body = APP.slice(at, end);
+	if (ta < 0 || skip < 0 || at < 0 || end < 0) throw new Error('the tab adoption block was not found');
+	const body = APP.slice(ta, skip) + APP.slice(at, end);
 	const args = ['s', 'c', 'DaimondStamp', 'slimChat', 'chatFields', 'CHAT_TURN_FIELDS', 'CHAT_META_FIELDS'];
 	const extra = ['chatMetaBeats', 'chatTurnBeats', 'takeChatMeta', 'chatMetaFields', 'takeChatModel'].concat(TAINT).filter(has);
 	return new Function(...args, ...extra, body + '\nreturn c;');

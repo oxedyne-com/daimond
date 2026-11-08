@@ -16,6 +16,9 @@
      S5  here, but the chat off screen: none, unclaimed; opened, it runs
      S6  handed to a runner: the row is the prompt, tagged, never written twice
      S7  the rule (`DaimondPeer.bgOwed`)
+     S8  Kimberlite's `bg-note` (T_BG_NOTE, `codec::bg_note_js`) taken on two devices: one row
+         on each, one turn between them; taken again, or synced, still one; a bad or trashed
+         one adds nothing
 
    Run:  node www/js/bgwake.test.mjs
    ============================================================ */
@@ -113,15 +116,19 @@ function tab(o) {
 	const d = o.door;
 	const P = {
 		bgOwed: realP.bgOwed,
+		bgNoteRow: realP.bgNoteRow,
 		syncCas: () => d,
 		async settleLease(what, tid, holder, mode) { settled.push(mode); return d.settle(tid, holder, mode); },
 	};
 	const L = { take: (tid, opts) => d.take(tid, opts), RENEW_EVERY_MS: 30000 };
-	const w = { DaimondPeer: P, DaimondLease: L, DaimondSync: { heard: () => true } };
+	const S = { heard: () => true, flush: async () => {} };
+	const w = { DaimondPeer: P, DaimondLease: L, DaimondSync: S };
 	const nav = { locks: o.locks };
 	const fakes = {
-		pg, window: w, navigator: nav, DaimondPeer: P, DaimondLease: L,
+		pg, window: w, navigator: nav, DaimondPeer: P, DaimondLease: L, DaimondSync: S,
 		ChatStore: { stored: () => [] },
+		trashed: (id) => !!(o.trashed && o.trashed[id]),
+		touchMsg: (m) => m, touchChat() {}, persistChats() {}, renderHistory() {},
 		loadChatMessages: async (c) => c,
 		recoveringHere: () => false,
 		dispatchInFlight: () => null,
@@ -147,7 +154,8 @@ function tab(o) {
 	const names = Object.keys(fakes);
 	// The page's view of the source reads `pg.chats` as `chats` (dev/pagesrc.mjs): live, through `pg`.
 	const make = new Function(...names, 'with (pg) {\n' + wakeBlock + '\n' + drainBlock
-		+ '\nreturn { wakeBgEnds: wakeBgEnds, drainQueue: drainQueue };\n}');
+		+ '\nreturn { wakeBgEnds: wakeBgEnds, drainQueue: drainQueue,'
+		+ ' bgNoteFromRunner: typeof bgNoteFromRunner === \'function\' ? bgNoteFromRunner : null };\n}');
 	const api = make(...names.map((k) => fakes[k]));
 	return Object.assign(api, { chat, pg, runs, dispatched, settled });
 }
@@ -240,6 +248,58 @@ console.log('\n— S7: the rule —');
 	m.push({ role: 'assistant', mid: 'a9', iturn: 'bg-r1-7', content: 'x' });
 	check('S7 a row any turn names is not', realP.bgOwed(m).length === 0);
 	check('S7 a plain prompt is not', realP.bgOwed([{ role: 'user', mid: 'u', content: 'hi' }]).length === 0);
+}
+
+console.log('\n— S8: Kimberlite\'s bg-note, two devices —');
+{
+	// As `codec::bg_note_js` seals it (kimb/runshell 17ccddd52): no iturn, and the event no turn field.
+	const note = () => ({ t: 'bg-note', v: 1, to: 'dev-a', chatId: 'c1', run: 'r1',
+		row: { role: 'user', app: true, mid: 'bg-r1-7', content: NOTE, bg: EVENT, ts: 3 }, ts: 3 });
+	const ended = () => transcript().slice(0, 2);
+	check('S8 the tag is a peer type', realP.peerType('bg-note') === true);
+	const meta = realP.relayMeta ? realP.relayMeta(note(), Date.now()) : {};
+	check('S8 held on the relay for its asker', meta['for'] === 'dev-a' && meta.ttl > 0, JSON.stringify(meta));
+	const d = door();
+	const a = tab({ door: d, locks: locks(), self: 'dev-a', messages: ended() });
+	const b = tab({ door: d, locks: locks(), self: 'dev-b', messages: ended(), offScreen: true, seat: 'runner' });
+	const ingest = (t, env) => t.bgNoteFromRunner ? t.bgNoteFromRunner(env) : Promise.resolve();
+	await ingest(a, note());
+	await ingest(b, note());
+	await ingest(a, note());		// pumped again: Kimberlite keeps it until posted
+	await tick(60);
+	const rows = (t) => t.chat.messages.filter((m) => m.mid === 'bg-r1-7');
+	check('S8 one row on each device', rows(a).length === 1 && rows(b).length === 1, rows(a).length + '/' + rows(b).length);
+	check('S8 the row as Kimberlite sent it', rows(a)[0] && rows(a)[0].content === NOTE && rows(a)[0].app === true
+		&& rows(a)[0].bg && rows(a)[0].bg.id === '7' && rows(a)[0].role === 'user');
+	const woke = a.runs.length + a.dispatched.length + b.runs.length + b.dispatched.length;
+	check('S8 exactly one turn across the two devices', woke === 1,
+		a.runs.length + '+' + a.dispatched.length + ' / ' + b.runs.length + '+' + b.dispatched.length);
+	check('S8 its prompt is the event', (a.runs[0] || b.dispatched[0] || {}).text === NOTE);
+
+	// Taken on one device only: the other has it by sync and stands down at the door.
+	const d2 = door();
+	const p = tab({ door: d2, locks: locks(), self: 'dev-a', messages: ended() });
+	const q = tab({ door: d2, locks: locks(), self: 'dev-b', messages: ended() });
+	await ingest(p, note());
+	await tick(40);
+	q.chat.messages.push(Object.assign({}, rows(p)[0] || {}));
+	q.wakeBgEnds();
+	await tick(40);
+	check('S8 synced to the other device, still one turn', p.runs.length + q.runs.length === 1,
+		p.runs.length + '+' + q.runs.length);
+
+	const bad = tab({ door: door(), locks: locks(), messages: ended() });
+	const wrongRun = note(); wrongRun.row.mid = 'bg-r9-7';
+	const noEvent = note(); delete noEvent.row.bg;
+	const otherChat = note(); otherChat.chatId = 'c9';
+	for (const e of [wrongRun, noEvent, otherChat]) await ingest(bad, e);
+	await tick(40);
+	check('S8 a bad note adds nothing and wakes nothing', bad.chat.messages.length === 2 && bad.runs.length === 0,
+		bad.chat.messages.length + '/' + bad.runs.length);
+	const gone = tab({ door: door(), locks: locks(), messages: ended(), trashed: { c1: 1 } });
+	await ingest(gone, note());
+	await tick(40);
+	check('S8 a trashed chat takes none', gone.chat.messages.length === 2 && gone.runs.length === 0);
 }
 
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall passed');

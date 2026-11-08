@@ -361,8 +361,10 @@ fn child_ctx(pipe: PipeLink, name: &str) -> ToolContext<NativeHost> {
         Ok(d)  => d,
         Err(e) => panic!("a scratch directory: {}", e),
     };
+    // Its home is its root, as a run's whose workspace is the home: `~` names the root.
+    let home = dir.to_string_lossy().to_string();
     let ws = match Workspace::new(dir) {
-        Ok(w)  => w,
+        Ok(w)  => w.with_home(&home),
         Err(e) => panic!("a workspace: {}", e),
     };
     ToolContext {
@@ -721,6 +723,58 @@ fn hl5b_f_nothing_store_owned_lands_on_the_childs_disk() {
     assert!(red.is_ok(), "red: {:?}", red);
     assert_eq!(named, vec![s(STATE_PATH)], "red: with store_owned off STATE.md was not on the disk");
     eprintln!("RED HL5b (f): store_owned off, STATE.md landed on the child's disk");
+}
+
+/// STORE-OWNED-ABS: a Diamond's file the child names by its absolute path, by `~`, or through a
+/// link into `diamonds/` is the store's -- written, moved and read there -- and nothing stands on
+/// the child's disk, neither under `diamonds/` nor as `<root>/<root>/diamonds/...`.  Fails where
+/// the port judged only the relative `diamonds/<id>` spelling.
+#[test]
+fn store_owned_abs_a_diamonds_file_named_absolute_tilde_or_linked_is_the_stores() {
+    use crate::engine::host::fs::HostFs;
+    let mem = standing();
+    let (srv, pipe, h) = piped(mem.clone());
+    let ctx = child_ctx(pipe, "store_owned_abs");
+    let root = ctx.workspace.root().to_path_buf();
+    // A home's own `diamonds/` folder stands, empty, and `notes` is a link to it.
+    if let Err(e) = std::fs::create_dir_all(root.join("diamonds")) {
+        panic!("making diamonds/: {}", e);
+    }
+    if let Err(e) = std::os::unix::fs::symlink("diamonds", root.join("notes")) {
+        panic!("linking notes: {}", e);
+    }
+    let r = root.to_string_lossy().to_string();
+    let fs = ctx.host().fs();
+    let lic = |p: &str| child_lic(&ctx, p);
+    let cases = [
+        ("abs",         fmt!("{}/diamonds/d/DECISIONS.md", r),  "diamonds/d/DECISIONS.md"),
+        ("tilde",       s("~/diamonds/d/tilde.md"),             "diamonds/d/tilde.md"),
+        ("linked",      s("notes/d/linked.md"),                 "diamonds/d/linked.md"),
+        ("abs-linked",  fmt!("{}/notes/d/both.md", r),          "diamonds/d/both.md"),
+    ];
+    let mut cols = Vec::new();
+    for (name, path, key) in cases.iter() {
+        let body = fmt!("# {}\n", name).into_bytes();
+        let wrote = rt().block_on(fs.write_licensed(FileRoot::Workspace, &lic(path), &body));
+        let read = rt().block_on(fs.read_file(FileRoot::Workspace, path));
+        let held = mem.files().get(*key) == Some(&body);
+        cols.push((*name, wrote.is_ok() && held && read.ok() == Some(body.clone())));
+    }
+    let moved = rt().block_on(fs.move_licensed(FileRoot::Workspace, &lic("~/diamonds/d/tilde.md"),
+        &lic(&fmt!("{}/diamonds/d/moved.md", r))));
+    cols.push(("move", moved.is_ok() && mem.files().get("diamonds/d/tilde.md").is_none()
+        && mem.files().get("diamonds/d/moved.md").is_some()));
+    let (strays, more) = fs.strays();
+    let nested = root.join(r.trim_start_matches('/'));
+    cols.push(("disk-clean", strays.is_empty() && more == 0 && !nested.exists()));
+    drop(ctx);
+    ended(h);
+    srv.stop();
+    let pass = cols.iter().all(|(_, ok)| *ok);
+    let line: Vec<String> = cols.iter().map(|(n, ok)| fmt!("{}={}", n, ok)).collect();
+    eprintln!("STORE-OWNED-ABS: {} -> {}", line.join(" "), if pass { "PASS" } else { "FAIL" });
+    assert!(pass, "a Diamond's file by another spelling missed the store: {:?} (strays {:?})",
+        cols, strays);
 }
 
 // ┌───────────────────────────────────────────────────────────────┐

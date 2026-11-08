@@ -582,8 +582,8 @@ export function takePendingTaint(recs) {
 /// client may be steering another Diamond, whose taint an engine mark with no id would set.
 export function taintChat(rec, at) {
 	if (!rec) return;
-	if (rec.diamondId) { taintDaimon(rec.diamondId, at); return; }
 	if (markChatTainted(rec, at)) persistChats();
+	if (rec.diamondId) { taintDaimon(rec.diamondId, at); return; }
 	if (rec.app) applyChatTaint(rec, rec.app);
 }
 /// Does this chat record own a model? A chat inside a Diamond does not (UNBLOCK-5, C3): the
@@ -2292,7 +2292,21 @@ export async function onChatsChangedElsewhere(touchedIds) {
 	pg.chats.forEach(function (c) { mine[c.id] = c; });
 	var merged = stored.map(function (s) {
 		var c = mine[s.id];
-		if (!c) return hydrateChat(s);
+		if (!c) {
+			// A record new here marks its taint as a merge into a held one does, below.
+			var h = hydrateChat(s);
+			if (chatTaintOf(h)) taintChat(h, chatTaintOf(h));
+			return h;
+		}
+		// The taint under NO guard (H3): it only narrows, so a turn in flight loses nothing by
+		// it. A stamp new to this record is marked through `taintChat`, so a daimon's Diamond is
+		// held and its client told under the Diamond's key, not the client's own. It is joined
+		// before the skip below: an earlier adoption that threw can leave the store's summary
+		// tainted and this copy clean, and the reload pass re-reads the current chat's transcript
+		// whether or not the parcel named it.
+		var taWas = chatTaintOf(c);
+		var ta = chatTaintJoin(c, s, c);
+		if (ta && ta !== taWas) taintChat(c, ta);
 		// The parcel did not touch this one, so its store copy is unchanged and this
 		// tab's copy already reflects it: keep it as-is, transcript and all, rather
 		// than paying a whole-transcript union for a chat that cannot have moved.
@@ -2349,9 +2363,6 @@ export async function onChatsChangedElsewhere(touchedIds) {
 		}
 		// The model half on its own stamp, under the same guard (D-20261018-09 U1c).
 		if (!c._generating) takeChatModel(c, s, c);
-		// The taint under NO guard (H3): it only narrows, so a turn in flight loses nothing by
-		// it, and the engine this tab holds is told at once.
-		if (chatTaintJoin(c, s, c) && c.app) applyChatTaint(c, c.app);
 		// The native runs under no guard (RT-C): a union only grows, and the totals are
 		// derived from it beside the here part the guard above chose.
 		deriveNativeTotals(c, hereOf(hereSrc), nativeJoin(c, s));
@@ -2528,6 +2539,8 @@ export function install() { // page-split: install
 		var loadProbe = 0;       // transcript loads served, for verify_collectheap only
 		var usable  = false;     // the store opened and was read at least once
 		var vouched = false;     // and what it read can be believed -- see CHATS_COUNT
+		var read    = false;     // a read of the store has landed and been believed; a write that lands is not one
+		var rereading = null;    // the re-read run once an unread store answers again
 		var bootPromise = null;  // the one-and-only first read, memoised; see boot/booted
 		var shadowDone = Promise.resolve();   // resolves when the last transcript-shadow pass settled
 		var skipNoted = {};      // id|why of each chat a write left alone, trailed once per page
@@ -3039,15 +3052,19 @@ export function install() { // page-split: install
 				Object.keys(kept).forEach(function (id) { if (!next[id]) next[id] = kept[id]; });
 				disk = next;
 				usable = true;
-				// A write that landed is a read we could have trusted, and it settles
-				// the count an empty read is judged against.
-				vouched = true;
-				setWatermark(Object.keys(disk).length);
+				// A write that landed settles the count an empty read is judged against, but
+				// only a store that was read can be believed: one whose read never landed holds
+				// chats this mirror lacks, so `disk` is not its count, the "not read" alarm
+				// stands, and it is read now that it answers.
+				if (read) {
+					vouched = true;
+					setWatermark(Object.keys(disk).length);
+				} else reread();
 				if (failure) {
 					// The rest landed; this chat did not, and the person is told so.
 					diag('store write FAILED', storeReason(failure));
 					storageAlarm(storeReason(failure));
-				} else {
+				} else if (read) {
 					storageAlarmClear();      // a save landed: whatever it said is over
 				}
 				// Compact any chat a tombstone or a duplicate append left carrying dead
@@ -3066,6 +3083,18 @@ export function install() { // page-split: install
 				storageAlarm(storeReason(e));
 				return false;
 			}
+		}
+
+		/// Read the store again once it answers after a read that never landed, merge what it
+		/// holds into the page's chats, and pull, so the merge sync refused runs now.
+		function reread() {
+			if (read || rereading) return;
+			rereading = onChatsChangedElsewhere()
+				.then(function () {
+					if (read && window.DaimondSync && window.DaimondSync.pull) return window.DaimondSync.pull();
+				})
+				.catch(function () { /* the next write or pull asks again */ })
+				.then(function () { rereading = null; });
 		}
 
 		function schedule(list) {
@@ -3795,6 +3824,7 @@ export function install() { // page-split: install
 						var full = await readAll();
 						full.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
 						usable = true;
+						read = true;		// the full read landed; the summary read below judges it again
 						full = mergeInto(full, old);
 						if (await write(full)) {
 							// Kept as a readable archive, but MOVED off the live key so nothing
@@ -3815,7 +3845,7 @@ export function install() { // page-split: install
 					mirror = await readSummaries();
 					mirror.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
 					usable = true;
-					vouched = judge(mirror);
+					read = vouched = judge(mirror);
 					if (vouched) storageAlarmClear();
 					// STAGE 2d SCAFFOLDING (deferred). The reader is the chunks now; the
 					// legacy `chats` rows are kept as a rollback shadow and are NOT pruned
@@ -3833,6 +3863,7 @@ export function install() { // page-split: install
 				} catch (e) {
 					usable = false;
 					vouched = false;
+					read = false;
 					mirror = legacy();
 					storageAlarm(storeReason(e));
 					return mirror.slice();
@@ -3903,8 +3934,10 @@ export function install() { // page-split: install
 					mirror = await readSummaries();     // summaries, as boot reads them (seq 213)
 					mirror.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
 					usable = true;
-					vouched = judge(mirror);
-				} catch (e) { vouched = false; storageAlarm(storeReason(e)); }
+					var wasRead = read;
+					read = vouched = judge(mirror);
+					if (read && !wasRead) storageAlarmClear();	// the store answers again
+				} catch (e) { vouched = false; read = false; storageAlarm(storeReason(e)); }
 				return mirror.slice();
 			},
 			/// Store `list`, which is already the merged truth. Returns at once; the
@@ -3921,6 +3954,9 @@ export function install() { // page-split: install
 			/// Is the real store working? False means this session is running on the
 			/// fallback and the alarm is up.
 			usable: function () { return usable; },
+			/// Has a read of the store landed and been believed? False means the chats on
+			/// screen may not be all of them, so nothing may treat the mirror as complete.
+			read: function () { return read; },
 			/// Can the mirror be MERGED AGAINST? False means the store has not been
 			/// read, or read something this device knows to be wrong — so anything
 			/// absent from the mirror is unknown rather than gone, and a merge that
@@ -3939,6 +3975,7 @@ export function install() { // page-split: install
 				// store it was just asked to make and call it a fault.
 				setWatermark(0);
 				vouched = true;
+				read = true;
 				try { await conn(); var t = tx('readwrite'); t.store.clear(); await t.done; }
 				catch (e) { /* nothing to clear */ }
 				// The transcript shadow goes too, or a re-created account at this browser

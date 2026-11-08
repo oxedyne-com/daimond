@@ -23,7 +23,7 @@ import { commitRatings, turnModelOf } from './rating.js';
 import { lastTurnOf, lostRetryMid, maybeAutoDispatch, placeOpts, placeRoster, renderEffortStep,
 	renderSeatSwitch, retryTurn, seatDrawnRunner, seatOpts, seatPlanNow } from './sourcemenu.js';
 import { diag, showIdentity, toast } from './passkey_phrase.js';
-import { appendRanHere, askDrawable, askHolds, isLostRow, liveWork, renderHistory, renderToolCall,
+import { appendNote, appendRanHere, askDrawable, askHolds, isLostRow, liveWork, renderHistory, renderToolCall,
 	renderToolResult } from './turns.js';
 import { PEER_HELD, _peerStopping, confirmDialog, keepFocusIn, noticeDialog, runnerTurnOf,
 	scopeAgentTo, scopeChatTo } from './consent.js';
@@ -471,6 +471,54 @@ function sessionHeld(all, last, list, holds) {
 	return held;
 }
 
+/// THE SESSION SENT HOME BY CHUNKS: a session over the post door rides the report as
+/// `sessionRef`, the manifest of the chunks Kimberlite put it to on his account, sealed under
+/// his key. Read here, the report answers as one that carried it inline; pieces that cannot be
+/// read, or that are not the body the reference names, answer as a session that stayed.
+///
+/// Nothing is read where settlement would store nothing anyway (`sessionGate`): a report heard
+/// again finds its session already held, and a parked, busy or retracted turn would drop it.
+/// A read that failed there would note a turn that stayed whose session is stored.
+export async function fetchRunnerSession(report, filed) {
+	var ref = report && report.sessionRef;
+	if (!ref || report.session || !Array.isArray(ref.chunks)) return report;
+	if (!window.DaimondPeer || !window.DaimondPeer.settlingReport(report)) return report;
+	var chat = chatHoldingTurn(report.turnId);
+	if (!chat || sessionGate(chat, report, filed, String(ref.upto || ''))) return report;
+	var body = null;
+	// `chat` is the report's chat: a reference to another's is never read into this one.
+	if (String(ref.chat || '') === String(report.chatId || '')) {
+		try { body = await readSessionRef(ref); } catch (e) { body = null; }
+	}
+	if (body) return Object.assign({}, report, { session: body.session });
+	return Object.assign({}, report, { sessionStayed: 1, sessionWhy: t('turn.session_unread') });
+}
+
+/// The body `{v, chat, sig, upto, session}` a `sessionRef` names, or null. Each piece is read on
+/// its own, so its plaintext hash can be checked against the manifest's `key` (`offloadPieces`).
+async function readSessionRef(ref) {
+	if (!window.DaimondChunks || !ref.chunks.length) return null;
+	var parts = [], hashes = [], total = 0, i;
+	for (i = 0; i < ref.chunks.length; i++) {
+		var p = await DaimondChunks.materialiseBytes({ chunks: [ref.chunks[i]] });
+		if (!p) return null;
+		parts.push(p); total += p.length;
+		hashes.push(hexOf(await crypto.subtle.digest('SHA-256', p)));
+	}
+	var whole = hexOf(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(hashes.join(''))));
+	if (whole !== String(ref.key || '') || total !== ref.size) return null;
+	var all = new Uint8Array(total), at = 0;
+	for (i = 0; i < parts.length; i++) { all.set(parts[i], at); at += parts[i].length; }
+	var body = JSON.parse(new TextDecoder().decode(all));
+	if (!body || !body.session || typeof body.session !== 'object') return null;
+	if (body.chat !== ref.chat || body.upto !== ref.upto || body.session.upto !== ref.upto) return null;
+	return body;
+}
+
+function hexOf(buf) {
+	return Array.from(new Uint8Array(buf), function (b) { return (b < 16 ? '0' : '') + b.toString(16); }).join('');
+}
+
 /// THE CONVERSATION COMES HOME (KT-5): a runner's settling `report` carries its engine's
 /// session after the turn, with the runner's tool calls and folds, and it is stored as the
 /// chat's (or the Diamond's) session through `captureSession`, so the next turn here goes on
@@ -498,23 +546,19 @@ export function settleRunnerSession(report, filed) {
 	var said = 'chat=' + String(chat.id || '').slice(0, 12) + ' turn=' + String(report.turnId || '');
 	var s = report.session;
 	var whole = !!(s && typeof s === 'object' && Array.isArray(s.msgs) && s.msgs.length);
-	var held = (chat.session && chat.session.msgs && chat.session.msgs.length) ? String(chat.session.upto || '') : '';
-	// The same report heard again (a re-collect) finds its own session already stored.
-	if (whole && held && held === String(s.upto || '')) return 'stored';
+	var ref = !s && report.sessionRef && Array.isArray(report.sessionRef.chunks) ? report.sessionRef : null;
+	var gate = sessionGate(chat, report, filed, whole ? String(s.upto || '') : ref ? String(ref.upto || '') : '');
+	if (gate && gate.out === 'stored') { dropSessionStayed(chat, report); return 'stored'; }
 	var out = '', why = '';
-	var tombs = loadMsgTombs();
-	if (filed === false) {
-		out = 'words'; why = 'his words the run staged were not filed here';
-	} else if (chat._generating || (chat.app && chat.app.busy)) {
-		out = 'busy'; why = 'a turn runs here in this chat, and its own capture would overwrite it';
-	} else if (tombs[String(report.turnId || '')] || (whole && tombs[String(s.upto || '')])) {
-		out = 'cut'; why = 'the turn was retracted here';
+	if (gate) {
+		out = gate.out; why = gate.why;
 	} else if (report.sessionStayed) {
-		out = 'stayed'; why = 'it stayed on the runner (over the post door)';
+		out = 'stayed'; why = 'it stayed on the runner' + (report.sessionWhy ? ': ' + report.sessionWhy : ' (over the post door)');
+		if (report.sessionWhy) noteSessionStayed(chat, report);
 	} else if (!whole) {
 		out = ''; why = 'the report carries none';
-	} else if (held !== String(s.base || '')) {
-		out = 'moved'; why = 'the session here moved meanwhile (' + held + ', the runner began at ' + String(s.base || '') + ')';
+	} else if (sessionUpto(chat) !== String(s.base || '')) {
+		out = 'moved'; why = 'the session here moved meanwhile (' + sessionUpto(chat) + ', the runner began at ' + String(s.base || '') + ')';
 	}
 	if (out || why) {
 		diag('runner session', said + ' not stored: ' + why + '; the next turn lays its engine from the transcript');
@@ -525,9 +569,55 @@ export function settleRunnerSession(report, filed) {
 	// A chat's engine holds the conversation from before the turn: dropped, so the next Here
 	// turn is laid from the session just stored. A Diamond's daimon is laid from it per turn.
 	staleEngine(chat);
+	dropSessionStayed(chat, report);
 	touchChat(chat);
 	persistChats();
 	return 'stored';
+}
+
+/// The `upto` of the session `chat` holds, or ''.
+function sessionUpto(chat) {
+	return (chat.session && chat.session.msgs && chat.session.msgs.length) ? String(chat.session.upto || '') : '';
+}
+
+/// What settles a runner's session ending at `upto` before any of it is read, as `{out, why}`, or
+/// null: the same report heard again (a re-collect) finds its own session already stored, and the
+/// words, busy and cut refusals drop it whatever it holds.
+function sessionGate(chat, report, filed, upto) {
+	if (upto && sessionUpto(chat) === upto) return { out: 'stored', why: '' };
+	if (filed === false) return { out: 'words', why: 'his words the run staged were not filed here' };
+	if (chat._generating || (chat.app && chat.app.busy)) {
+		return { out: 'busy', why: 'a turn runs here in this chat, and its own capture would overwrite it' };
+	}
+	var tombs = loadMsgTombs();
+	if (tombs[String(report.turnId || '')] || (upto && tombs[upto])) return { out: 'cut', why: 'the turn was retracted here' };
+	return null;
+}
+
+/// Why a turn's session stayed on Kimberlite, as a row of the turn he sees. The turn keeps its
+/// status and nothing offers a rerun: the answer stands, and only the next turn is laid from
+/// the transcript. One row per turn, by its own mid, however often the report is heard.
+function noteSessionStayed(chat, report) {
+	var tid = String(report.turnId || '');
+	var mid = 'stayed-' + tid;
+	if (!Array.isArray(chat.messages) || chat.messages.some(function (m) { return m && m.mid === mid; })) return;
+	var text = t('turn.session_stayed', { why: String(report.sessionWhy) });
+	chat.messages.push(touchMsg({ role: 'note_log', content: text, mid: mid, iturn: tid, ts: Date.now() }));
+	touchChat(chat);
+	persistChats();
+	if (pg.current === chat) appendNote(text);
+}
+
+/// A turn whose session is stored after all did not stay: its note row is retracted through a
+/// tombstone, so another tab's copy of the transcript does not bring it back.
+function dropSessionStayed(chat, report) {
+	var mid = 'stayed-' + String(report.turnId || '');
+	if (!Array.isArray(chat.messages) || !chat.messages.some(function (m) { return m && m.mid === mid; })) return;
+	msgTombstone([mid]);
+	chat.messages = chat.messages.filter(function (m) { return !m || m.mid !== mid; });
+	touchChat(chat);
+	persistChats();
+	if (pg.current === chat) renderHistory(chat.messages);
 }
 
 /// HIS WORDS COME HOME (U2): a runner's folds filed nothing on its own disk; what they staged over

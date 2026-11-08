@@ -81,7 +81,7 @@ const stubs = {
 	markChatTainted: () => false,
 	loadMsgTombs: () => ({}),
 };
-const names = ['settleRunnerSession', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint', 'sessionMarker', 'engineHolds'];
+const names = ['settleRunnerSession', 'sessionGate', 'sessionUpto', 'dropSessionStayed', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint', 'sessionMarker', 'engineHolds'];
 const missing = names.filter((n) => !lift(SRC, n));
 check('the hand-off settle stores the session through daimond.js', missing.length === 0, missing);
 const F = missing.length ? null : new Function('window', ...Object.keys(stubs),

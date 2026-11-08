@@ -1818,13 +1818,15 @@ export function mayCommitChunks() {
 	// commits as it always did (the index was assumed durable). Only a present
 	// method answering false -- an index write lost to quota -- blocks the commit.
 	if (window.DaimondCloud && DaimondCloud.indexDurable && !DaimondCloud.indexDurable()) return false;
+	// An index collected over a chat store whose read never landed lacks its unread chats.
+	if (!ChatStore.read()) return false;
 	// AND THE INDEX IS THE ACCOUNT'S WHOLE INDEX AT THE VERSION THIS COMMITS AT. Not
 	// additive: a cloud.js that cannot say so has not said so.
 	return indexWhole();
 }
 
 /// Why this device may not commit, in one word for the log: `tools-missing`,
-/// `folder-mounted`, `cloud-missing`, `index-not-durable`, `index-not-merged`, or ''
+/// `folder-mounted`, `cloud-missing`, `index-not-durable`, `chats-unread`, `index-not-merged`, or ''
 /// when it may. Derived from the same parts `mayCommitChunks` composes, so an empty
 /// answer and a true predicate cannot drift apart.
 export function offloadBlockedReason() {
@@ -1834,6 +1836,7 @@ export function offloadBlockedReason() {
 	}
 	if (!window.DaimondCloud) return 'cloud-missing';
 	if (DaimondCloud.indexDurable && !DaimondCloud.indexDurable()) return 'index-not-durable';
+	if (!ChatStore.read()) return 'chats-unread';
 	if (!indexWhole()) return 'index-not-merged';
 	return '';
 }

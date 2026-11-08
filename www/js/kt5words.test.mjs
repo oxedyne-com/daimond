@@ -120,7 +120,7 @@ function reportHandler() {
 const st = { held: null, diags: [], persisted: 0, filed: [], fail: false };
 const stubs = {
 	window: { DaimondPeer: { settlingReport: (r) => !!r && r.t === 'report' && r.status !== 'parked', handBackReport: () => false } },
-	DaimondPeer: { handBackReport: () => false, settlingReport: (r) => !!r && r.t === 'report' && r.status !== 'parked' },
+	DaimondPeer: { handBackReport: () => false, settlingReport: (r) => !!r && r.t === 'report' && r.status !== 'parked', tabId: () => 'tab1' },
 	Wasm: {
 		words_file: async (keeper, entries) => {
 			st.filed.push({ keeper, entries, upto: st.held && st.held.session ? st.held.session.upto : null });
@@ -129,14 +129,14 @@ const stubs = {
 		},
 	},
 	diag: (t, d) => st.diags.push(t + ' ' + d),
-	chatHoldingTurn: () => st.held,
+	chatHoldingTurn: () => st.held, chatHoldingReport: async () => st.held,
 	touchChat() {}, persistChats() { st.persisted++; },
 	markChatTainted: () => false,
 	loadMsgTombs: () => ({}),
 	peerReports: {}, takeReportTaint() {}, settleRunnerAlerts() {}, settleRunnerAsk() {}, recordCarriedTurn() {}, requeueUnheard() {},
 	_openAsk: {}, markPlaceholderParked() {}, updateExpedite() {}, otherErrandReport: () => false, renderDispatchedBadges() {},
 };
-const names = ['settleRunnerWords', 'settleRunnerSession', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint'];
+const names = ['settleRunnerWords', 'fetchRunnerSession', 'settleRunnerSession', 'sessionGate', 'sessionUpto', 'dropSessionStayed', 'staleEngine', 'captureSession', 'sessionHeld', 'keepChatTaint'];
 const lifted = names.map((n) => lift(SRC, n));
 check('daimond.js files a runner\'s words (settleRunnerWords)', !!lifted[0]);
 const handler = reportHandler();

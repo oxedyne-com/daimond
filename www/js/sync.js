@@ -2707,7 +2707,14 @@
 		// re-pull's (`scheduleReapply`) and then the ladder's at its ceiling, and a re-pull
 		// that merges sends this work at once (pullOnce). Owed meanwhile, under the merge's
 		// reason on the chip.
-		if (failedVersion > serverVersion) {
+		//
+		// NOR OVER A MERGE THAT DID NOT FINISH, AT ANY VERSION. The boot's first pull
+		// re-merges the version this device adopted last session; a section it refuses
+		// (chats, over a store whose read failed) leaves `failedVersion` equal to
+		// `serverVersion`, and a push from there would collect and commit a census of a
+		// state that was never merged. The re-pull, and a store that answers again
+		// (ChatStore's re-read), clear it.
+		if (failedVersion > serverVersion || lastFailed.length) {
 			unsent   = true;
 			failKind = 'merge';
 			if (!reapplyTimer) armUnsent('merge');
@@ -2769,6 +2776,7 @@
 					await pull(true);
 				}
 			}
+			if (lastFailed.length) { failKind = 'conflict'; jam('merge'); return { held: 'merge' }; }
 			for (var attempt = 0; attempt < tries; attempt++) {
 				var state = await collectParcel();
 				if ((await fileLoc()) !== pushLoc) { schedule(); return; }	// moved while collecting
@@ -3160,7 +3168,10 @@
 			try { r = await push(); } catch (e) { return { ok: false, version: 0, why: 'push_failed' }; }
 			// Held over a version that would not merge: another round would be held the
 			// same way, and its confirming collect costs chunk queries for nothing.
+			// So is a round whose pull refused a section: its confirming collect would be
+			// taken from the state that did not merge.
 			if (r && r.held) return { ok: false, version: 0, why: r.held };
+			if (lastFailed.length) return { ok: false, version: 0, why: 'merge' };
 			// A REFUSAL FOR SIZE IS NOT A LANDING. Both refusals (the front door here, a 413
 			// from the gateway) set `lastPushed` to the live parcel so that push() does not
 			// spin on it, and the confirm below read that as committed: `ok:true` at the

@@ -719,6 +719,18 @@ pub fn tool_result_cut(result: &str) -> Vec<u32> {
     }
 }
 
+/// The exit code a command's result states, so a tool row shows it without reading the text.
+#[wasm_bindgen]
+pub fn exit_code_of(result: &str) -> Option<i32> {
+    crate::tools::exit_code_of(result)
+}
+
+/// A tool call's row as JSON: `{tool, key, plus, minus}`; see `tools::call_head`.
+#[wasm_bindgen]
+pub fn call_head(name: &str, args: &str) -> String {
+    crate::tools::call_head(name, args).to_json()
+}
+
 /// Name the device this page runs on, as the person knows it, so a turn's closing question can
 /// say where it ran; see `tools::device_label`.
 #[wasm_bindgen]

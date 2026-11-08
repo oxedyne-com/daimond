@@ -2042,7 +2042,7 @@ impl Tool {
                 left.push(path.clone());
                 continue;
             }
-            if let Some(why) = path_refusal(&Tool::FileRead, path) {
+            if let Some(why) = path_refusal(&Tool::FileRead, path, &ctx.workspace) {
                 out.push_str(&fmt!("== {} == {}\n\n", path, why));
                 continue;
             }
