@@ -28,7 +28,7 @@ const TURN_CUT_FLOOR: usize = 256;
 pub enum LogRow {
     Think   { content: String, ts: u64 },
     Tool    { name: String, args: String, call_id: String, content: String, outcome: String,
-              paused: String, exit: Option<i32>, ts: u64, done: u64 },
+              paused: String, ts: u64 },
     Fold    { note: String, folded: u64, kept: u64, structured: bool, model: String, sp: String,
               cut: u64, summarised: bool, ts: u64,
               // What the summarising call came back with (U89); empty and zero where none was made
@@ -73,7 +73,7 @@ impl LogRow {
                     o.push_str(&s("said", said));
                 }
             },
-            Self::Tool { name, args, call_id, content, outcome, paused, exit, ts, done } => {
+            Self::Tool { name, args, call_id, content, outcome, paused, ts } => {
                 o.push_str(&s("name", name));
                 o.push_str(&s("args", args));
                 o.push_str(&s("callId", call_id));
@@ -82,13 +82,7 @@ impl LogRow {
                 if !paused.is_empty() {
                     o.push_str(&s("paused", paused));
                 }
-                if let Some(x) = exit {
-                    o.push_str(&fmt!(",\"exit\":{}", x));
-                }
                 o.push_str(&n("ts", *ts));
-                if *done > 0 {
-                    o.push_str(&n("done", *done));
-                }
             },
             Self::Fold { note, folded, kept, structured, model, sp, cut, summarised, ts,
                 finish, completion, reasoning, reply, cap, retried } => {
@@ -136,10 +130,6 @@ impl LogRow {
             _           => 0,
         };
         let flag = |k: &str| matches!(d.map_get(&dat!(k)), Ok(Some(Dat::Bool(true))));
-        let int = |k: &str| match d.map_get(&dat!(k)) {
-            Ok(Some(v)) => v.get_i64().and_then(|x| i32::try_from(x).ok()),
-            _           => None,
-        };
         let ts = num("ts");
         Ok(match text("role").as_str() {
             "think_log"     => Self::Think { content: text("content"), ts },
@@ -147,8 +137,7 @@ impl LogRow {
             "user"          => Self::Steer { content: text("content"), ts, said: text("said") },
             "leak_log"      => Self::Leak { fragment: text("content"), ts },
             "tool_log"      => Self::Tool { name: text("name"), args: text("args"), call_id: text("callId"),
-                content: text("content"), outcome: text("outcome"), paused: text("paused"), exit: int("exit"),
-                ts, done: num("done") },
+                content: text("content"), outcome: text("outcome"), paused: text("paused"), ts },
             "fold_log"      => Self::Fold { note: text("content"), folded: num("folded"), kept: num("kept"),
                 structured: flag("structured"), model: text("model"), sp: text("sp"), cut: num("cut"),
                 summarised: flag("summarised"), ts, finish: text("finish"),
@@ -222,23 +211,18 @@ impl TurnLog {
                 let prose = std::mem::take(&mut self.prose);
                 self.think(&prose, ts);
                 self.rows.push(LogRow::Tool { name: name.clone(), args: args.clone(), call_id: id.clone(),
-                    content: String::new(), outcome: String::new(), paused: String::new(), exit: None, ts,
-                    done: 0 });
+                    content: String::new(), outcome: String::new(), paused: String::new(), ts });
             },
             AgentEvent::ToolResult { result, outcome, paused, .. } => {
                 // The result answers the newest call still open.
                 let open = self.rows.iter_mut().rev().find_map(|r| match r {
-                    LogRow::Tool { content, outcome: o, paused: p, exit, done, .. } if o.is_empty() =>
-                        Some((content, o, p, exit, done)),
+                    LogRow::Tool { content, outcome: o, paused: p, .. } if o.is_empty() => Some((content, o, p)),
                     _ => None,
                 });
-                if let Some((content, o, p, exit, done)) = open {
+                if let Some((content, o, p)) = open {
                     *content = result.clone();
                     *o = outcome.wire().to_string();
                     *p = paused.clone();
-                    // Taken before any cut, which drops the tail where the code is stated.
-                    *exit = crate::tools::exit_code_of(result);
-                    *done = ts;
                 }
             },
             AgentEvent::Compacted { folded, kept, note, structured, model, sp, cut, summarised, call } => {
@@ -381,10 +365,9 @@ impl TurnLog {
         let mut cap = TURN_TOOL_MAX;
         loop {
             self.rows = ran.iter().map(|r| match r {
-                LogRow::Tool { name, args, call_id, content, outcome, paused, exit, ts, done } => LogRow::Tool {
+                LogRow::Tool { name, args, call_id, content, outcome, paused, ts } => LogRow::Tool {
                     name: name.clone(), args: cut_json_strings(args, cap), call_id: call_id.clone(),
-                    content: cut_text(content, cap), outcome: outcome.clone(), paused: paused.clone(),
-                    exit: *exit, ts: *ts, done: *done },
+                    content: cut_text(content, cap), outcome: outcome.clone(), paused: paused.clone(), ts: *ts },
                 other => other.clone(),
             }).collect();
             if self.json().len() <= max {

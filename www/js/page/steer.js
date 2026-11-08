@@ -5,7 +5,7 @@ import { _saidThere, _steerApp, _steerDetached, agentsGrid, chatInput, chatOutpu
 import { MIN_MAX, capRefused, dsEvent, dsFold, fmtTok, friendlyError, maxOutFor, noteCapRefused,
 	opaqueRefusal, t, tn, truncatedArgs } from './util.js';
 import { ChatStore, endedHow, loadChatMessages, msgTombstone, newMid, persistChats, stampMessages, touchChat,
-	touchMsg, trashed } from './chatstore.js';
+	touchMsg } from './chatstore.js';
 import { _liveMid, _liveProd, _liveTurn, _localEnding, _localRecovering, _progressView, _turnRun,
 	beginTurnRun, deviceNameFor, hereOf, leaseClockNow, markRunFolded, noteHerePrompt, ownsChat,
 	peerReports, peerStopTurn, peerSyncShim, peerUiStateFor, recoveringHere, selfDeviceId, turnSpan } from './handoff.js';
@@ -1108,27 +1108,6 @@ async function startBgWake(chat, row) {
 	return true;
 }
 
-/// Kimberlite's `bg-note` reached this device: add its row to the chat, once by mid on every device
-/// that takes it, and wake the turn it is owed. The wake is asked after the collect lets go of the
-/// mailbox, since a hand-off to a runner posts through it.
-export async function bgNoteFromRunner(env) {
-	var row = DaimondPeer.bgNoteRow(env);
-	if (!row) { diag('bg wake', 'a bg-note without its row, dropped'); return; }
-	var cid = String(env.chatId);
-	var chat = (pg.chats || []).find(function (c) { return c && c.id === cid; });
-	if (!chat || trashed(chat.id) || (chat.diamondId && trashed(chat.diamondId))) return;
-	await loadChatMessages(chat);
-	var ms = chat.messages || (chat.messages = []);
-	if (!ms.some(function (m) { return m && String(m.mid) === row.mid; })) {
-		ms.push(touchMsg(row));
-		touchChat(chat);
-		persistChats();
-		if (ownsChat(chat)) renderHistory(chat.messages);
-		if (window.DaimondSync && DaimondSync.flush) DaimondSync.flush().catch(function () { /* the next sync carries it */ });
-	}
-	setTimeout(function () { wakeBgEnds(chat); }, 0);
-}
-
 /// Run one turn of a chat, journalling every step so a tab that dies mid-turn loses nothing but
 /// the split-second in flight. This is the shared core of both the composer and the Continue
 /// button: `text` is the user's message; the rest is durability.
@@ -1700,11 +1679,9 @@ export async function runTurn(chat, text, opts) {
 			dsEvent('tool', lensToolRow(ev, pendingTool && pendingTool.args, umid, callN,
 				{ dia: chat.diamondId, chat: chat.id }));
 			// Stored WITH the outcome, so the history exception above stops growing.
-			var doneRow = pendingTool;
 			if (pendingTool) {
 				pendingTool.content = ev.content || '';
 				pendingTool.outcome = ev.outcome || '';
-				pendingTool.done = Date.now();
 				if (ev.paused) pendingTool.paused = String(ev.paused);
 				// A finished write goes into Recent: a Diamond's thread writes for the
 				// Diamond, a plain chat for itself.
@@ -1746,7 +1723,7 @@ export async function runTurn(chat, text, opts) {
 			// that stopped on the tool it last named.
 			busySay(chat, tOr('chat.busy_next', 'Tool call {n} done, thinking…', { n: callN }));
 			if (!owns()) return;
-			renderToolResult(ev.name || '', ev.content || '', ev.outcome, ev.paused || '', doneRow);
+			renderToolResult(ev.name || '', ev.content || '', ev.outcome, ev.paused || '');
 		} else if (ev.type === 'versions') {
 			// The chat's own store kept what this turn replaced or removed. Offered
 			// back at once, and `file_revert` does the same whenever the user asks.

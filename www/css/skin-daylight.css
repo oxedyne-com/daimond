@@ -562,8 +562,6 @@
 :root[data-skin="daylight"] .ctile[data-t="user"] .ctile-who,
 :root[data-skin="daylight"] .ctile[data-t="rating"] .ctile-who { color: var(--text-secondary); }
 :root[data-skin="daylight"] .ctile-time { font-size: var(--dl-2xs); }
-/* A phone's call sub-line (his pick C) reads as the tile's own time. */
-:root[data-skin="daylight"] .ctile-sub { font-size: var(--dl-2xs); font-weight: var(--w-text); }
 :root[data-skin="daylight"] .ctile-body { font-size: var(--dl-md); line-height: 1.56; }
 /* A stop line in the body's own type (F3), and its Continue's word on the same text edge as
    the line's: the button's inline padding is taken back by its margin, so its hover fill
@@ -783,7 +781,6 @@
 :root[data-skin="daylight"] .session-box-ctx,
 :root[data-skin="daylight"] .session-box-cost,
 :root[data-skin="daylight"] .ctile-time,
-:root[data-skin="daylight"] .ctile-sub,
 :root[data-skin="daylight"] .files-size,
 :root[data-skin="daylight"] .pend-when,
 :root[data-skin="daylight"] .rail-count,

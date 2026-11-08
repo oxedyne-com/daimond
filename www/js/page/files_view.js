@@ -1441,53 +1441,74 @@ export async function newDir(name) {
 	await list(curDir);
 }
 
-/// Rename or move an entry. `to` may carry a path, so this is also how a
-/// file is moved into another folder.
+/// RENAME an entry. A name, and nothing else.
+///
+/// Owner, 2026-11-08: "make Rename only rename." It used to take a path, which
+/// made it two doors in one coat — and made a move a string a person had to
+/// spell. A name carrying a `/` is now refused IN the dialog, where the person
+/// can see it, and the sentence names the door that does move things.
 ///
 /// `from` is the entry's own path, which is not always under `curDir`: a
 /// Diamond's workspace shows its own directory at the top of a composed
 /// tree, where `curDir` is not a directory at all.
 export async function renameEntry(e, from) {
 	from = from || joinPath(curDir, e.name);
-	var parent = from.slice(0, Math.max(0, from.lastIndexOf('/')));
 	var name = await promptDialog(t('rail.rename'), {
-		message: t('files.rename_hint'),
+		message: t('files.rename_name_hint'),
 		value: e.name, okLabel: t('rail.rename'),
-		validate: function (v) { return v ? '' : t('files.err_name'); },
+		validate: function (v) {
+			var why = v ? '' : t('files.err_name');
+			if (why) return why;
+			var bad = window.DaimondMove ? window.DaimondMove.badName(v) : '';
+			return bad ? t('files.err_name_only') : '';
+		},
 	});
 	if (name === null) return;
 	name = name.trim();
 	if (!name || name === e.name) return;
-	var to = name.indexOf('/') === -1 ? joinPath(parent, name) : name;
+	var to = joinPath(window.DaimondMove ? window.DaimondMove.parentOf(from) : from.slice(0, Math.max(0, from.lastIndexOf('/'))), name);
 	var res = await tools().run_tool_outcome('file_move', JSON.stringify({ path: from, to: to }));
 	if (!res || res.outcome !== 'done') {
 		fileMsg(t('files.rename_failed', { reason: toolReason(res) }), true);
-	} else nudgeSync();	// a rename or move outside a turn pushes on its own
+	} else nudgeSync();	// a rename outside a turn pushes on its own
 	await list(curDir);
 }
 
 /// Bring files in from the machine. The workspace could only ever be
 /// filled by an agent writing into it.
-export function uploadFiles() {
+export function uploadFiles(into) {
 	var inp = document.createElement('input');
 	inp.type = 'file';
 	inp.multiple = true;
 	inp.addEventListener('change', async function () {
 		var files = Array.prototype.slice.call(inp.files || []);
 		if (!files.length) return;
-		for (var i = 0; i < files.length; i++) {
-			var f = files[i];
-			try {
-				var buf = new Uint8Array(await f.arrayBuffer());
-				await writeWorkspaceBytes(joinPath(writeDir(), f.name), buf);
-			} catch (err) {
-				fileMsg(t('files.upload_failed', { name: f.name, reason: friendlyError(err) }), true);
-			}
-		}
-		await list(curDir);
-		fileMsg(tn('files.uploaded', files.length));
+		await uploadInto(files, into === undefined ? writeDir() : into);
 	});
 	inp.click();
+}
+
+/// Write these files' bytes into `dir`, and say how it went.
+///
+/// Split out of `uploadFiles` because a drop from the desktop is the same act
+/// with a different question in front of it: WHERE they land is the folder that
+/// was dropped on, not the folder being shown (owner, 2026-11-08).
+export async function uploadInto(files, dir) {
+	var landed = 0;
+	for (var i = 0; i < files.length; i++) {
+		var f = files[i];
+		try {
+			var buf = new Uint8Array(await f.arrayBuffer());
+			await writeWorkspaceBytes(joinPath(dir, f.name), buf);
+			landed++;
+		} catch (err) {
+			fileMsg(t('files.upload_failed', { name: f.name, reason: friendlyError(err) }), true);
+		}
+	}
+	if (landed) nudgeSync();
+	await list(curDir);
+	if (landed) fileMsg(tn('files.uploaded', landed));
+	return landed;
 }
 
 /// Show or hide the PREVIEW panel's PDF embed, and the other renderings of

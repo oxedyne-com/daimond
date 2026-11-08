@@ -475,8 +475,6 @@ export function jumpBack() {
 	if (!us.length) return;
 	pg._jumpAt = (pg._jumpAt < 0) ? us.length - 1 : Math.max(0, pg._jumpAt - 1);
 	var el = us[pg._jumpAt];
-	// His own move: a hold left by the last render would put him back where he was.
-	hold(null);
 	// Measured, not computed from offsetTop: the thread is not necessarily the offset parent.
 	setScrollTop(chatOutput.scrollTop
 		+ el.getBoundingClientRect().top - chatOutput.getBoundingClientRect().top);
@@ -489,7 +487,6 @@ export function jumpBack() {
 /// got to, which is what a user who has just returned to the bottom means by it.
 export function jumpEnd() {
 	setScrollTop(chatOutput.scrollHeight);
-	holdBottom();
 	pg._jumpAt = -1;
 }
 
@@ -897,12 +894,11 @@ export function rollUpdate(box) {
 	box._count.textContent = String(n);
 	box._count.style.display = n < 2 ? 'none' : '';
 	box._noun.textContent = n < 2 ? '' : rollNoun(box._type, n);
-	// The most telling one-liner per kind: a System part's name, a thinking step's
-	// thought. A tool call is not repeated here: a folded group shows its line.
+	// The most telling one-liner per kind: a Tool's name-and-outcome, a System
+	// part's name, a thinking step's thought.
 	var bits = [];
 	for (var i = 0; i < kids.length && bits.length < 3; i++) {
-		if (box._type === 'work' && kids[i].dataset.t === 'tool') continue;
-		var pick = box._type === 'wire' ? '_who' : '_peek';
+		var pick = box._type === 'wire' ? '_who' : kids[i].dataset.t === 'tool' ? '_meta' : '_peek';
 		var el = kids[i][pick] || kids[i]._peek || kids[i]._meta || kids[i]._who;
 		var m = (el && el.textContent) || '';
 		bits.push(m.length > 24 ? m.slice(0, 24) + '…' : m);
@@ -2790,20 +2786,9 @@ export function renderToolCall(name, args, callId, ts) {
 	// `.tool-result` hooks ride along so the result, live output and Steps switch
 	// find it unchanged.
 	var argsText = typeof args === 'string' ? args : JSON.stringify(args);
-	var head = callHead(name, argsText);
-	var block = buildTile('tool', { expanded: false, who: tOr('chat.tool_verb_' + head.tool, head.tool), ts: ts });
+	var block = buildTile('tool', { expanded: false, meta: name, ts: ts });
 	block.classList.add('tool-block', 'running');
 	block._toolName = name;
-	block._head = head;
-	// The call's line reads verb, key, then what it came to: the key stands next to the verb.
-	block._lbl.insertBefore(block._peek, block._meta);
-	var dur = document.createElement('span'); dur.className = 'ctile-dur';
-	block._lbl.insertBefore(dur, block._time || block._lbl.querySelector('.ctile-ctl'));
-	block._dur = dur;
-	// A phone shows the call's clock time and duration beneath its line, not beside it.
-	var sub = document.createElement('span'); sub.className = 'ctile-sub';
-	block._lbl.appendChild(sub);
-	block._sub = sub; block._at = ts;
 	var io = document.createElement('div'); io.className = 'ctile-io';
 	var sc = document.createElement('div');
 	sc.innerHTML = '<div class="cap"></div>';
@@ -2823,34 +2808,11 @@ export function renderToolCall(name, args, callId, ts) {
 	io.appendChild(sc); io.appendChild(rc);
 	block._body.appendChild(io);
 	block._resWrap = rc; block._resPre = resPre;
-	// The whole command, never cut: a phone wraps it, the desktop's line ellipsises it.
-	if (head.key) block._peek.textContent = head.key.replace(/\s+/g, ' ').trim();
-	else tilePeek(block, argsText.replace(/^\{|\}$/g, '').trim());
-	markOutcome(block, '', '');
-	callSub(block);
+	tilePeek(block, argsText.replace(/^\{|\}$/g, '').trim());
 	tagTurn(block);
 	postToChat(block);
 	pg.lastToolBlock = block;
 	pinBottom();
-}
-
-/// A call's line from the engine: `{tool, key, plus, minus}`, the tool by its canonical name.
-/// A bundle older than the export draws the name it was sent and no key.
-function callHead(name, args) {
-	try {
-		if (Wasm && Wasm.call_head) return JSON.parse(Wasm.call_head(String(name || ''), String(args || '')));
-	} catch (e) { /* drawn plain below */ }
-	return { tool: String(name || ''), key: '', plus: null, minus: null };
-}
-
-/// How long a call took, as its line says it: tenths under ten seconds, then seconds, then
-/// minutes and seconds.
-function callSpan(ms) {
-	var s = ms / 1000;
-	if (s < 10) return tOr('chat.tool_secs', '{n} s', { n: (Math.round(s * 10) / 10).toLocaleString(DaimondI18n.locale ? DaimondI18n.locale() : undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) });
-	if (s < 60) return tOr('chat.tool_secs', '{n} s', { n: Math.round(s) });
-	var whole = Math.round(s);
-	return tOr('chat.tool_mins', '{m} min {s} s', { m: Math.floor(whole / 60), s: whole % 60 });
 }
 
 /// How a tool call ended, read back out of its RESULT TEXT.
@@ -2882,9 +2844,7 @@ export function outcomeOfStoredText(result) {
 /// as a success, so a build whose engine has stopped sending one says so on the
 /// first tool call instead of going green. `paused` is the pause node that
 /// refused the call, the event's own field, and '' for any other call.
-/// `row` is the call's stored record where there is one: its `ts` and `done` give the time it
-/// took, and its `exit` the command's code where the result text was cut before it.
-export function renderToolResult(name, result, outcome, paused, row) {
+export function renderToolResult(name, result, outcome, paused) {
 	if (name === 'say' && _saidJust) { _saidJust = false; return; }
 	// The result of a question is a sentence written for the model about what it
 	// has just done, so it is not drawn under the card the user is reading.
@@ -2923,14 +2883,8 @@ export function renderToolResult(name, result, outcome, paused, row) {
 		// against red is the one distinction a red-green reader cannot make, and
 		// until this seam landed there were not two states to tell apart at all.
 		pg.lastToolBlock.classList.toggle('refused', refused);
-		var exit = row && row.exit != null ? row.exit : exitCodeOf(result);
-		pg.lastToolBlock._exit = exit;
-		if (exit != null && exit !== 0) pg.lastToolBlock.classList.add('failed');
 		markOutcome(pg.lastToolBlock, refused ? 'refused' : failed ? 'failed' : 'done',
 			refused ? paused : '');
-		var took = row && row.done && row.ts ? row.done - row.ts : null;
-		if (pg.lastToolBlock._dur) pg.lastToolBlock._dur.textContent = took != null && took >= 0 ? callSpan(took) : '';
-		callSub(pg.lastToolBlock);
 		if (pg.lastToolBlock._resWrap) pg.lastToolBlock._resWrap.style.display = '';
 		var resPre = pg.lastToolBlock.querySelector('.tool-result');
 		// A tool that SUCCEEDS can be colourful too, so the plain path is stripped
@@ -3035,24 +2989,6 @@ function ranWithoutNet(result) {
 	} catch (e) { return false; }
 }
 
-/// A call's sub-line, "HH:MM · duration", or its time alone until it has a duration.
-function callSub(block) {
-	if (!block._sub) return;
-	var hm = block._at && window.DaimondTime ? window.DaimondTime.fmtLocal(block._at, 'hm') : '';
-	block._sub.textContent = [hm, block._dur ? block._dur.textContent : ''].filter(Boolean).join(' \u00b7 ');
-}
-
-/// The exit code a command's result states, from the engine, or null.
-function exitCodeOf(result) {
-	try {
-		if (Wasm && Wasm.exit_code_of) {
-			var c = Wasm.exit_code_of(String(result || ''));
-			return c == null ? null : c;
-		}
-	} catch (e) { /* no code drawn */ }
-	return null;
-}
-
 /// Name a tool call's outcome on the tile's label bar, beside the colour.
 ///
 /// Amber against red is the one distinction a red-green reader cannot make, so
@@ -3064,16 +3000,11 @@ function exitCodeOf(result) {
 /// `paused` field on the event, never read back out of the translated sentence.
 function markOutcome(block, outcome, paused) {
 	if (!block._meta) return;
-	// A call that worked says only what it came to: its lines, or its command's exit.
-	var head = block._head || {}, bits = [];
-	if (head.plus != null) bits.push('+' + head.plus + (head.minus != null ? ' \u2212' + head.minus : ''));
-	if (block._exit != null) bits.push(tOr('chat.tool_exit', 'exit {n}', { n: block._exit }));
 	var word = paused                ? tOr('pause.refused_title', 'Paused')
 		: outcome === 'refused' ? tOr('chat.tool_refused', 'refused')
 		: outcome === 'failed'   ? tOr('chat.tool_failed', 'failed')
-		:                          '';
-	if (word) bits.push(word);
-	var label = bits.join(' · ');
+		:                          tOr('chat.tool_ok', 'ok');
+	var label = (block._toolName || '') + ' · ' + word;
 	if (paused) {
 		var name = paused;
 		try { if (window.DaimondPause) name = DaimondPause.label(paused) || paused; } catch (e) { name = paused; }
@@ -3261,23 +3192,6 @@ export var _renderingHistory = false;
 var _lastScrollAt = 0;
 var SCROLL_SETTLE_MS = 220;
 var _deferredRenderTimer = null;
-
-// THE THREAD DRAWS A WINDOW OF THE CHAT, NOT THE CHAT (CHAT-RENDER-6K, 08 Nov). His Daimond
-// diamond held ~6,300 messages: a rebuild drew every one, 184,000 elements in 8 s of one task, and
-// a running turn rebuilds often, so the driver's tab crashed. A rebuild draws the TAIL, the newest
-// DRAW_WINDOW messages from `_tailFrom`, always, since every live draw appends to it; and above it
-// the reader's window of history, `_drawFrom` to `_drawTo`. Reaching the top draws DRAW_PAGE more
-// above (`drawPage(-1)`). Past HIST_MAX the window lets go of its newest messages, and a gap
-// (`#chat-gap`) stands between it and the tail, which reaching draws them back (`drawPage(1)`).
-// Back at the live end, the window is the tail alone again.
-var DRAW_WINDOW = 300;			// messages of the tail
-var DRAW_PAGE = 300;			// messages drawn each time the reader reaches an edge
-var HIST_MAX = 600;			// messages of history the window holds above the tail
-var _drawFrom = 0;			// first message of the window
-var _drawTo = 0;			// end of the window; at `_tailFrom` there is no gap
-var _tailFrom = 0;			// first message of the tail
-var _drawAsk = 0;			// the next rebuild draws a page above (-1) or below (1)
-var _pageTimer = null;
 // The last position THIS CODE put the thread at. A programmatic write raises a
 // `scroll` event exactly as a finger does, so without this the restores below would
 // read their own work as the reader scrolling -- which would cancel the hold that
@@ -3356,8 +3270,7 @@ function msgSig(m) {
 		+ '#' + (m.refused ? 1 : 0) + '#' + (m.handoffRefused ? 1 : 0) + '#' + (m.handoffBusy || '') + '#' + (m.handoffThread || '')
 		+ '#' + (m.toDevice || '') + '#' + (m.claimedBy || '') + '#' + (m.seatNote || '')
 		+ '#' + (m.name || '') + '#' + (m.callId || '') + '#' + (m.say ? JSON.stringify(m.say) : '')
-		+ '#' + (m.heardStep || 0)
-		+ '#' + (m.exit == null ? '' : m.exit) + '#' + (m.done || 0);
+		+ '#' + (m.heardStep || 0);
 }
 
 export function sigsOf(messages) {
@@ -3464,7 +3377,7 @@ export function drawHistoryMessage(m, i, arr) {
 		// THE ONE PLACE PROSE IS STILL READ. A tool log stored before the outcome
 		// was a field has the text and nothing else; one stored since carries it.
 		renderToolResult(m.name || '', m.content || '',
-			m.outcome || outcomeOfStoredText(m.content || ''), m.paused || '', m);
+			m.outcome || outcomeOfStoredText(m.content || ''), m.paused || '');
 	}
 }
 
@@ -3623,12 +3536,9 @@ export function renderHistory(messages) {
 	// when pinned), so the streaming common case stays immediate. A reader pinned to
 	// the bottom is following the stream, not scrolling away, so it renders at once.
 	var nextSigs = Array.isArray(messages) ? sigsOf(messages) : [];
-	// Rows landing below a reader deep in the chat grow the tail; past twice its size it is drawn
-	// afresh, so the thread stays bounded however long a turn runs while he reads.
-	var tailOver = sameChat && !wasDown && Array.isArray(messages) && messages.length - _tailFrom > 2 * DRAW_WINDOW;
 	if (sameChat && !wasDown && Array.isArray(messages)
 		&& (Date.now() - _lastScrollAt) < SCROLL_SETTLE_MS
-		&& (tailOver || !isAppendOf(pg._renderedSigs, nextSigs))) {
+		&& !isAppendOf(pg._renderedSigs, nextSigs)) {
 		if (_deferredRenderTimer) clearTimeout(_deferredRenderTimer);
 		_deferredRenderTimer = setTimeout(function () {
 			_deferredRenderTimer = null;
@@ -3684,9 +3594,7 @@ export function renderHistory(messages) {
 		renderHistoryFurniture();
 		return;
 	}
-	// A thread grown well past the window while the reader follows the end is drawn afresh.
-	var grown = tailOver || (wasDown && Array.isArray(messages) && (_drawTo < _tailFrom || messages.length - _drawFrom > 2 * DRAW_WINDOW));
-	if (sameChat && pg._renderSynced && !_staleDispatch && !grown && Array.isArray(messages)) {
+	if (sameChat && pg._renderSynced && !_staleDispatch && Array.isArray(messages)) {
 		// `nextSigs` was taken at the top of this function, before the defer guard.
 		if (isAppendOf(pg._renderedSigs, nextSigs)) {
 			_renderingHistory = true;
@@ -3719,7 +3627,7 @@ export function renderHistory(messages) {
 	// and redrew the whole thread, 558 messages on gilgamesh, until the page stopped. A change
 	// confined to the last turns redraws from the question that opened the first of them, and
 	// the turns above stand as drawn.
-	if (sameChat && pg._renderSynced && !grown && Array.isArray(messages) && redrawFromTurn(messages, nextSigs, _staleAt)) {
+	if (sameChat && pg._renderSynced && Array.isArray(messages) && redrawFromTurn(messages, nextSigs, _staleAt)) {
 		syncJumps();
 		renderHistoryFurniture();
 		if (wasDown) { setScrollTop(chatOutput.scrollHeight); holdBottom(); }
@@ -3743,18 +3651,8 @@ export function renderHistory(messages) {
 	clearChat();
 	// Before a single fold is drawn: which of them this chat's reader had open.
 	loadTextFolds();
-	if (!Array.isArray(messages)) { _renderingHistory = false; _drawFrom = _drawTo = _tailFrom = 0; syncJumps(); pg._renderedSigs = []; pg._renderSynced = true; return; }
-	var span = drawSpan(messages, sameChat && !wasDown, anchorAt(messages, anchor));
-	// The turns not drawn are counted as though they were, so a tile's `data-turn` names the
-	// same question whatever the window.
-	for (var t = 0; t < span.from; t++) if (opensTurn(messages[t])) pg._turn++;
-	for (var d = span.from; d < span.to; d++) drawHistoryMessage(messages[d], d, messages);
-	if (span.to < span.tail) {
-		for (t = span.to; t < span.tail; t++) if (opensTurn(messages[t])) pg._turn++;
-		var foot = firstAwaiting();
-		if (foot) chatOutput.insertBefore(gapTile(span.tail - span.to), foot); else chatOutput.appendChild(gapTile(span.tail - span.to));
-	}
-	for (d = span.tail; d < messages.length; d++) drawHistoryMessage(messages[d], d, messages);
+	if (!Array.isArray(messages)) { _renderingHistory = false; syncJumps(); pg._renderedSigs = []; pg._renderSynced = true; return; }
+	messages.forEach(drawHistoryMessage);
 	if (heldWire) chatOutput.insertBefore(heldWire, chatOutput.firstChild);
 	_renderingHistory = false;
 	syncJumps();
@@ -3776,85 +3674,6 @@ export function renderHistory(messages) {
 	pg._renderedSigs = sigsOf(messages);
 	_renderedChatId = pg.current && pg.current.id ? pg.current.id : null;
 	pg._renderSynced = true;
-}
-
-/// Where to start drawing `want` more messages above index `upTo`: the question that opened the
-/// turn standing there, unless that turn alone is longer than `want` again, when the cut is mid-turn.
-function drawStart(messages, upTo, want) {
-	var at = Math.max(0, upTo - want);
-	for (var i = at; i >= 0 && at - i <= want; i--) if (opensTurn(messages[i])) return i;
-	return at;
-}
-
-/// The message the reader's anchor tile stands in, near enough to keep it drawn: its turn's
-/// question, counted on by its place among that turn's tiles. The end when there is no anchor.
-function anchorAt(messages, a) {
-	var want = a ? Number(a.turn) : NaN;
-	if (isNaN(want)) return messages.length;
-	for (var i = 0, n = 0; i < messages.length; i++) {
-		if (opensTurn(messages[i]) && ++n === want) return Math.min(messages.length, i + a.nth);
-	}
-	return want < 1 ? 0 : messages.length;
-}
-
-/// What a rebuild of `messages` draws: the window `from`..`to` and the tail from `tail`. `keep`
-/// holds the reader's window (he has scrolled up) about the message `at` he is reading;
-/// otherwise it is the tail alone.
-function drawSpan(messages, keep, at) {
-	var n = messages.length, tail = drawStart(messages, n, DRAW_WINDOW);
-	var from = tail, to = tail;
-	if (keep || _drawAsk) {
-		from = Math.min(_drawFrom, tail);
-		to = _drawTo < _tailFrom ? Math.min(_drawTo, tail) : tail;
-		// The tail moved down under him: what it let go of joins the window, which keeps no more
-		// than HIST_MAX of it, about where he reads.
-		if (!_drawAsk && to - from > HIST_MAX) {
-			from = Math.max(from, drawStart(messages, Math.min(at, to), HIST_MAX / 4));
-			to = Math.min(to, from + HIST_MAX);
-		}
-	}
-	if (_drawAsk < 0) {
-		from = drawStart(messages, from, DRAW_PAGE);
-		if (to - from > HIST_MAX) to = from + HIST_MAX;
-	} else if (_drawAsk > 0) {
-		to = Math.min(tail, to + DRAW_PAGE);
-		if (to - from > HIST_MAX) from = to - HIST_MAX;
-	}
-	_drawAsk = 0;
-	_drawFrom = from; _drawTo = to; _tailFrom = tail;
-	return { from: from, to: to, tail: tail };
-}
-
-/// The mark where the window lets go of history: the messages between it and the tail.
-function gapTile(n) {
-	var g = document.createElement('div');
-	g.id = 'chat-gap';
-	g.className = 'chat-gap';
-	g.textContent = tOr('chat.gap_later', '{n} later messages: scroll down or tap to show them', { n: n });
-	g.addEventListener('click', function () { drawPage(1); });
-	return g;
-}
-
-/// Is the reader within a screen of the edge `dir` of the window: its top (-1) or the gap (1)?
-function nearEdge(dir) {
-	if (dir < 0) return _drawFrom > 0 && chatOutput.scrollTop <= chatOutput.clientHeight;
-	var g = _drawTo < _tailFrom && document.getElementById('chat-gap');
-	return !!g && g.getBoundingClientRect().top - chatOutput.getBoundingClientRect().bottom <= chatOutput.clientHeight;
-}
-
-/// Draw a page more of history above the window (-1) or below it (1), keeping the reader on the
-/// tile he was reading. Not under a finger still moving: the rebuild writes scrollTop, which iOS
-/// reads as a yank.
-function drawPage(dir) {
-	_pageTimer = null;
-	if (!pg.current || !Array.isArray(pg.current.messages) || !nearEdge(dir)) return;
-	if (Date.now() - _lastScrollAt < SCROLL_SETTLE_MS) { _pageTimer = setTimeout(function () { drawPage(dir); }, SCROLL_SETTLE_MS); return; }
-	_drawAsk = dir;
-	pg._renderSynced = false;
-	renderHistory(pg.current.messages);
-	// A page that drew little height (a run of tools rolled into one box) leaves him at the edge
-	// with nothing to scroll, so no scroll asks for the next.
-	if (nearEdge(dir)) _pageTimer = setTimeout(function () { drawPage(dir); }, SCROLL_SETTLE_MS);
 }
 
 /// Does `m` open a turn when drawn (`appendUserMessage`'s `_turn += 1`)?
@@ -3894,8 +3713,7 @@ function redrawFromTurn(messages, nextSigs, staleAt) {
 	for (var r = i0; r < prev.length; r++) { var pk = sigKey(prev[r]); if (pk.role === 'fold_log' && !folds[pk.key]) return false; }
 	var u = -1, turnN = 0;
 	for (var i = 0; i < i0 && i < messages.length; i++) if (opensTurn(messages[i])) { u = i; turnN++; }
-	// Across the gap, a redraw from the turn would draw every message between.
-	if (u < 0 || turnN > pg._turn || (_drawTo < _tailFrom && u < _tailFrom)) return false;
+	if (u < 0 || turnN > pg._turn) return false;
 	var mark = pg._turnMarks[turnN], head = null;
 	var kids = chatOutput.children;
 	for (var c = kids.length - 1; c >= 0; c--) {
@@ -4851,10 +4669,6 @@ export function install_2() { // page-split: install
 				syncJumps();
 				if (chatOutput.scrollTop === _selfTop) return;
 				_lastScrollAt = Date.now();
-				if (!_pageTimer) {
-					var dir = nearEdge(-1) ? -1 : nearEdge(1) ? 1 : 0;
-					if (dir) _pageTimer = setTimeout(function () { drawPage(dir); }, SCROLL_SETTLE_MS);
-				}
 			}, { passive: true });
 		}
 	} catch (e) { /* no thread element in this context */ }

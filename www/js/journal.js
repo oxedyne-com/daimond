@@ -340,7 +340,7 @@
 			// `e.outcome` is the engine's word; `e.failed` is what a record written before this
 			// field carried, and is passed through UNREAD so the caller can tell "not stored" from
 			// "stored as done" -- which is the difference between §4's named exception and a guess.
-			else if (e.type === 'tool_done')  { for (var i = c.tools.length - 1; i >= 0; i--) { if (c.tools[i].callId === e.callId) { c.tools[i].result = e.result; c.tools[i].outcome = String(e.outcome || ''); c.tools[i].failed = !!e.failed; c.tools[i].done = true; c.tools[i].doneAt = e.t || 0; break; } } }
+			else if (e.type === 'tool_done')  { for (var i = c.tools.length - 1; i >= 0; i--) { if (c.tools[i].callId === e.callId) { c.tools[i].result = e.result; c.tools[i].outcome = String(e.outcome || ''); c.tools[i].failed = !!e.failed; c.tools[i].done = true; break; } } }
 			else if (e.type === 'queue')      { c.queue = Array.isArray(e.items) ? e.items : []; }
 			else if (e.type === 'turn_close') { c.closed = true; }
 			else if (e.type === 'turn_error') { c.closed = true; }   // errored is terminal, not interrupted

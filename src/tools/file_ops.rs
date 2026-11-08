@@ -911,7 +911,7 @@ impl Tool {
     /// the wasm keeps every local of, up to the format's limit.
     pub(super) async fn file_delete<H: Host>(args_json: &str, ctx: &ToolContext<H>) -> Outcome<MessageContent> {
         let raw = res!(Self::arg(args_json, "path"));
-        if let Some(why) = delete_path_refusal(&raw, &ctx.workspace) {
+        if let Some(why) = delete_path_refusal(&raw) {
             return Ok(MessageContent::text(refusal_line(&why)));
         }
         // ONE SPELLING, BEFORE ANYTHING ELSE. `./x`, `a//x`, `a/z/../x` and `x/` all name

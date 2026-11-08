@@ -8,13 +8,13 @@ import { Workers, tools } from './workers.js';
 import { Files, closeView, compileTypst, docEmbed, draftDrop, draftKeep, draftRead, fileMsg,
 	followConversation, newDir, newFile, placeName, publishViaDev, readRaw, refresh, renameEntry,
 	renderDocSeat, renderFileBody, syncLineNo, sysDir, sysList, sysRowAsButton, uploadFiles,
-	writeOpenFile } from './files_view.js';
+	uploadInto, writeOpenFile } from './files_view.js';
 import { DaimondAdmin } from './admin.js';
 import { DaimondPanels, isMobile } from './layout.js';
 import { toolReason } from './sourcemenu.js';
 import { signalLinksChanged } from './links.js';
 import { toast } from './passkey_phrase.js';
-import { chatBounds, confirmDialog, noticeDialog, readRecent } from './consent.js';
+import { chatBounds, confirmDialog, dialog, noticeDialog, readRecent } from './consent.js';
 import { abortTurn, undoAble, versionsPath } from './chats.js';
 import { chatDisplayName } from './tilestyle.js';
 import { INSTRUCTIONS_FILE, Instructions, PROMPTS_DIR, Prompts } from './pending.js';
@@ -1099,6 +1099,45 @@ export function bind() {
 		clearTimeout(filterTimer);
 		filterTimer = setTimeout(applyFilter, 180);
 	});
+	// CUT AND PASTE, on the document (owner, 2026-11-08), because the rows
+	// come and go and a listener on a row would go with it. Every other
+	// place a person types keeps its own X and V: a field, a dialog, the
+	// editor. Escape takes the cut mark off without moving anything.
+	document.addEventListener('keydown', function (ev) {
+		if (ev.defaultPrevented) return;
+		var mod = ev.ctrlKey || ev.metaKey;
+		var el2 = ev.target;
+		var tag = el2 && el2.tagName ? String(el2.tagName).toLowerCase() : '';
+		if (tag === 'input' || tag === 'textarea' || (el2 && el2.isContentEditable)) return;
+		if (aCardIsUp()) return;	// a card is up: it owns the keys
+		if (!listed || pg.curFile) return;
+		var key = String(ev.key || '').toLowerCase();
+		if (key === 'escape') { if (cutPaths || Object.keys(selPaths).length) { clearCut(); clearSel(); ev.preventDefault(); } return; }
+		if (!mod) return;
+		if (key === 'x') {
+			var picked = Object.keys(selPaths);
+			var row = document.activeElement && document.activeElement.closest
+				? document.activeElement.closest('.files-row') : null;
+			var paths = picked.length ? picked : (row && row.dataset.path ? [row.dataset.path] : []);
+			if (!paths.length) return;
+			ev.preventDefault();
+			cutRows(paths);
+			fileMsg(paths.length === 1 ? t('files.cut_one') : t('files.cut_many', { n: paths.length }));
+			return;
+		}
+		if (key === 'v') {
+			if (!cutPaths || !cutPaths.length) return;
+			ev.preventDefault();
+			// Where the paste goes: the folder in view, unless a folder is
+			// PICKED that is not one of the things being cut — then that folder,
+			// which is what pressing on it was pointing at. A picked folder that
+			// is itself cut is not a destination, it is cargo.
+			var into = curDir;
+			var sel = Object.keys(selPaths).filter(function (p) { return isDirPath(p) && cutPaths.indexOf(p) < 0; });
+			if (sel.length) into = sel[0];
+			moveTo(cutPaths.slice(), into);
+		}
+	});
 	// The parent-folder BUTTON used to live up here in the panel's header,
 	// three controls away from the listing it acts on, and the owner said so
 	// on 2026-08-24: "is such a button even needed when you could add a '..'
@@ -1560,6 +1599,9 @@ export async function list(dir) {
 	if (filter) { curDir = dir || ''; searchFiles(filter); return true; }
 	curDir = dir || '';
 	pg.curFile = null; listed = true;
+	// A redrawn listing is a new set of rows: what was selected was selected
+	// in the one that is gone (owner, 2026-11-08).
+	selPaths = {};
 	viewEl.style.display = 'none'; syncLineNo();   // the preview is not ours to close
 	paintPath();
 	listBusy();
@@ -1623,6 +1665,7 @@ var LS_RESTGROUP = 'daimond-files-rest';
 
 function renderTree(entries) {
 	lastEntries = entries;
+	dirSet = {};		// which of the rows below are folders, for `plan`
 	// The rows are drawn afresh, so a row ⋯ left open hangs from a row that is gone.
 	if (pop && pop.key.indexOf('row:') === 0) closePop();
 	var atRoot = !curDir || curDir === '.' || curDir === '/';
@@ -1661,6 +1704,23 @@ function treeRow(e) {
 	var full = joinPath(curDir, e.name);
 	row.className = 'files-row' + (e.dir ? ' dir' : '') + (e.cloud ? ' cloud' : '');
 	row.dataset.path = full;
+	row.dataset.dir = e.dir ? '1' : '';
+	if (e.dir) dirSet[full] = true;
+	if (cutPaths && cutPaths.indexOf(full) >= 0) row.classList.add('cut');
+	if (selPaths[full]) { row.classList.add('sel'); row.setAttribute('aria-selected', 'true'); }
+	// A row is something to PICK UP, so it says so (owner, 2026-11-08: moving a
+	// file meant typing a path into Rename).
+	row.draggable = true;
+	// A modifier press selects instead of opening, and it is registered BEFORE
+	// the row's own open so that it can stop it: at the target node listeners
+	// fire in the order they were added, whatever their capture flag.
+	row.addEventListener('click', function (ev) {
+		if (!(ev.ctrlKey || ev.metaKey || ev.shiftKey)) return;
+		ev.preventDefault();
+		ev.stopImmediatePropagation();
+		if (ev.shiftKey && !ev.ctrlKey && !ev.metaKey) extendSel(full);
+		else toggleSel(full);
+	});
 	var name = document.createElement('span');
 	name.className = 'files-name';
 	kindName(name, e.dir ? 'dir' : e.cloud ? 'cloud' : 'file', e.name);   // escaped
@@ -1924,6 +1984,345 @@ function addFileControls(row, e, full) {
 	}
 	row.addEventListener('pointerup', lift);
 	row.addEventListener('pointercancel', lift);
+
+	// ── Dropping things on this row ────────────────────────────────────
+	//
+	// Two different drops land on a folder row and they must not be confused:
+	// one of the panel's own rows (a move, which `moveTo` plans and logs) and
+	// files dragged in from the desktop (an upload, which lands in THIS folder
+	// rather than in the one on screen). The page marks its own drag with a
+	// private type, so a desktop drop is exactly the case where that type is
+	// absent and `Files` is present.
+	row.addEventListener('dragstart', function (ev) {
+		var paths = actingOn(full);
+		dragPaths = paths;
+		try {
+			ev.dataTransfer.effectAllowed = 'move';
+			ev.dataTransfer.setData(MOVE_MIME, JSON.stringify(paths));
+			// A plain-text form too, so the row can be dropped on another app
+			// without the browser refusing the drag outright.
+			ev.dataTransfer.setData('text/plain', paths.join('\n'));
+		} catch (err) { /* a drag without data is still a drag */ }
+		row.classList.add('dragging');
+	});
+	row.addEventListener('dragend', function () {
+		dragPaths = null;
+		row.classList.remove('dragging');
+		paintDropTarget('');
+	});
+	if (e.dir) {
+		row.addEventListener('dragover', function (ev) {
+			var dt = ev.dataTransfer;
+			if (dragHas(dt, MOVE_MIME) || dragHas(dt, 'Files')) {
+				// Without this the browser refuses the drop and the row never
+				// lights up -- the whole gesture is dead in the water.
+				ev.preventDefault();
+				try { dt.dropEffect = dragHas(dt, MOVE_MIME) ? 'move' : 'copy'; } catch (err) { /* older engines */ }
+				paintDropTarget(full);
+			}
+		});
+		row.addEventListener('dragleave', function (ev) {
+			// Moving between the row's own children fires dragleave; only a
+			// leave of the row itself takes the light off.
+			if (ev.relatedTarget && row.contains(ev.relatedTarget)) return;
+			row.classList.remove('drop-on');
+		});
+		row.addEventListener('drop', async function (ev) {
+			var dt = ev.dataTransfer;
+			if (!dt) return;
+			ev.preventDefault();
+			ev.stopPropagation();
+			paintDropTarget('');
+			if (dragHas(dt, MOVE_MIME)) {
+				var paths = dragPaths;
+				try { paths = JSON.parse(dt.getData(MOVE_MIME)) || paths; } catch (err) { /* dragPaths stands */ }
+				dragPaths = null;
+				if (paths && paths.length) await moveTo(paths, full);
+				return;
+			}
+			if (dt.files && dt.files.length) {
+				await uploadInto(Array.prototype.slice.call(dt.files), full);
+			}
+		});
+	}
+}
+
+var MOVE_MIME = 'application/x-daimond-paths';	// fixed: the page's own drag type, private to it
+
+/// Does this drag carry data of `type`?
+function dragHas(dt, type) {
+	var types = (dt && dt.types) || [];
+	for (var i = 0; i < types.length; i++) if (types[i] === type) return true;
+	return false;
+}
+
+/// Which row is lit as the drop target, or '' for none.
+///
+/// One at a time, held here rather than read off the rows: a drag crosses
+/// rows faster than their own `dragleave` arrives, and two lit folders would
+/// make the reader guess where it will land.
+function paintDropTarget(path) {
+	if (!treeEl) return;
+	var lit = treeEl.querySelectorAll('.files-row.drop-on');
+	for (var i = 0; i < lit.length; i++) {
+		if (path && lit[i].dataset.path === path) continue;
+		lit[i].classList.remove('drop-on');
+	}
+	if (!path) return;
+	var rows = treeEl.querySelectorAll('.files-row');
+	for (var j = 0; j < rows.length; j++) if (rows[j].dataset.path === path) rows[j].classList.add('drop-on');
+}
+
+// ── Moving things: the log, the selection, and the four doors ────────────
+//
+// Owner, 2026-11-08: "moving a file in the Workspace panel means renaming it to
+// a typed path, which is a stupid UX." A move is now a drag onto a folder, a
+// folder picked from the ⋯, a drop from the desktop, or a cut and a paste — and
+// every one of them goes through `moveTo` here, so they cannot disagree.
+//
+// The arithmetic — what is nonsense, and what taking a move back means after
+// something else has moved since — is `js/moveentry.js`, which is pure and has
+// its own tests (dev/wsmove.test.mjs). This is the wiring.
+var moveLog = (window.DaimondMove ? window.DaimondMove.createLog() : null);
+var selPaths = {};		// path -> true: the rows picked with Ctrl/Cmd or Shift
+var cutPaths = null;	// the rows cut, awaiting a paste; null when nothing is cut
+var dirSet = {};		// path -> true, for the rows drawn that are folders
+var anchorSel = '';		// where a Shift range starts
+var dragPaths = null;	// the paths on the drag in flight, as set by `dragstart`
+
+function isDirPath(p) { return !!dirSet[p]; }
+
+// A card that is SHOWING owns the keys; one that is merely present does
+// not. `#settings-modal` and `#identity-modal` live in index.html from
+// first paint, hidden with `display:none`, so asking whether a `.modal`
+// EXISTS is always yes and X and V were never reached (WS-MOVE red, the
+// browser check of 70d9ba075: Ctrl/Cmd+X and V did nothing).
+function aCardIsUp() {
+	var cards = document.querySelectorAll('.modal');
+	for (var i = 0; i < cards.length; i++) {
+		var el = cards[i];
+		if (!el) continue;
+		if (el.hidden) continue;
+		var cs = window.getComputedStyle ? window.getComputedStyle(el) : null;
+		if (!cs) return true;		// no computed style to ask: presence, as before
+		if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+		return true;
+	}
+	return false;
+}
+
+/// The paths a press should act on: the selection when the row is in it, else
+/// the row itself. A press on a row that is NOT selected acts on that row alone,
+/// which is what every file manager does and what stops a stale selection
+/// quietly taking a second file along.
+function actingOn(full) {
+	var picked = Object.keys(selPaths);
+	if (selPaths[full] && picked.length) return picked;
+	return [full];
+}
+
+function paintSel() {
+	if (!treeEl) return;
+	var rows = treeEl.querySelectorAll('.files-row');
+	for (var i = 0; i < rows.length; i++) {
+		var on = !!selPaths[rows[i].dataset.path];
+		rows[i].classList.toggle('sel', on);
+		if (on) rows[i].setAttribute('aria-selected', 'true');
+		else rows[i].removeAttribute('aria-selected');
+	}
+}
+
+function toggleSel(full) {
+	if (selPaths[full]) delete selPaths[full];
+	else selPaths[full] = true;
+	anchorSel = full;
+	paintSel();
+}
+
+/// Shift+click: everything from the last press to this one, in the order the
+/// rows are drawn, added to the selection.
+function extendSel(full) {
+	if (!anchorSel || !treeEl) { toggleSel(full); return; }
+	var rows = Array.prototype.slice.call(treeEl.querySelectorAll('.files-row'));
+	var a = -1, b = -1;
+	for (var i = 0; i < rows.length; i++) {
+		if (rows[i].dataset.path === anchorSel) a = i;
+		if (rows[i].dataset.path === full) b = i;
+	}
+	if (a < 0 || b < 0) { toggleSel(full); return; }
+	for (var j = Math.min(a, b); j <= Math.max(a, b); j++) {
+		if (rows[j].dataset.path) selPaths[rows[j].dataset.path] = true;
+	}
+	paintSel();
+}
+
+function clearSel() { selPaths = {}; paintSel(); }
+
+/// Mark the paths cut, so the next paste moves them. Escape takes the mark off.
+function cutRows(paths) {
+	cutPaths = paths.slice();
+	if (!treeEl) return;
+	var rows = treeEl.querySelectorAll('.files-row');
+	for (var i = 0; i < rows.length; i++) {
+		var on = cutPaths.indexOf(rows[i].dataset.path) >= 0;
+		rows[i].classList.toggle('cut', on);
+		if (on) rows[i].dataset.cut = 'true';
+		else delete rows[i].dataset.cut;
+	}
+}
+
+function clearCut() {
+	cutPaths = null;
+	if (!treeEl) return;
+	var rows = treeEl.querySelectorAll('.files-row.cut');
+	for (var i = 0; i < rows.length; i++) { rows[i].classList.remove('cut'); delete rows[i].dataset.cut; }
+}
+
+/// MOVE `paths` INTO `dir`. The one door every move goes through.
+///
+/// The batch is logged BEFORE the moves are made, because the log's job is to
+/// remember what was ASKED for; a `file_move` the fence refuses leaves the file
+/// where it was, and the next listing says so. The Undo offered is the same
+/// act back to front, and it stays reachable from the ⋯ after its toast has
+/// gone (owner: "Undo of a move must put it back even after I've moved
+/// something else since").
+async function moveTo(paths, dir) {
+	if (!window.DaimondMove) return false;
+	var p = window.DaimondMove.plan(paths, dir, { isDir: isDirPath });
+	if (p.refused.length && !p.moves.length) {
+		fileMsg(p.refused[0].why, true);
+		return false;
+	}
+	if (!p.moves.length) return false;
+	var batch = moveLog.add(p.moves);
+	var done = 0;
+	for (var i = 0; i < p.moves.length; i++) {
+		var m = p.moves[i];
+		var res = await tools().run_tool_outcome('file_move',
+			JSON.stringify({ path: m.from, to: m.to }));
+		if (res && res.outcome === 'done') done++;
+		else fileMsg(t('files.move_failed', { reason: toolReason(res) }), true);
+	}
+	if (!done) { moveLog.undo(batch); return false; }
+	nudgeSync();
+	clearCut();
+	await list(curDir);
+	var where = dir || t('files.root');
+	fileMsg(p.moves.length === 1
+		? t('files.moved', { name: window.DaimondMove.nameOf(p.moves[0].from), where: where })
+		: t('files.moved_many', { n: p.moves.length }));
+	// The tail is nothing: a move is complete when it is made, and the log
+	// keeps it takeable-back whether or not the toast was pressed.
+	undoAble(p.moves.length === 1 ? t('undo.moved_one') : t('undo.moved_other', { n: p.moves.length }),
+		function () { return undoBatch(batch); }, null);
+	return true;
+}
+
+/// Take one batch back, from where its items are NOW.
+async function undoBatch(batch) {
+	if (!window.DaimondMove || !batch) return false;
+	var r = moveLog.undo(batch);
+	for (var i = 0; i < (r.refused || []).length; i++) {
+		fileMsg(r.refused[i].why + ' ' + r.refused[i].path, true);
+	}
+	for (var j = 0; j < r.moves.length; j++) {
+		var m = r.moves[j];
+		var res = await tools().run_tool_outcome('file_move',
+			JSON.stringify({ path: m.from, to: m.to }));
+		if (!res || res.outcome !== 'done') fileMsg(t('files.move_failed', { reason: toolReason(res) }), true);
+	}
+	nudgeSync();
+	await list(curDir);
+	return true;
+}
+
+/// The folder picker behind Move to…. Folders only: a file is not a place.
+///
+/// A `pick` dialog's body is the caller's to draw (see `dialog`), so the card,
+/// the focus trap and Escape stay the app's own and this is only a list.
+function pickFolder(start, what) {
+	var at = start || '', chosen = null;
+	return dialog({
+		kind: 'pick',
+		title: t('files.move_pick'),
+		message: what,
+		okLabel: t('files.move_to_ok'),
+		build: function (card, gate) {
+			var box = document.createElement('div');
+			box.className = 'files-move-pick';
+			var crumbs = document.createElement('div');
+			crumbs.className = 'files-move-crumbs';
+			var listEl = document.createElement('div');
+			listEl.className = 'files-move-list';
+			box.appendChild(crumbs);
+			box.appendChild(listEl);
+			card.appendChild(box);
+			function show(dir) {
+				at = dir; chosen = null;
+				gate.allow(false, t('files.move_pick_choose'));
+				listEl.innerHTML = '';
+				renderCrumbs(crumbs, t('files.root'), dir, show);
+				listEl.setAttribute('aria-busy', 'true');
+				pickListing(dir).then(function (got) {
+					listEl.removeAttribute('aria-busy');
+					listEl.innerHTML = '';
+					var dirs = got.rows.filter(function (e) { return e.dir; });
+					// The folder shown is itself a target: "put it here" has to be
+					// sayable without walking up and back down.
+					var here = document.createElement('button');
+					here.type = 'button';
+					here.className = 'files-move-pick-here';
+					here.textContent = t('files.move_here');
+					here.dataset.path = dir;
+					here.addEventListener('click', function () { choose(dir, here); });
+					listEl.appendChild(here);
+					if (!dirs.length) {
+						var none = document.createElement('div');
+						none.className = 'files-empty';
+						none.textContent = got.ok ? t('files.no_folders') : t('attach.pick_unread');
+						listEl.appendChild(none);
+					}
+					dirs.forEach(function (e) {
+						var full = joinPath(dir, e.name);
+						var row = document.createElement('button');
+						row.type = 'button';
+						row.className = 'files-move-pick-row';
+						row.dataset.path = full;
+						var nm = document.createElement('span');
+						nm.className = 'files-move-pick-name';
+						kindName(nm, 'dir', e.name);
+						row.appendChild(nm);
+						// A press PICKS it; a second press on the picked one walks into
+						// it, so a deep folder costs two presses rather than a hunt.
+						row.addEventListener('click', function () {
+							if (chosen === full) { show(full); return; }
+							choose(full, row);
+						});
+						listEl.appendChild(row);
+					});
+				});
+			}
+			function choose(dir, row) {
+				chosen = dir;
+				at = dir;
+				var rows = listEl.querySelectorAll('.files-move-pick-row, .files-move-pick-here');
+				for (var i = 0; i < rows.length; i++) rows[i].classList.toggle('on', rows[i] === row);
+				gate.allow(true);
+			}
+			show(at);
+			return { read: function () { return chosen; } };
+		},
+	});
+}
+
+/// The row ⋯'s Move to….
+async function moveEntryDialog(full) {
+	var paths = actingOn(full);
+	var what = paths.length === 1 ? window.DaimondMove.nameOf(full)
+		: t('files.moved_many', { n: paths.length });
+	var dir = await pickFolder(window.DaimondMove.parentOf(full), what);
+	if (dir === null) return;
+	await moveTo(paths, dir);
 }
 
 /// Is the panel menu for `key` the one open?
@@ -2023,7 +2422,20 @@ function openRowMenu(row, e, full, anchor, x, y) {
 			}, pinned, t(pinned ? 'files.pinned_help' : 'files.pin_help'));
 			if (!pinned) item('free', t('files.free'), function () { freeEntry(full); }, undefined, t('files.free_help'));
 		}
-		item('rename', t('files.rename_move'), function () { renameEntry(e, full); });
+		// MOVE, said as what it is (owner, 2026-11-08). Above Rename, because
+		// it is the more common of the two and the one that used to be a
+		// string a person had to spell. Undo move is drawn only while there
+		// is a move left to take back, and it stays reachable here after its
+		// toast has gone -- that is the owner's own requirement.
+		if (window.DaimondMove) {
+			item('moveto', t('files.move_to'), function () { moveEntryDialog(full); },
+				undefined, t('files.move_to_help'));
+			if (moveLog && moveLog.count()) {
+				item('undo-move', t('files.undo_move'), function () { undoBatch(moveLog.newest()); },
+					undefined, t('files.undo_move_help'));
+			}
+		}
+		item('rename', t('rail.rename'), function () { renameEntry(e, full); });
 		item('delete', t('files.delete'), function () { deleteEntry(e, full); });
 	}, x, y);
 }

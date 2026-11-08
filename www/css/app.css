@@ -4936,33 +4936,6 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	max-width: 50%; flex: 0 1000 auto; min-width: 0; display: none;	/* the peek gives way first, so a model name keeps its width */
 }
 .ctile.collapsed .ctile-peek { display: block; }
-/* A tool call's line: verb, the argument that says what it touched (in the code face,
-   giving way first), what it came to, and how long it took. */
-.ctile[data-t="tool"] .ctile-peek { display: block; font-family: var(--font-mono); font-size: var(--fs-2xs); max-width: none; }
-.ctile[data-t="tool"] .ctile-meta:empty, .ctile-dur:empty { display: none; }
-/* The lines or exit code is the call's verdict: the key gives way, never this. */
-.ctile[data-t="tool"] .ctile-meta { flex: none; max-width: none; }
-.ctile-dur {
-	color: var(--text-muted); font-weight: 400; font-size: var(--fs-3xs);
-	font-variant-numeric: tabular-nums; white-space: nowrap; flex: none;
-}
-.ctile-sub { display: none; }
-@media (max-width: 480px) {
-	/* His pick C (D-20261108-04): on a phone the key is the line's point, so it wraps whole,
-	   and the call's clock time and duration stand small beneath instead of taking its room. */
-	.ctile[data-t="tool"] > .ctile-lbl { flex-wrap: wrap; row-gap: 1px; align-items: baseline; }
-	.ctile[data-t="tool"] .ctile-dot { align-self: flex-start; margin-top: 6px; }
-	.ctile[data-t="tool"] .ctile-peek {
-		white-space: normal; overflow-wrap: anywhere; overflow: visible; text-overflow: clip; flex: 1 1 0;
-	}
-	.ctile[data-t="tool"] > .ctile-lbl > :is(.ctile-time, .ctile-dur, .ctile-grow) { display: none; }
-	.ctile[data-t="tool"] .ctile-sub {
-		display: block; flex-basis: 100%; padding-left: 14px;
-		color: var(--text-muted); font-weight: 400; font-size: var(--fs-3xs);
-		font-variant-numeric: tabular-nums; white-space: nowrap;
-	}
-	.ctile[data-t="tool"] .ctile-sub:empty { display: none; }
-}
 .ctile[data-t="user"] .ctile-peek { display: none !important; }
 /* The tile's own local time (owner, 2026-09-15): terse, muted, right of the
    peek and left of the controls, so `grow` above still does the pushing and
@@ -5163,12 +5136,9 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 }
 .crollup.collapsed .crollup-peek { display: block; }
 /* A running turn's group stays folded at its head and shows its newest Thinking tile
-   open beneath it (D-20261009-28); the peek would repeat what that tile says. Folded,
-   live or not, the group also shows each tool call as its one line, so its summary is
-   what the turn did (K1); the line opens to the call's arguments and output. */
-.crollup.collapsed.live:not(.solo) > .crollup-body,
-.crollup[data-t="work"].collapsed:not(.solo):has(> .crollup-body > .ctile[data-t="tool"]) > .crollup-body { display: flex; }
-.crollup[data-t="work"].collapsed > .crollup-body > :not(.live-latest, .ctile[data-t="tool"]) { display: none; }
+   open beneath it (D-20261009-28); the peek would repeat what that tile says. */
+.crollup.collapsed.live:not(.solo) > .crollup-body { display: flex; }
+.crollup.collapsed.live > .crollup-body > :not(.live-latest) { display: none; }
 .crollup.collapsed.live .crollup-peek { display: none; }
 /* Nested tiles sit on a slightly lifted ground so the nesting reads. */
 .crollup[data-t="work"] > .crollup-body > .ctile[data-t="think"] { background: color-mix(in srgb, var(--text-secondary) 4%, var(--bg-tertiary)); }
@@ -5777,6 +5747,3 @@ span.agsq:not(.o) { cursor: default; }
 .sg-back { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); margin-bottom: 4px; }
 .sg-back .ic { width: 16px; height: 16px; }
 .sg-foot { margin-top: calc(var(--gap-section) * 2); display: flex; flex-direction: column; gap: 1px; }
-
-/* Where the window of history lets go, above the newest turns (CHAT-RENDER-6K). */
-.chat-gap { text-align: center; padding: 14px 8px; font-size: 0.85em; opacity: 0.7; cursor: pointer; }

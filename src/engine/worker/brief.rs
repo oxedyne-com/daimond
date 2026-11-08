@@ -132,15 +132,13 @@ fn not_started(why: &str) -> String {
 pub fn unreachable<H: Host>(paths: &[String], fence: &ToolContext<H>) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for path in paths.iter() {
-        // The place the worker's door will resolve it to.
-        let at = fence.workspace.based(path);
-        if at.split(|c| c == '/' || c == '\\').any(|s| s == "..") || at.starts_with('/') || at.starts_with('~') {
-            if let Some(s) = tools::path_refusal(&Tool::FileRead, &at, &fence.workspace) {
+        if path.split(|c| c == '/' || c == '\\').any(|s| s == "..") {
+            if let Some(s) = tools::path_refusal(&Tool::FileRead, path) {
                 out.push((path.clone(), tools::refusal_line(&s)));
             }
             continue;
         }
-        let p = tools::normalise(&at);
+        let p = tools::normalise(path);
         if !fence.may_read(&p) && !fence.may_walk(&p) {
             out.push((path.clone(), fence.refusal(path, false)));
         }

@@ -45,7 +45,6 @@ use crate::{
     tools::{
         FileRoot,
         Licence,
-        machine_spelt,
         Storage,
         storage_for,
         store_owned,
@@ -100,62 +99,25 @@ impl NativeFs {
         Self { store: Some(store), ..self }
     }
 
-    /// The store that owns `path` under `root`, with the Diamond's id and the store's path for
-    /// it, or `None` where the path is the disk's.  A store-owned path on a port with no store is
-    /// refused, never read from the disk (I-HL5).
+    /// The store that owns `path` under `root`, with the Diamond's id, or `None` where the path
+    /// is the disk's.  A store-owned path on a port with no store is refused, never read from the
+    /// disk (I-HL5).
     fn owner(&self, root: FileRoot, path: &str, method: &str)
-        -> Option<Outcome<(String, String, &NativeStore)>>
+        -> Option<Outcome<(String, &NativeStore)>>
     {
         // A test's red: the rule off, every path reads from the disk.
         if crate::store::diamond::off("store_owned") {
             return None;
         }
-        let (id, at) = match self.owned_at(path) {
-            Some(o)     => o,
+        let id = match store_owned(path) {
+            Some(id)    => id,
             None        => return None,
         };
         Some(match &self.store {
-            Some(st)    => Ok((id, at, st.as_ref())),
+            Some(st)    => Ok((id, st.as_ref())),
             None        => Err(err!("fs.{}: '{}' is a Diamond's file, which is the store's, and \
                 this port has no store to read it from.", method, path; IO, File, Missing)),
         })
-    }
-
-    /// The Diamond id and root-relative store path `path` names, however it is spelt, or `None`
-    /// where it is the disk's.  An absolute or `~` path is resolved as the door resolves it
-    /// ([`Workspace::based`]); a relative one is already root-relative, so it is never rebased.
-    /// A path a link carries into `diamonds/` is the store's too: otherwise
-    /// `/home/u/diamonds/<id>/DECISIONS.md`, or `notes/d/DECISIONS.md` through `notes/d ->
-    /// ../diamonds/d`, lands on the disk where no read of the Diamond sees it.
-    fn owned_at(&self, path: &str) -> Option<(String, String)> {
-        let at = match (&self.ws, machine_spelt(path)) {
-            (Some(ws), true)    => ws.based(path),
-            _                   => path.to_string(),
-        };
-        if let Some(id) = store_owned(&at) {
-            return Some((id, at));
-        }
-        let ws = match &self.ws {
-            Some(w)                     => w,
-            None                        => return None,
-        };
-        // Still machine-spelt: outside the root, which no link inside it can reach.
-        if machine_spelt(&at) {
-            return None;
-        }
-        let real = match ws.real_followed(&at) {
-            Ok(Some(r))                 => r,
-            _                           => return None,
-        };
-        let top = match std::fs::canonicalize(ws.root()) {
-            Ok(t)                       => t,
-            Err(_)                      => return None,
-        };
-        let tail = match real.strip_prefix(&top) {
-            Ok(t)                       => t.to_string_lossy().to_string(),
-            Err(_)                      => return None,
-        };
-        store_owned(&tail).map(|id| (id, tail))
     }
 
     /// At most `max` bytes of a store-owned `path` with its whole length, `None` where nothing
@@ -166,7 +128,7 @@ impl NativeFs {
         match self.owner(root, path, method) {
             None                => Owned::Disk,
             Some(Err(e))        => Owned::Store(Err(e)),
-            Some(Ok((id, at, st)))  => Owned::Store(st.store_file_read(&id, &at, max).await),
+            Some(Ok((id, st)))  => Owned::Store(st.store_file_read(&id, path, max).await),
         }
     }
 
@@ -177,7 +139,7 @@ impl NativeFs {
         match self.owner(root, path, method) {
             None                => Owned::Disk,
             Some(Err(e))        => Owned::Store(Err(e)),
-            Some(Ok((id, at, st)))  => Owned::Store(st.store_file_list(&id, &at).await),
+            Some(Ok((id, st)))  => Owned::Store(st.store_file_list(&id, path).await),
         }
     }
 
@@ -324,8 +286,8 @@ impl NativeFs {
         match self.owner(root, lic.path(), method) {
             None                => {},
             Some(Err(e))        => return Err(e),
-            Some(Ok((id, at, st)))  => {
-                res!(Self::writable(&at, method));
+            Some(Ok((id, st)))  => {
+                res!(Self::writable(lic.path(), method));
                 let archive = match pre {
                     None    => Vec::new(),
                     // A test's red: `pre` run un-gathered, its ARCHIVE sent on its own before
@@ -335,14 +297,14 @@ impl NativeFs {
                         Vec::new()
                     },
                     Some(p) => {
-                        res!(st.gather(&at));
+                        res!(st.gather(lic.path()));
                         let ran = p().await;
                         let archive = st.gathered();
                         res!(ran);
                         archive
                     },
                 };
-                return st.store_write_then(&id, &at, content, expect, &archive).await;
+                return st.store_write_then(&id, lic.path(), content, expect, &archive).await;
             },
         }
         if pre.is_some() {
@@ -390,11 +352,10 @@ impl NativeFs {
         -> Option<Outcome<()>>
     {
         let to = match &act {
-            FileAct::Move(to)   => Some(self.owner(root, to, method)
-                .map(|o| o.map(|(id, at, _)| (id, at)))),
+            FileAct::Move(to)   => Some(self.owner(root, to, method).map(|o| o.map(|(id, _)| id))),
             _                   => None,
         };
-        let (id, at, st) = match self.owner(root, path, method) {
+        let (id, st) = match self.owner(root, path, method) {
             None                => match to {
                 Some(Some(_))   => return Some(Err(self.across(path, method))),
                 _               => return None,
@@ -402,21 +363,21 @@ impl NativeFs {
             Some(Err(e))        => return Some(Err(e)),
             Some(Ok(o))         => o,
         };
-        let act = match (to, act) {
-            (Some(Some(Ok((other, to_at)))), FileAct::Move(_)) if other == id => {
-                if let Err(e) = Self::writable(&to_at, method) {
-                    return Some(Err(e));
-                }
-                FileAct::Move(to_at)
-            },
-            (Some(Some(Err(e))), _)     => return Some(Err(e)),
-            (Some(_), _)                => return Some(Err(self.across(path, method))),
-            (None, act)                 => act,
-        };
-        if let Err(e) = Self::writable(&at, method) {
+        match to {
+            Some(Some(Ok(ref other))) if *other == id => {},
+            Some(Some(Err(e)))  => return Some(Err(e)),
+            Some(_)             => return Some(Err(self.across(path, method))),
+            None                => {},
+        }
+        if let Err(e) = Self::writable(path, method) {
             return Some(Err(e));
         }
-        Some(st.store_file_act(&id, &at, act).await)
+        if let FileAct::Move(to) = &act {
+            if let Err(e) = Self::writable(to, method) {
+                return Some(Err(e));
+            }
+        }
+        Some(st.store_file_act(&id, path, act).await)
     }
 
     /// The refusal of a move across a Diamond's edge.

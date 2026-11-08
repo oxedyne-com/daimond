@@ -143,6 +143,65 @@ button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 .files-more:hover { color: var(--text-primary); }
 .files-more:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ── Moving (owner, 2026-11-08) ─────────────────────────────────────────────
+   A row is now something to pick up: dragged onto a folder, cut and pasted,
+   picked with Ctrl/Cmd or Shift. Four states, and each one has to be tellable
+   from the others at a glance, because they mean four different things. */
+
+/* Picked. A tint and a bar on the leading edge: the tint alone disappears under
+   the hover background, which is the very state the pointer is in while
+   choosing a second row. */
+.files-row.sel {
+	background: var(--bg-hover);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+.files-row.sel .files-name { color: var(--text-primary); }
+
+/* Cut: still here, on its way out. Fainter than anything else in the list, and
+   not picked — a cut row that looked picked would read as still being chosen. */
+.files-row.cut :is(.files-name, .nm, .files-size, .place) { opacity: 0.4; }
+.files-row.cut { box-shadow: none; }
+
+/* In flight, under the pointer: the row itself nearly gone, so the eye follows
+   the ghost the browser draws rather than the place it came from. */
+.files-row.dragging { opacity: 0.45; }
+
+/* The folder it will land in. The one state that must be unmistakable: a ring,
+   inside the row so it cannot be clipped, plus the folder's own name at full
+   strength. Drawn on the row rather than a separate marker so the target is
+   exactly the row the pointer is over. */
+.files-row.dir.drop-on {
+	box-shadow: inset 0 0 0 2px var(--accent);
+	background: var(--bg-hover);
+}
+.files-row.dir.drop-on .files-name { color: var(--accent-text); font-weight: var(--w-med); }
+
+/* The folder picker behind Move to…: a crumb line, then folders, then "move
+   into this folder" at the top of them — the folder shown is a target too. */
+.files-move-pick { display: flex; flex-direction: column; gap: 6px; min-height: 180px; max-height: 46vh; }
+.files-move-crumbs { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: var(--fs-xs); }
+.files-move-list {
+	flex: 1; min-height: 120px; overflow: auto; display: flex; flex-direction: column;
+	border: 1px solid var(--border); border-radius: var(--r-sm, 4px); padding: 2px;
+}
+.files-move-list[aria-busy="true"] { opacity: 0.6; }
+.files-move-pick-row, .files-move-pick-here {
+	display: flex; align-items: center; gap: 6px; width: 100%;
+	padding: 5px 7px; border: 0; border-radius: var(--r-sm, 4px);
+	background: none; color: var(--text-primary); text-align: left;
+	font: inherit; font-size: var(--fs-sm); cursor: pointer;
+}
+.files-move-pick-row:hover, .files-move-pick-here:hover { background: var(--bg-hover); }
+/* Picked: the same tint and bar as a picked row, so the two read as one idea. */
+.files-move-pick-row.on, .files-move-pick-here.on {
+	background: var(--bg-hover); box-shadow: inset 2px 0 0 var(--accent);
+}
+.files-move-pick-row:focus-visible, .files-move-pick-here:focus-visible {
+	outline: 2px solid var(--accent); outline-offset: 1px;
+}
+.files-move-pick-here { color: var(--text-secondary); font-style: italic; }
+.files-move-pick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Taken away in the last five seconds: dimmed where it stood, beside its Undo. */
 :is(.files-row, .files-focus .r).taken :is(.files-name, .nm, .files-size, .place) { opacity: 0.45; }
 .files-undo {
@@ -161,6 +220,8 @@ button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 	.dm { width: 44px; height: 44px; }
 	.files-row .dm.ghost { visibility: visible; }
 	.files-row .files-more { display: none; }
+	/* Touch has no drag: Move to… is reached from the long-press menu. */
+	.files-row.sel { box-shadow: inset 3px 0 0 var(--accent); }
 }
 
 .files-path {

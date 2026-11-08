@@ -1329,12 +1329,6 @@ impl Tool {
     /// The synchronous path used by the tests, through the same guard the dispatcher applies, so a
     /// test cannot pass through a door the real code closes.
     pub(super) fn execute_sync_guarded(&self, args: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
-        // The order `dispatch_op` keeps: resolved, then unslashed, then judged.
-        let based = based_args(self, args, &ctx.workspace);
-        let args = match &based {
-            Some(b) => b.as_str(),
-            None    => args,
-        };
         let unslashed = trailing_slash_args(self, args);
         let args = match &unslashed {
             Some(u) => u.as_str(),

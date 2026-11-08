@@ -28,7 +28,6 @@ pub struct Workspace {
     /// (UNBLOCK-32 F2b): a runner's run rooted at a machine folder (`usr`) has the whole home as
     /// its workspace and that folder as its base.  Empty: the root itself, as before.
     base: String,
-    home: Option<PathBuf>,    // The device user's home, absolute, which `~` names; `None` where the run was not told it
 }
 
 impl Workspace {
@@ -41,7 +40,7 @@ impl Workspace {
         }
         let root = res!(std::fs::canonicalize(&root)
             .map_err(|e| err!(e, "Workspace: canonicalise {:?} failed.", root; IO, File)));
-        Ok(Self { root, base: String::new(), home: None })
+        Ok(Self { root, base: String::new() })
     }
 
     /// Construct a workspace from an already-trusted root without
@@ -54,7 +53,7 @@ impl Workspace {
     /// Path jailing in [`resolve`](Self::resolve) is purely lexical and
     /// remains sound regardless of the backing store.
     pub fn unchecked(root: PathBuf) -> Self {
-        Self { root, base: String::new(), home: None }
+        Self { root, base: String::new() }
     }
 
     /// The workspace root path.
@@ -70,66 +69,60 @@ impl Workspace {
         self
     }
 
-    /// This workspace with `home`, the device user's home, as the folder `~` names.  An empty or
-    /// relative `home` names none.
-    pub fn with_home(mut self, home: &str) -> Self {
-        self.home = match home.starts_with('/') {
-            true    => Some(PathBuf::from(home)),
-            false   => None,
-        };
-        self
-    }
-
     /// The folder a relative path is read from, relative to the root; empty for the root.
     pub fn base(&self) -> &str {
         &self.base
     }
 
-    /// `path` as a model wrote it, as the root-relative path every fence judges -- the one path
-    /// resolver every file tool and `run`'s `cwd` pass through, before any check.
+    /// `path` as a model wrote it, as the root-relative path every fence judges (UNBLOCK-32 F2b).
     ///
-    /// A relative path is read from the base (UNBLOCK-32 F2b): with base `usr`, `code/bash/x` is
-    /// `usr/code/bash/x`, so a read-only row on `usr/code/bash` holds; `""` and `"."` are the base
-    /// itself.  `~` and `~/x` are the device user's home and `x` in it, and an absolute path is
-    /// taken as given: either lands inside the root as its root-relative tail, or stays the
-    /// absolute path it resolved to and meets [`crate::tools::path_refusal`], which names it and
-    /// the root it is outside.  `~` with no home known, or any machine path in the browser's
-    /// store (no [machine root](Self::machine_root)), is left as written for the same refusal.
+    /// **The one translation, made before any check**, so a bound is asked of the place the act
+    /// will reach and never of the spelling: with base `usr`, `code/bash/x` is `usr/code/bash/x`,
+    /// and a read-only row on `usr/code/bash` holds.  A relative path is the base joined to it
+    /// (`""` and `"."` are the base itself); `~` and `~/x` are the root and `x`, and an absolute
+    /// path inside the root is its root-relative tail, so the rest of the home is still reached.
+    /// Anything else -- an absolute path outside, a `..` -- is joined or left as written and
+    /// meets the path convention's refusal unchanged.  With no base it is `path` untouched.
+    ///
+    /// An absolute path inside a [machine root](Self::machine_root) is its root-relative tail
+    /// with no base as well (UNBLOCK-58): the briefing names the root, the model writes paths
+    /// under it, and Claude Code reads them the same way.
     pub fn based(&self, path: &str) -> String {
-        let tilde = match path.strip_prefix('~') {
-            Some(r) if r.is_empty() || r.starts_with('/') => Some(r.trim_start_matches('/')),
-            _                                             => None,
-        };
-        // A base is only ever set on a run whose workspace is the whole home (F2b), so there the
-        // root is the home even where the home was not told.
-        let home = match (&self.home, self.base.is_empty()) {
-            (Some(h), _)    => Some(h),
-            (None, false)   => Some(&self.root),
-            (None, true)    => None,
-        };
-        let place = match (tilde, home) {
-            (Some(_), None)                     => return path.to_string(),
-            (Some(r), Some(h)) if r.is_empty()  => h.clone(),
-            (Some(r), Some(h))                  => h.join(r),
-            (None, _) if path.starts_with('/')  => PathBuf::from(path),
-            (None, _)                           => {
-                if self.base.is_empty() {
-                    return path.to_string();
-                }
-                if path.is_empty() || path == "." {
-                    return self.base.clone();
-                }
-                return fmt!("{}/{}", self.base, path);
-            },
-        };
-        if self.machine_root().is_none() {
-            return path.to_string();
+        if self.base.is_empty() {
+            return self.based_absolute(path);
         }
-        match place.strip_prefix(&self.root) {
-            Ok(r) if r.as_os_str().is_empty()   => String::from("."),
-            Ok(r)                               => r.to_string_lossy().to_string(),
-            Err(_)                              => place.to_string_lossy().to_string(),
+        if path == "~" {
+            return String::from(".");
         }
+        if let Some(rest) = path.strip_prefix("~/") {
+            return if rest.is_empty() { String::from(".") } else { rest.to_string() };
+        }
+        if path.starts_with('/') {
+            return self.inside(path);
+        }
+        if path.is_empty() || path == "." {
+            return self.base.clone();
+        }
+        fmt!("{}/{}", self.base, path)
+    }
+
+    /// The absolute `path` as its root-relative tail where it lies inside the root (`.` for the
+    /// root itself), else as written, for the path convention to refuse.
+    fn inside(&self, path: &str) -> String {
+        match Path::new(path).strip_prefix(&self.root) {
+            Ok(r) if r.as_os_str().is_empty() => String::from("."),
+            Ok(r)                             => r.to_string_lossy().to_string(),
+            Err(_)                            => path.to_string(),
+        }
+    }
+
+    /// `path` with no base applied: an absolute path inside a [machine root](Self::machine_root)
+    /// as its root-relative tail, anything else as written.
+    pub fn based_absolute(&self, path: &str) -> String {
+        if path.starts_with('/') && self.machine_root().is_some() {
+            return self.inside(path);
+        }
+        path.to_string()
     }
 
     /// The root as a folder on this machine, or `None` for the browser's store, whose root `/`

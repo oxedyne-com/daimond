@@ -1935,6 +1935,9 @@
      reach for window.DaimondUndo the moment somebody presses one, and the
      History panel reaches for window.DaimondVersions as it mounts. undo.js
      first -- a restore opens an undo window. -->
+<!-- moveentry.js BEFORE undo.js: the Workspace panel's moves are planned and logged
+     by it, and the row ⋯ is drawn the moment somebody opens the panel. -->
+<script src="js/moveentry.js"></script>
 <script src="js/undo.js"></script>
 <script src="js/versions.js"></script>
 <!-- panelrec.js: each conversation's panels, kept on this device and put back on

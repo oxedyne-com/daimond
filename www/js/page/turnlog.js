@@ -69,8 +69,6 @@ export function viewMessages(view) {
 		m.iturn   = view.turn;
 		m.seq     = f.seq;
 		m.ts      = f.at;
-		// A call's end on the runner's clock, moved onto the log's as its start was.
-		if (meta && meta.done && meta.ts) m.done = f.at + Math.max(0, meta.done - meta.ts);
 		m.member  = f.member;
 		if (f.daimon) m.daimon = f.daimon;
 		if (open) m.provisional = 1;

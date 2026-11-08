@@ -323,9 +323,6 @@
 	var lastPostAt     = ms(read(POST_AT_KEY));
 	var throttleStreak = 0, throttledCount = 0, postFailCount = 0, throttleBurst = false;
 	var pagehideAt     = 0;			// when the page last said it was going away
-	// This page load, so the lens can tell two tabs of one device apart and see which one
-	// died. Random per load, held in memory only: not synced, not stored, not personal.
-	var TAB_ID = (Math.random().toString(16).slice(2) + '000000').slice(0, 6);
 	var lastCtx     = {};			// turn id -> last round's prompt tokens, for `inferFold`
 	var lastRealFold = {};			// turn id -> when a REAL fold was last reported
 	var indicator = null;
@@ -945,14 +942,6 @@
 		return cap;
 	}
 
-	/// The tab's JS heap as the browser reports it: Chrome's `performance.memory`, absent
-	/// elsewhere, and then `null` rather than a guess.
-	function heapNow() {
-		var m = window.performance && window.performance.memory;
-		if (!m || !(m.usedJSHeapSize > 0)) return null;
-		return { used: m.usedJSHeapSize, max: m.jsHeapSizeLimit || undefined };
-	}
-
 	/// Queue `text` as a `ds error <id> i/n` chunk set and give back its id, which the
 	/// event row carries as `mref`. A refusal is longer than a row can hold beside its
 	/// ids, and the owner asked for it whole; the set rides the same outbox, so it is
@@ -968,8 +957,7 @@
 	/// Build, redact, fit and queue one event. The envelope wins over a payload
 	/// key of the same name, so a caller cannot overwrite `n` or `t` by accident.
 	/// `boot` and `beat` additionally carry `capabilities()`, added HERE rather
-	/// than at the call sites so neither kind can be emitted without them. They and
-	/// `unload` carry the tab id and heap, from which the lens tells a crash from a close.
+	/// than at the call sites so neither kind can be emitted without them.
 	/// Throws on a payload that will not serialise; only `event` calls this.
 	function emit(kind, payload) {
 		var ev = {
@@ -983,17 +971,6 @@
 			var cap = capabilities();
 			ev.tools     = cap.tools;
 			ev.mayCommit = cap.mayCommit;
-		}
-		if (kind === 'boot' || kind === 'beat' || kind === 'unload') {
-			ev.tab = TAB_ID;
-			var heap = heapNow();
-			if (heap) {
-				ev.heap = heap.used;
-				if (kind === 'boot') ev.heapMax = heap.max;
-			}
-			// Chrome reloads a tab it discarded for memory with this set: a lost tab, but
-			// not a crash.
-			if (kind === 'boot' && document.wasDiscarded) ev.disc = 1;
 		}
 		if (payload && typeof payload === 'object') {
 			Object.keys(payload).forEach(function (k) {
@@ -2209,11 +2186,8 @@
 	// at all, so the moment is remembered: `noteFetchFail` reads it to tell an
 	// abandoned call from a real one.
 	try {
-		window.addEventListener('pagehide', function (e) {
+		window.addEventListener('pagehide', function () {
 			pagehideAt = Date.now();
-			// The tab's last word, posted by the next load from the persisted outbox. A tab
-			// that dies says nothing, and that silence is what the lens reads as a crash.
-			event('unload', { bf: (e && e.persisted) ? 1 : undefined });
 			try { flushConsole(Date.now(), true); } catch (e) {}
 			try { persistNow(); } catch (e) {}
 		});

@@ -7,8 +7,8 @@ import { DEVICE_ID_RE, loadDevices, nominatedDeviceId } from './parcel_collect.j
 import { ARRIVE_FRESH_MS, noteArrive } from './parcel_apply.js';
 import { _threadScope, captureSession, ensureApp, honourGone, scopeTurnApp, settleRunnerAlerts,
 	settleRunnerAsk, settleRunnerSession, settleRunnerWords, syncComposer, threadScopeKey } from './send.js';
-import { bgNoteFromRunner, drainAfterHeld, drainHeldQueues, drainQueue, drainSteerQueue, heedUnheard,
-	interjectMessage, leaseDoorRead, requeueUnheard, runTurn } from './steer.js';
+import { drainAfterHeld, drainHeldQueues, drainQueue, drainSteerQueue, heedUnheard, interjectMessage,
+	leaseDoorRead, requeueUnheard, runTurn } from './steer.js';
 import { PeerAgents, Workers } from './workers.js';
 import { Files } from './files_view.js';
 import { _enginePoison, endTurnEngine } from './layout.js';
@@ -1587,8 +1587,6 @@ function registerPeerRunner() {
 		});
 		// A runner's account of a turn it undid (RUN-HIST), and the asks still waiting on one.
 		if (DaimondPeer.onUndone) DaimondPeer.onUndone(undoneFromRunner);
-		// A background command's end after its turn (BG-WAKE): its row in the chat, which wakes a turn.
-		if (DaimondPeer.onBgNote) DaimondPeer.onBgNote(bgNoteFromRunner);
 		// An ask the relay let lapse goes again when its runner is seen back.
 		window.addEventListener('daimond:presence', function () {
 			if (!window.DaimondVersions || !DaimondVersions.undoTurnAgain) return;

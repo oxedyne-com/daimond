@@ -92,16 +92,12 @@
 	// result in the chat's spill folder, so the tab's delete tells each runner, one row addressed
 	// to each: a row for the account is taken off the relay by the first device that acks it.
 	var T_CHAT_GONE = 'chat-gone';	// a device -> each runner: chat `chat` was deleted
-	// A BACKGROUND COMMAND'S END AFTER ITS TURN (BG-WAKE). Kimberlite seals it to the asker as one
-	// row of the chat (`bgNoteRow`), which wakes a turn (`bgOwed`).
-	var T_BG_NOTE = 'bg-note';	// the runner -> the asker: `{chatId, run, row}`
 
 	/// Is `t` a peer envelope tag this layer owns? The collector routes exactly these
-	/// ten and hands everything else (a message artefact) to the message path.
+	/// nine and hands everything else (a message artefact) to the message path.
 	function peerType(t) {
 		return t === T_ERRAND || t === T_REPORT || t === T_ASK || t === T_GRANT
-			|| t === T_COMPILE || t === T_BUILT || t === T_UNDO || t === T_UNDONE || t === T_CHAT_GONE
-			|| t === T_BG_NOTE;
+			|| t === T_COMPILE || t === T_BUILT || t === T_UNDO || t === T_UNDONE || t === T_CHAT_GONE;
 	}
 
 	// ── Bytes and text ─────────────────────────────────────────
@@ -1121,7 +1117,7 @@
 		var n = now == null ? Date.now() : now, out = {};
 		if (!env) return out;
 		var secs = function (ms) { return Math.max(30, Math.min(86400, Math.ceil(ms / 1000))); };
-		if (env.t === T_REPORT || env.t === T_BUILT || env.t === T_UNDONE || env.t === T_BG_NOTE) {
+		if (env.t === T_REPORT || env.t === T_BUILT || env.t === T_UNDONE) {
 			if (env.to) { out['for'] = String(env.to); out.ttl = secs(NOTE_HOLD_MS); }
 		} else if (env.t === T_UNDO || env.t === T_CHAT_GONE) {
 			// Kept for the runner as long as the relay keeps anything: a day, its cap
@@ -1245,7 +1241,6 @@
 	var _onCompile = null;	// a compile errand, run on a machine that holds the folder
 	var _onBuilt   = null;	// the runner's account of a compile, collected by the dispatcher
 	var _onUndone  = null;	// a runner's account of an undone turn, for the device that asked
-	var _onBgNote  = null;	// a background command's end after its turn, for the chat
 	function onErrand(fn) { _onErrand = fn; }
 
 	/// How many turns this device is running for chats OTHER than `chatId`, 0 when it is
@@ -1289,7 +1284,6 @@
 	function onCompile(fn) { _onCompile = fn; }
 	function onBuilt(fn)   { _onBuilt = fn; }
 	function onUndone(fn)  { _onUndone = fn; }
-	function onBgNote(fn)  { _onBgNote = fn; }
 
 	/// Does this envelope ask the device that collects it to RUN something -- a turn or
 	/// a compile -- rather than note something? The collector folds a note where it
@@ -1333,7 +1327,6 @@
 		else if (obj.t === T_COMPILE && _onCompile) result = await _onCompile(obj, row);
 		else if (obj.t === T_BUILT   && _onBuilt)   await _onBuilt(obj, row);
 		else if (obj.t === T_UNDONE  && _onUndone)  await _onUndone(obj, row);
-		else if (obj.t === T_BG_NOTE && _onBgNote)  await _onBgNote(obj, row);
 		// An `undo-turn` or a `chat-gone` is the runner's (kimberlite) to act on; a page leaves
 		// it, held for its addressee as every note for another device is (`noteHeldFor`).
 		return { routed: true, verified: true, result: result };
@@ -1385,9 +1378,6 @@
 			} else if (obj.t === T_UNDONE) {
 				tally.undones = (tally.undones | 0) + 1;
 				if (h.onUndone) await h.onUndone(obj, row);
-			} else if (obj.t === T_BG_NOTE) {
-				tally.bgNotes = (tally.bgNotes | 0) + 1;
-				if (h.onBgNote) await h.onBgNote(obj, row);
 			}
 		}
 		return tally;
@@ -7601,18 +7591,6 @@
 		return out;
 	}
 
-	/// The chat row a `bg-note` carries, or null where it is not one: a user row of the app's, mid
-	/// `bg-<run>-<id>` of the note's own run, with its words and its `bg_end` event. A copy, with
-	/// nothing but those fields, so every device that takes the note adds the same row. Pure.
-	function bgNoteRow(env) {
-		var r = env && env.row;
-		if (!env || env.t !== T_BG_NOTE || !env.chatId || !env.run || !r || typeof r !== 'object') return null;
-		var mid = String(r.mid || ''), pre = 'bg-' + String(env.run) + '-';
-		if (r.role !== 'user' || mid.indexOf(pre) !== 0 || mid.length === pre.length) return null;
-		if (!r.bg || typeof r.bg !== 'object' || typeof r.content !== 'string' || !r.content) return null;
-		return { role: 'user', app: true, mid: mid, content: r.content, bg: r.bg, ts: +r.ts || +env.ts || 0 };
-	}
-
 	/// The rows of `note` a device holding `messages` should add now, or null. Pure. None
 	/// when the note is this device's own, the turn's placeholder is already held, any row
 	/// of the turn has come (it ran, or its answer merged), or the note is past the
@@ -7787,7 +7765,6 @@
 		T_UNDO:     T_UNDO,
 		T_UNDONE:   T_UNDONE,
 		T_CHAT_GONE: T_CHAT_GONE,
-		T_BG_NOTE:  T_BG_NOTE,
 		makeErrand:  makeErrand,
 		makeReport:  makeReport,
 		/// Ask the runner that ran a turn to undo it (RUN-HIST); its answer is an `undone`.
@@ -7865,8 +7842,6 @@
 		onBuilt:   onBuilt,
 		/// Register the handler for a runner's `undone`: what an undo-turn put back.
 		onUndone:  onUndone,
-		/// Register the handler for a runner's `bg-note`: a background command's end, for its chat.
-		onBgNote:  onBgNote,
 		/// Route a batch of collected rows by their sealed type tag (direct-drive).
 		routeRows:   routeRows,
 		/// Fold a peer's answer into a transcript as an append.
@@ -7895,7 +7870,6 @@
 		dispatchNote:  dispatchNote,
 		dispatchNoteRows: dispatchNoteRows,
 		bgOwed:        bgOwed,
-		bgNoteRow:     bgNoteRow,
 		peerRunsMerge: peerRunsMerge,
 		peerRunsList:  peerRunsList,
 		turnWorkers:   turnWorkers,
