@@ -742,18 +742,23 @@ impl<H: Host> ToolRegistry<H> {
             return None;
         }
         let kept = runner_keeps(&self.ctx);
+        let kinds = self.ctx.kinds();
+        let def = |t: &Tool| match (t, kinds.is_empty()) {
+            (Tool::SpawnAgent, false) => spawn_definition_json(&kinds, &self.ctx.kinds_listing()),
+            _ => t.definition_json_where(self.family.get(), self.claude_names.get(), kept),
+        };
         // THE CORE IN FULL AND THE REST AS ONE INDEX (P2.5c).  A tool `tool_search` has loaded
         // joins at the very end, after the index and the machine stub, so the first round's
         // bytes stay a prefix.
         let mut defs: Vec<String> = offered.iter()
             .filter(|t| !self.held_back(t))
-            .map(|t| t.definition_json_where(self.family.get(), self.claude_names.get(), kept))
+            .map(|t| def(t))
             .collect();
         defs.extend(self.tool_search_json(&offered));
         // Not in `tool_names`: the briefing says plainly that run is not on the belt.
         defs.extend(self.machine_stub_json());
         for t in self.loaded.borrow().iter().filter(|t| offered.contains(t)) {
-            defs.push(t.definition_json_where(self.family.get(), self.claude_names.get(), kept));
+            defs.push(def(t));
         }
         Some(fmt!("[{}]", defs.join(",")))
     }

@@ -2,7 +2,7 @@
 import { chatOutput, diamondBusy, pg } from './state.js';
 import { dsEvent, dsFold, readJson, t } from './util.js';
 import { ChatStore, chatTaintOf, ensureDispatchedResident, loadChatMessages, msgJoin, msgTombstone, newMid,
-	onChatsChangedElsewhere, persistChats, stampMessages, takeReportTaint, touchChat, touchMsg } from './chatstore.js';
+	onChatsChangedElsewhere, persistChats, stampMessages, takePendingTaint, takeReportTaint, touchChat, touchMsg } from './chatstore.js';
 import { DEVICE_ID_RE, loadDevices, nominatedDeviceId } from './parcel_collect.js';
 import { ARRIVE_FRESH_MS, noteArrive } from './parcel_apply.js';
 import { _threadScope, captureSession, ensureApp, honourGone, scopeTurnApp, settleRunnerAlerts,
@@ -373,6 +373,7 @@ async function graftSeed(errand, opts) {
 		if (chatTaintOf(seed)) chat.taintedAt = chatTaintOf(seed);
 		chat._loaded = true;					// its transcript is what we are about to write
 		pg.chats.push(chat);
+		takePendingTaint([chat]);
 		diag('seed chat', 'chat=' + chat.id + ' from the errand (never synced here)');
 	}
 	if (!chat._loaded) {

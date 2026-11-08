@@ -4231,6 +4231,7 @@ async function runSteerHeld(f, presetArg, depthArg, detached, how, held, models)
 			});
 			busySay(rec, tOr('chat.busy_tool', 'Running {tool}, tool call {n}…',
 				{ tool: ev.name || '?', n: callN }));
+			// This path serves only out-of-date pages, which the updater replaces, so it ignores `kind`.
 			if ((ev.name || '') === 'spawn_agent' && !steerInTurn) {
 				var spec = null;
 				try { spec = JSON.parse(ev.args || '{}'); } catch (e) { spec = null; }

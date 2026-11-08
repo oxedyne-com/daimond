@@ -74,7 +74,7 @@ const FNS = ['readJson', 'diamondModels', 'diamondModel', 'modelPicksOf', 'diamo
 	'summarisingPick', 'diamondWorkerModel', 'diamondVisionModel', 'turnModelOf', 'chatWorkerModel',
 	'taskWantsVision', 'turnModelsOfDiamond', 'turnModelsOfChat', 'turnModelsOfRun', 'errandModelOf',
 	'sentModelsOf', 'claimedModelsOf', 'steerModelsFor', 'steerModelFor', 'peerRunErrandDeps', 'diamondCanRun',
-	'errandUnrunnable', 'modelsAt', 'peerReady', 'askerReadiness', 'lackedNote', 'runnerTurnOpts'];
+	'errandUnrunnable', 'modelsAt', 'peerReady', 'askerReadiness', 'lackedNote', 'runnerTurnOpts', 'kindPick'];
 const METHODS = ['holdTurn', 'turnModelsFor', 'spawn', 'dispatch', 'routeFor'];
 const VARS = ['DIAMOND_MODELS_KEY', 'IMAGE_EXT'];
 function liftVar(src, name) {

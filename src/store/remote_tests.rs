@@ -3339,6 +3339,56 @@ fn u96_a_name_set_later_elsewhere_is_taken() {
     assert_eq!(vec![s("kin")], meta.tags, "the earlier tags were taken over these: {}", u96_meta(&mem));
 }
 
+/// U96-SYNCRACE: the other device renamed `d`, and this one stamped `d` by activity a moment later,
+/// so its copy is the fresher by `touched` and the other's is never imported.  The join that meets
+/// the older copy still takes the name set later there, with that device's row for History, and
+/// stamps this copy so it travels.  Red on a866c3846: the older copy's name never landed here.
+#[test]
+fn u96_an_older_copy_gives_the_name_set_later_there() {
+    let mem = u96_seeded();
+    // Recent, as the History sheds old rows; this device works in `d` after it.
+    let at = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d)   => d.as_millis() as u64 - 1000,
+        Err(e)  => panic!("the clock: {}", e),
+    };
+    let row = crate::activity::encode(&crate::activity::Entry::Meta(crate::activity::MetaChange::new(
+        at as i64, "deva", crate::activity::Writer::User, "name", "Fred Hoogland", "Hoogland stories")));
+    let theirs = fmt!(r#"{{"name":"Hoogland stories","crystal_version":0,"updated":{},"touched":{},"tags":["family"],"name_at":{},"tags_at":0}}"#, at, at, at);
+    let got = direct(mem.clone(), move |_| async move {
+        res!(diamond::touch(D).await);
+        let pack = diamond::Pack {
+            id:    Some(s(D)),
+            name:  None,
+            files: Ok(vec![
+                (s(".daimond/meta.json"), theirs.into_bytes()),
+                (fmt!("{}/deva.log", crate::activity::ACTIVITY_DIR), fmt!("{}\n", row).into_bytes()),
+            ]),
+        };
+        diamond::union_logs_from_pack(D, pack).await
+    });
+    let was_touched = match got {
+        Ok(crate::diamond_pagelog::ImportOutcome::Joined(c)) => c.arriving,
+        Ok(other)   => panic!("the join was held: {}", other.to_json()),
+        Err(e)      => panic!("the join: {}", e),
+    };
+    let meta = crate::diamond_meta::Meta::from_json(&u96_meta(&mem));
+    assert_eq!("Hoogland stories", meta.name, "the name set later there never landed: {}", u96_meta(&mem));
+    assert_eq!(at, meta.name_at, "the name came without its stamp: {}", u96_meta(&mem));
+    assert!(meta.touched > at, "the settled record would not travel: {}", u96_meta(&mem));
+    assert_eq!(vec![s("family")], meta.tags, "the tags moved: {}", u96_meta(&mem));
+    assert!(was_touched > 0, "the join says nothing arrived, so the page does not redraw");
+    let rows: Vec<String> = u96_rows(&mem).into_iter().filter(|r| r.contains("Hoogland stories")).collect();
+    assert_eq!(1, rows.len(), "History holds {} rows for the rename: {:?}", rows.len(), rows);
+    assert!(rows[0].contains("deva"), "the row is not the renaming device's: {}", rows[0]);
+    let list = direct(mem.clone(), |_| async move { diamond::list().await });
+    let list = match list {
+        Ok(l)   => l,
+        Err(e)  => panic!("the list: {}", e),
+    };
+    assert!(list.contains(&fmt!("\"name_at\":{}", at)),
+        "the list does not say when the name was set, so the copy sent cannot: {}", list);
+}
+
 /// The record's changes `d` holds, as the History reads them.
 fn u96_rows(mem: &MemBackend) -> Vec<String> {
     let json = direct(mem.clone(), |_| async move { diamond::meta_changes(D).await });

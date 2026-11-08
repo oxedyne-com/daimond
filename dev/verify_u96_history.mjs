@@ -4,9 +4,11 @@
 // Two paired devices of one Pro account on a gateway of this run's own (the tree's binary), A and B, as
 // `handoffpair.mjs` pairs them.
 //
-//   H  A renames diamond X through the rail (the person's door). B pulls. B's History of X holds exactly ONE
-//      record-change row for the name: old → new, naming A's device, by "you" (writer "user"). B's rail shows
-//      X under the new name, and so does X's daimon chat, which holds no name of its own.
+//   H  A renames diamond X through the rail (the person's door). B then works in X before it has pulled
+//      (U96-SYNCRACE), so B's copy is the fresher by touched and A's the older with the later name. B pulls.
+//      B's History of X holds exactly ONE record-change row for the name: old → new, naming A's device,
+//      by "you" (writer "user"). B's rail shows X under the new name, and so does X's daimon chat, which
+//      holds no name of its own.
 //   R  On B, X's meta.json is deleted while X's version hold is held (by this run, as a turn end would hold
 //      it), and B reads its diamonds, which rebuilds the record from the crystal under that hold. B is closed
 //      and reopened. B's History of X holds the rebuild row; after a round each way, X's name is the new name
@@ -299,6 +301,11 @@ try {
 		}, NEW);
 		await sleep(1500);
 		check('H: A holds the new name', ((await listed(a))[X] || {}).name === NEW, J((await listed(a))[X] || null));
+		// THE RACE (U96-SYNCRACE): B works in X after A's rename and before it pulls, so B's copy is the
+		// fresher by touched and A's is the older one carrying the later name.  B kept the old name for 90 s.
+		const bt = await b.page.evaluate(async (id) => { const mod = await import('../pkg/oxedyne_daimond.js'); await mod.touch_diamond(id); return true; }, X).catch((e) => String(e));
+		const ta = ((await listed(a))[X] || {}).touched || 0, tb = ((await listed(b))[X] || {}).touched || 0;
+		check('H: B works in X after the rename, so its copy is the fresher', bt === true && tb > ta, J({ bt, ta, tb }));
 		const got = await carry(a, b, async () => ((await listed(b))[X] || {}).name === NEW);
 		check('H: B pulls the new name', got, J((await listed(b))[X] || null));
 		await sleep(1000);

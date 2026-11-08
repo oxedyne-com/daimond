@@ -1318,6 +1318,9 @@ html .diamond-box > .session-box-tags > .tag-chip.tag-more:not(.tag-inc):not(.ta
 	line-height: 1.5;
 	white-space: pre-wrap;
 }
+/* A background command's end (BG-WAKE): one line, its output on open. */
+.chat-msg-bg summary { cursor: pointer; }
+.chat-msg-bg pre { margin: 4px 0; max-height: 40vh; overflow: auto; }
 
 /* THE FOLD IS A BOUNDARY, NOT A MESSAGE.
  *

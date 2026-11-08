@@ -2,7 +2,8 @@
 import { Wasm, builtin_tools, init, install_panic_hook, readBytes, readRawBytes, set_account_ns } from './wasm.js';
 import { appEl, chatInput, chatInputBar, pg, sessionNameEl } from './state.js';
 import { cfgReady, getSecret, installSecretMask, secretEye, setSecret, syncCfgFromModels, t } from './util.js';
-import { chatsWithTranscripts, ensureDispatchedResident, loadChatsHeld, nudgeSync, storedChats } from './chatstore.js';
+import { chatsWithTranscripts, ensureDispatchedResident, loadChatsHeld, nudgeSync, storedChats,
+	takePendingTaint } from './chatstore.js';
 import { applyHandHostname, loadDevices, nominatedDeviceId, noteHandStale } from './parcel_collect.js';
 import { rebuildDispatchedIndex, selfDeviceId } from './handoff.js';
 import { fitComposer, runnerReadyReject, runnerReadyResolve } from './send.js';
@@ -417,6 +418,7 @@ async function boot() {
 		return;
 	}
 	pg.chats = await loadChatsHeld();  // restore persisted chats (survive reload) -- SUMMARIES (seq 213)
+	takePendingTaint();
 	pg.chatsUp = true;
 	rebuildDispatchedIndex();   // seed the dispatched-placeholder cache from the summaries
 	runnerReadyResolve();       // the engine and the chats are up: errands may be worked now

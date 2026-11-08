@@ -1371,13 +1371,29 @@ pub(super) async fn local_egress_ask_detail<H: Host>(_turn: &str, _tool: &str, _
 /// [`ToolContext::web_consent_word`]) -- and the runner it is sent to (`target`, empty for this
 /// device).  `fork` names the parent's copy the worker starts from and `fb` its size in bytes
 /// (r578c); an empty `fork` is a brief worker, which starts from its task.
+///
+/// `kind` is the kind of worker asked for (KINDS-1): the page runs it on the kind's model, provider
+/// and effort, narrows its belt to the kind's tools, and the task already carries the kind's
+/// prompt ([`crate::kinds::task_for`]).  `null` is an ordinary worker on the chat's worker model.
 pub fn spawn_payload(name: &str, task: &str, turn: &str, tainted: bool, web: &str, target: &str,
-    fork: &str, fb: usize) -> String
+    fork: &str, fb: usize, kind: Option<&crate::kinds::Kind>) -> String
 {
+    let kind = match kind {
+        None    => fmt!("null"),
+        Some(k) => fmt!("{{\"name\":\"{}\",\"provider\":\"{}\",\"model\":\"{}\",\"effort\":\"{}\",\
+            \"tools\":{}}}",
+            json_escape(&k.name), json_escape(&k.provider), json_escape(&k.model),
+            k.effort.map(|e| e.wire()).unwrap_or(""),
+            match &k.tools {
+                None    => fmt!("null"),
+                Some(t) => fmt!("[{}]", t.iter().map(|n| fmt!("\"{}\"", json_escape(n)))
+                    .collect::<Vec<String>>().join(",")),
+            }),
+    };
     fmt!("{{\"name\":\"{}\",\"task\":\"{}\",\"turn\":\"{}\",\"tainted\":{},\"web\":\"{}\",\
-        \"target\":\"{}\",\"fork\":\"{}\",\"fb\":{}}}",
+        \"target\":\"{}\",\"fork\":\"{}\",\"fb\":{},\"kind\":{}}}",
         json_escape(name), json_escape(task), json_escape(turn), tainted, json_escape(web),
-        json_escape(target), json_escape(fork), fb)
+        json_escape(target), json_escape(fork), fb, kind)
 }
 
 pub async fn egress_check<H: Host>(tool: &str, url: &str, ctx: &ToolContext<H>) -> Option<String> {

@@ -30,7 +30,7 @@ async function run(which) {
 		{ role: 'assistant', mid: 'ph-2', iturn: 't2', why: 'dispatched', content: '' }] };
 	const deps = { window: { DaimondLease: Lease, DaimondSync: Sync }, current: chat, chats: [chat], _unloading: false,
 		recoveringHere: () => false, diamondBusy: () => false, armHeldWake() {}, isLostRow: () => false,
-		sendQueued: async () => { st.sent++; return 'sent'; }, askHolds: () => false, returnQueue() {}, renderQueue() {}, updateQueueBadges() {},
+		sendQueued: async () => { st.sent++; return 'sent'; }, askHolds: () => false, returnQueue() {}, wakeBgEnds() {}, renderQueue() {}, updateQueueBadges() {},
 		_peerStopping: {}, PEER_HELD: { claimed: 1, running: 1, blocked: 1, 'awaiting-consent': 1 },
 		peerUiStateFor: () => (cached.expiry > Date.now() ? 'running' : 'failed'),
 		peerReports: {}, _localEnding: {}, _localRecovering: {}, _lapseReading: {}, _lapseRead: {}, diag() {},

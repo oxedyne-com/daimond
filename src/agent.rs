@@ -1055,6 +1055,12 @@ impl Agent {
             if let Some(n) = crate::llm::extract_json_number(text, "gather_timeout_s") {
                 if n > 0 { l.gather_timeout_s = n; }
             }
+            if let Some(n) = crate::llm::extract_json_number(text, "kinds_shown") {
+                if n > 0 { l.kinds_shown = n as usize; }
+            }
+            if let Some(n) = crate::llm::extract_json_number(text, "kind_said_chars") {
+                if n > 0 { l.kind_said_chars = n as usize; }
+            }
             // What an orphaned worker has left.  Nought is a choice here and not an absence:
             // "stop at the next seam" is the tightest arm of the measure, and a verifier's
             // break needs the other end of it -- see `dev/verify_spawn_gather.mjs`.
@@ -1722,6 +1728,13 @@ impl Agent {
         // AND THE TUNED GATHER CEILING GOES WITH IT.  `gather` is a tool and cannot see `Limits`;
         // this is the one place a turn begins, so it is where the figure is handed over.
         registry.ctx.set_gather_timeout_s(self.limits.borrow().gather_timeout_s);
+        // AND THE KINDS OF WORKER IN FORCE, read afresh each turn from both layers, so an edit to
+        // a kind file holds from the next message.  Only where a worker can be asked for.
+        if registry.tools.contains(&crate::tools::Tool::SpawnAgent) {
+            let kinds = crate::kinds::load(&registry.ctx).await;
+            let l = self.limits.borrow();
+            registry.ctx.set_kinds(kinds, l.kinds_shown, l.kind_said_chars);
+        }
         // AND THE MEASURE UNDER TRIAL, handed over at the same seam and for the same reason:
         // `offered` decides the schema array synchronously, once a round, and cannot see
         // `Limits`. Written every turn rather than once, so an arm that changes it between two
@@ -2625,6 +2638,16 @@ impl Agent {
                 schema = tools_json.as_ref().map(|s| s.len() as u64).unwrap_or(0);
             }
             self.llm.set_pin(session.pin.clone());          // this conversation's host (r578 U3)
+            // WHAT WAS HEARD SINCE THE LAST REQUEST GOES IN THIS ONE (BG-WAKE): a background
+            // command's end, in the words the page's wake would open a turn with.
+            for ev in crate::tools::take_late(&registry.ctx.read_seen) {
+                let said = match crate::engine::bg::note(&ev) {
+                    Ok(n)   => n,
+                    Err(e)  => fmt!("An event from outside the turn could not be read ({}): {}", e, ev),
+                };
+                working.push(ChatMessage::app(said.clone()));
+                session.messages.push(ChatMessage::app(said));
+            }
             // A STOPPED TURN GOES NO FURTHER, asked before anything of the next round -- the
             // cap's fold, the proactive fold, the request -- can spend.  The seam below asks it
             // too; this is the top of a round a nudge `continue`s straight into, and of the first.

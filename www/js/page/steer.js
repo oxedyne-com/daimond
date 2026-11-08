@@ -4,7 +4,8 @@ import { _saidThere, _steerApp, _steerDetached, agentsGrid, chatInput, chatOutpu
 	diamondList, pg, sessionList, sessionNameEl } from './state.js';
 import { MIN_MAX, capRefused, dsEvent, dsFold, fmtTok, friendlyError, maxOutFor, noteCapRefused,
 	opaqueRefusal, t, tn, truncatedArgs } from './util.js';
-import { endedHow, msgTombstone, newMid, persistChats, stampMessages, touchChat, touchMsg } from './chatstore.js';
+import { ChatStore, endedHow, loadChatMessages, msgTombstone, newMid, persistChats, stampMessages, touchChat,
+	touchMsg } from './chatstore.js';
 import { _liveMid, _liveProd, _liveTurn, _localEnding, _localRecovering, _progressView, _turnRun,
 	beginTurnRun, deviceNameFor, hereOf, leaseClockNow, markRunFolded, noteHerePrompt, ownsChat,
 	peerReports, peerStopTurn, peerSyncShim, peerUiStateFor, recoveringHere, selfDeviceId, turnSpan } from './handoff.js';
@@ -18,10 +19,10 @@ import { DaimondAdmin } from './admin.js';
 import { WakeLock, failureClass, tel, telOrd, turnKill, turnsIn } from './layout.js';
 import { commitRatings, mountRateControls, pushUserRecord, rateArm, ratingPre, turnEffortOf,
 	turnModelOf } from './rating.js';
-import { maybeAutoDispatch, mountTurnActions, offline, seatNamesRunner } from './sourcemenu.js';
+import { keptPrompt, maybeAutoDispatch, mountTurnActions, offline, seatNamesRunner } from './sourcemenu.js';
 import { diag, toast } from './passkey_phrase.js';
 import { appendAssistantText, appendCompacted, appendEnding, appendError, appendFailure,
-	appendInterjected, appendLeak, appendThinking, appendUserMessage, askHolds,
+	appendInterjected, appendLeak, appendThinking, appendUserMessage, askHolds, askOpenIn,
 	cutAccount, cutReason, dropAssistant, endLogOf, failRole, finalizeAssistant, hearsSaid, honoursModelSet,
 	logThinking, nearBottom, renderHistory, renderToolCall, renderToolResult, respModel, setScrollTop,
 	stampAfter, worthSaying } from './turns.js';
@@ -833,7 +834,7 @@ export function drainQueue(chat, failed) {
 	chat._aborted = false;
 	chat._stopWhy = '';
 	var q = chat._queue || [];
-	if (!q.length) return;
+	if (!q.length) { wakeBgEnds(chat); return; }		// what the person queued goes first
 	// Only for the chat on screen. runTurn writes the question straight into the
 	// thread, so a turn started for a chat the user has since left would render
 	// into the conversation they are now looking at. A queue left on another chat
@@ -910,6 +911,7 @@ async function sendQueued(chat, item) {
 /// had the user been watching.
 export function resumeQueue(chat) {
 	if (!chat || pg.current !== chat) return;                 // they have moved on again
+	wakeBgEnds(chat);
 	if (!chat._queue || !chat._queue.length) return;
 	if (chat._generating) return;                          // its own turn will drain it
 	if ((chat.status || 'active') === 'pending') return;   // nothing has started here yet
@@ -1010,6 +1012,100 @@ function withTurnLock(chatId, fn) {
 		return navigator.locks.request('daimond-turn-' + chatId, { mode: 'exclusive' }, fn);
 	}
 	return fn();
+}
+
+// ── A background command's end wakes its chat (BG-WAKE) ─────────────
+//
+// Kimberlite posts the end of a background command whose run's turn had already ended as a row
+// of the chat (`bg`, mid `bg-<run>-<id>`, words `engine::bg::note`'s). That row is the prompt of
+// one turn, started on the chat's seat as a send is: handed to a runner by the election, else run
+// here. One device takes it, by a claim at the lease door (`bgw:<mid>`), as a mail arrival is
+// taken; a turn under way in the chat holds it back, and that turn's end asks again.
+
+var _bgWaking = {};	// row mid -> 1 while this page claims or starts its wake
+var _bgAgain = 0;	// the timer that asks again after a claim the door could not decide
+
+/// Does something in `chat` hold a wake back: a turn here or handed off, a press in flight, a
+/// question waiting for the person, or a pause?
+function bgHeld(chat) {
+	return !!(chat._generating || chat._sending || recoveringHere(chat) || dispatchInFlight(chat)
+		|| askOpenIn(chat) || turnHold(chat));
+}
+
+/// Wake each turn a background command's end is owed (`DaimondPeer.bgOwed`), in `only` or in every
+/// chat: asked when rows merge, when a turn ends and when a chat is opened. A chat not resident is
+/// read in when its summary names one.
+export function wakeBgEnds(only) {
+	if (!window.DaimondPeer || !DaimondPeer.bgOwed) return;
+	var named = {};
+	try { ChatStore.stored().forEach(function (s) { if (s && s.id && s.bgOwed) named[s.id] = 1; }); }
+	catch (e) { /* the resident chats are still read */ }
+	(pg.chats || []).forEach(function (c) {
+		if (!c || (only && c !== only)) return;
+		if (c._loaded) {
+			DaimondPeer.bgOwed(c.messages).forEach(function (m) { wakeOnBgEnd(c, m); });
+		} else if (named[c.id]) {
+			loadChatMessages(c).then(function () { if (c._loaded) wakeBgEnds(c); },
+				function () { /* the next merge asks again */ });
+		}
+	});
+}
+
+/// Take row `row` of `chat`'s wake for this device, start it, and settle the claim.
+async function wakeOnBgEnd(chat, row) {
+	var mid = String(row.mid);
+	if (_bgWaking[mid] || bgHeld(chat)) return;
+	_bgWaking[mid] = 1;
+	try {
+		await withTurnLock(chat.id, async function () {
+			// Read again under the lock: another tab of this device may have taken it meanwhile.
+			var now = DaimondPeer.bgOwed(chat.messages).filter(function (m) { return String(m.mid) === mid; })[0];
+			if (!now || bgHeld(chat)) return;
+			var claim = await claimBgWake(mid);
+			if (!claim) return;
+			var went = false;
+			try { went = await startBgWake(chat, now); }
+			finally {
+				var L = function (mode) { return DaimondPeer.settleLease('bgwake', claim.tid, claim.self, mode, claim.cas, leaseClockNow); };
+				try { if (went) await L('done'); await L('released'); }
+				catch (e) { /* the claim lapses; the tag on the row keeps the wake from running twice */ }
+			}
+		});
+	} finally { delete _bgWaking[mid]; }
+}
+
+/// This device's claim on the wake of row `mid`, or null: another device holds it or ran it, or
+/// the door could not decide, when the page asks again a renew's beat later.
+async function claimBgWake(mid) {
+	var self = selfDeviceId(), sync = window.DaimondSync;
+	if (!self || !window.DaimondLease || !DaimondLease.take || !DaimondPeer.syncCas) return null;
+	if (!sync || (sync.heard && !sync.heard())) { bgAskAgain(); return null; }
+	var tid = 'bgw:' + mid, cas = DaimondPeer.syncCas(peerSyncShim()), took = null;
+	try { took = await DaimondLease.take(tid, { holder: self }, cas, leaseClockNow); }
+	catch (e) { took = { won: false, why: 'unread' }; }
+	if (took && took.won) return { tid: tid, self: self, cas: cas };
+	var why = String((took && took.why) || '');
+	diag('bg wake', tid + ' not taken why=' + (why || 'held'));
+	if (why && why !== 'held' && why !== 'settled') bgAskAgain();
+	return null;
+}
+
+function bgAskAgain() {
+	if (_bgAgain) return;
+	_bgAgain = setTimeout(function () { _bgAgain = 0; wakeBgEnds(); }, +DaimondLease.RENEW_EVERY_MS);
+}
+
+/// Start the turn on `row`, already in `chat`'s transcript, on the chat's seat. False when the seat
+/// is here and the chat is not on screen: `runTurn` draws into the thread on screen, so it waits
+/// for the chat to be opened (`resumeQueue`), unclaimed.
+async function startBgWake(chat, row) {
+	var mid = String(row.mid), text = String(row.content || '');
+	if (await maybeAutoDispatch(chat, text, '', mid, true, undefined, { kept: row })) return true;
+	if (!ownsChat(chat) || bgHeld(chat) || pg._unloading) return false;
+	keptPrompt(row, mid);
+	Promise.resolve(runTurn(chat, text, { promptInTranscript: true, mid: mid }))
+		.catch(function (e) { diag('bg wake', mid + ' ' + String((e && e.message) || e)); });
+	return true;
 }
 
 /// Run one turn of a chat, journalling every step so a tab that dies mid-turn loses nothing but
@@ -1168,9 +1264,10 @@ export async function runTurn(chat, text, opts) {
 	// tells this turn to anchor to that existing message (mid === `turnId`) and NOT
 	// append a second copy. The agent was already seeded without it (peerReconstruct
 	// -> ensureApp exceptMid), so `run_turn(text)` below sends it exactly once.
+	// A Here turn on a prompt the transcript holds (a background command's end, BG-WAKE) names it `opts.mid`.
 	var reusePrompt = null;
-	if (opts.promptInTranscript && opts.turnId) {
-		var tin = String(opts.turnId), msgs0 = chat.messages || [];
+	if (opts.promptInTranscript && (opts.turnId || opts.mid)) {
+		var tin = String(opts.turnId || opts.mid), msgs0 = chat.messages || [];
 		for (var ri = msgs0.length - 1; ri >= 0; ri--) {
 			if (msgs0[ri].role === 'user' && String(msgs0[ri].mid) === tin) { reusePrompt = msgs0[ri]; break; }
 		}
@@ -1525,6 +1622,7 @@ export async function runTurn(chat, text, opts) {
 			// is: the tool call only records the request — the agent runtime is the
 			// page's, not the model's — so several calls in one turn become several
 			// workers running at once rather than one blocking the next.
+			// This path serves only out-of-date pages, which the updater replaces, so it ignores `kind`.
 			if ((ev.name || '') === 'spawn_agent' && !inTurnWorkers) {
 				var wspec = null;
 				try { wspec = JSON.parse(ev.args || '{}'); } catch (e) { wspec = null; }
@@ -2495,6 +2593,25 @@ export async function runTurn(chat, text, opts) {
 	// A turn that read a page, an email or a command's own output has just cut this
 	// chat off from the network, and nothing else on screen would say so.
 	if (window.DaimondHandMode && DaimondHandMode.refresh) DaimondHandMode.refresh();
+}
+
+/// The pair a worker of `kind` runs on: the kind's model, on its provider, or where it names
+/// none the provider that model resolves to, else the ordinary `pick`'s. Null where the kind
+/// names no model, so the ordinary pick stands. Chosen, so routing never moves it.
+export function kindPick(kind, pick) {
+	if (!kind || !kind.model) return null;
+	var model = String(kind.model), prov = String(kind.provider || '');
+	var r = window.DaimondModels && DaimondModels.resolve ? DaimondModels.resolve(prov, model) : null;
+	if (r && r.model) return { provider: r.provider || prov, model: r.model, chosen: true };
+	return { provider: prov || (pick && pick.provider) || '', model: model, chosen: true };
+}
+
+/// The effort a worker asks for: its kind's, where its kind set one; else, on its chat's own
+/// model, the chat's; else '' for the model's default.
+export function workerEffort(run, chat) {
+	if (run && run.effort) return String(run.effort);
+	return (chat && chat.model === run.model && (chat.provider || '') === (run.provider || ''))
+		? (chat.effort || '') : '';
 }
 
 /// Which model a chat's workers run on: the chat's own.

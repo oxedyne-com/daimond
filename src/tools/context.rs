@@ -1411,6 +1411,30 @@ impl<H: Host> ToolContext<H> {
             .unwrap_or_default()
     }
 
+    /// The worker kinds in force this turn ([`crate::kinds::load`]).
+    pub fn kinds(&self) -> crate::kinds::Kinds {
+        lock_cache(&self.read_seen).workers.get(&self.daimon_of)
+            .map(|w| w.kinds.clone())
+            .unwrap_or_default()
+    }
+
+    /// `spawn_agent`'s line naming the kinds, empty where there are none.
+    pub fn kinds_listing(&self) -> String {
+        lock_cache(&self.read_seen).workers.get(&self.daimon_of)
+            .map(|w| w.kinds.listing(w.kinds_shown, w.kind_said))
+            .unwrap_or_default()
+    }
+
+    pub fn set_kinds(&self, kinds: crate::kinds::Kinds, shown: usize, said: usize) {
+        let who = self.daimon_of.clone();
+        let mut c = lock_cache(&self.read_seen);
+        let w = c.workers.entry(who).or_default();
+        w.kinds = kinds;
+        w.kinds_shown = shown;
+        w.kind_said = said;
+    }
+
+
     /// Say where `gather` reads its reports from.  Set once, by whoever builds the agent.
     pub fn set_worker_source(&self, src: WorkerSource) {
         let who = self.daimon_of.clone();

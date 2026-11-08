@@ -20,12 +20,17 @@
      (f) runner  -- a runner's report that a daimon's conversation read outside content taints
                     that Diamond (`taintDaimon`), not whichever Diamond its live client is
                     steering when the report lands, so its next hand-off is not clean.
+     (g) pending -- a gather round for a chat this device holds no record of yet keeps the taint
+                    durably (TAINT-PENDING), and the record takes it when it arrives by a pull,
+                    a reload between or not: the cache another tab reads, and the store's rows
+                    `bootTombs` reads back with no expiry.
 
    Run:  node www/js/taintgather.test.mjs
          TREE=<checkout> node www/js/taintgather.test.mjs    # the same arms on another tree
    ============================================================ */
 import { readPage } from '../../dev/pagesrc.mjs';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 const { makeWindow, TREE } = await import('../../dev/syncprobe.mjs');
 const { loadPage } = await import('./test/page.mjs');
@@ -149,12 +154,12 @@ const STUB = {
 	setCrystalStatus() {}, workersHeld: () => true,
 	DaimondAgentGrid: { endedAtNext: (r) => r.endedAt || 0 },
 };
-const WANT = ['Workers', 'errandClean', 'daimonApp', 'taintDaimon', 'takeReportTaint'];
-function page(chats, diamonds) {
+const WANT = ['Workers', 'errandClean', 'daimonApp', 'taintDaimon', 'takeReportTaint', 'onChatsChangedElsewhere', 'applyChatTaint', 'pg'];
+function page(chats, diamonds, extra) {
 	const w = makeWindow({});
 	w.DaimondLedger = {};
 	const saved = { n: 0 };
-	const stub = Object.assign({}, STUB, { chats, diamonds, persistChats: () => { saved.n++; } });
+	const stub = Object.assign({}, STUB, { chats, diamonds, persistChats: () => { saved.n++; } }, extra || {});
 	let F;
 	try { F = loadPage({ window: w, want: WANT, stub: Object.assign({ Wasm: { wrap_untrusted: wrap } }, stub) }); }
 	catch (e) { F = loadPage({ window: w, want: WANT, stub }); }
@@ -256,6 +261,79 @@ console.log('\n(f) runner: a report for a daimon taints its Diamond, not the one
 	check('the record keeps the report\'s stamp', rec.taintedAt === 1234, rec.taintedAt);
 	check('its next hand-off is not clean', F.errandClean(rec, 'd5', rec.app) === false);
 	check('the other Diamond is not marked', !app.tainted.has('d6'), [...app.tainted]);
+}
+
+console.log('\n(g) pending: the taint of a chat with no record here waits for the record\n');
+{
+	const KEY = 'daimond-taint-pending';
+	const rows = [];
+	/// The `tombs` store, and the store a pull rebuilds the rail from.
+	const store = (held) => ({
+		putTombs: async (map, obj) => { for (const id of Object.keys(obj)) rows.push({ map, id, at: obj[id] }); return true; },
+		refresh: async () => held.slice(),
+	});
+	const I18N = { t: (k) => k, tn: (k) => k };		// the rail's strings, redrawn after a pull
+	const arrived = () => [{ id: 'c9', name: 'c9', updatedAt: 2, metaAt: 2, messages: [] }];
+	/// The record lands by a pull, and an engine is built for it as `send.js` builds a chat's: the
+	/// record's taint put on it before it runs. Its next hand-off is then asked about.
+	async function arrive(p) {
+		try { await p.F.onChatsChangedElsewhere(['c9']); } catch (e) { console.log('  the pull threw: ' + (e && e.message)); }
+		const rec = (p.F.pg.chats || []).find((c) => c.id === 'c9');
+		if (!rec) return { rec, clean: null };
+		rec.app = new FakeApp();
+		p.F.applyChatTaint(rec, rec.app);
+		return { rec, clean: p.F.errandClean(rec, '', rec.app) };
+	}
+
+	const held = [];
+	const p1 = page([], [], { ChatStore: store(held), DaimondI18n: I18N });
+	p1.F.Workers.runs = [worker('web', 'b9', true)];
+	p1.F.Workers.batches = { b9: { chatId: 'c9', expected: 1, depth: 0, ids: [] } };
+	p1.F.Workers.deliverToChat = () => {};
+	p1.F.Workers.gather('b9');
+	await Promise.resolve();
+	check('the taint is kept durably for the chat', rows.some((r) => r.map === KEY && r.id === 'c9' && r.at > 0), rows);
+	held.push(...arrived());
+	const a1 = await arrive(p1);
+	check('the record that arrives later is marked', !!a1.rec && typeof a1.rec.taintedAt === 'number', a1.rec && a1.rec.taintedAt);
+	check('the engine built for it starts tainted, so its hand-off is not clean', a1.clean === false, a1.clean);
+
+	// A reload between: the cache another tab or the next load reads.
+	const cache = p1.w.localStorage.getItem(KEY);
+	const p2 = page([], [], { ChatStore: store(arrived()), DaimondI18n: I18N });
+	if (cache !== null) p2.w.localStorage.setItem(KEY, cache);
+	const a2 = await arrive(p2);
+	check('after a reload the record that arrives is marked', !!a2.rec && typeof a2.rec.taintedAt === 'number', a2.rec && a2.rec.taintedAt);
+	check('after a reload the engine built for it starts tainted', a2.clean === false, a2.clean);
+
+	// A reload whose cache was lost to quota: `bootTombs` reads the rows back, a month past
+	// any tombstone's life, and the record still arrives tainted.
+	const tombMem = {};
+	const S = {
+		tombMem, tombTtl: () => 1, readJson: () => ({}), allTombKeys: () => [], SYNC_FILE_TOMBS_KEY: 'daimond-file-tombs',
+		tombMemMap: (k) => tombMem[k] || (tombMem[k] = {}), tombCacheWrite: () => {}, writeTombRows: async () => true,
+		readAllTombs: async () => rows.map((r) => Object.assign({}, r, { at: 1 })), TAINT_PENDING_KEY: KEY, Date, Object,
+	};
+	let bootTombs = null;
+	const bt = SRC.indexOf('async function bootTombs() {');
+	if (bt >= 0) bootTombs = new Function('S', 'with (S) { return (' + sliceFrom(bt) + '); }')(S);
+	if (bootTombs) await bootTombs();
+	const p3 = page([], [], { ChatStore: store(arrived()), DaimondI18n: I18N, tombMem });
+	const a3 = await arrive(p3);
+	check('after a reload with no cache the record that arrives is marked', !!a3.rec && typeof a3.rec.taintedAt === 'number', a3.rec && a3.rec.taintedAt);
+	check('after a reload with no cache the engine built for it starts tainted', a3.clean === false, a3.clean);
+
+	// A runner's report for a chat with no record here waits the same way.
+	const p4 = page([], [], { ChatStore: store(arrived()), DaimondI18n: I18N });
+	p4.F.takeReportTaint({ chatId: 'c9', taintedAt: 1234 });
+	const a4 = await arrive(p4);
+	check('a runner\'s report for a chat with no record marks it when it arrives', !!a4.rec && a4.rec.taintedAt === 1234, a4.rec && a4.rec.taintedAt);
+
+	// The two other ways a record arrives: the boot's load, and the chat an errand seeds.
+	const mod = (n) => readFileSync(join(TREE, 'www', 'js', 'page', n), 'utf8');
+	const boot = mod('boot.js').slice(mod('boot.js').indexOf('pg.chats = await loadChatsHeld();'));
+	check('the boot\'s load takes the pending taint', /^pg\.chats = await loadChatsHeld\(\);[^\n]*\n\s*takePendingTaint\(\);/.test(boot), boot.slice(0, 160));
+	check('an errand\'s seeded chat takes the pending taint', /pg\.chats\.push\(chat\);\n\s*takePendingTaint\(\[chat\]\);\n\s*diag\('seed chat'/.test(mod('handoff.js')), 'no take beside the seed');
 }
 
 console.log('\n' + (checks - failures) + '/' + checks + ' checks passed');

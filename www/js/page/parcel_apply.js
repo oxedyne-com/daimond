@@ -216,6 +216,18 @@ export function diamondStamp(d) {
 	return (d && (d.touched || d.updated)) || 0;
 }
 
+/// Did the arriving copy set a name or tags later than this device did (U96-SYNCRACE)?
+///
+/// `touched` is activity, so a copy can be the older by it and still carry the later name: a
+/// device that worked in a Diamond just after another renamed it, before it had pulled, held the
+/// old name until a round trip back.  A sender that predates the stamps sends none, and nothing is
+/// read for them.
+export function diamondSetLater(r, mine) {
+	var s = r && r.set;
+	if (!s || !mine) return false;
+	return (+s.name || 0) > (+mine.name_at || 0) || (+s.tags || 0) > (+mine.tags_at || 0);
+}
+
 /// THE SHAPE LAW (F3). A Diamond travels in one of two shapes, inline (its export in
 /// the parcel) or a reference (`dataRef`, the bytes in chunks), and which one is each
 /// device's own choice: a phone's inline room is a quarter of a desktop's, so a
@@ -685,6 +697,21 @@ async function applyDiamonds(remote, from) {
 					}
 					udata = null;
 				}
+			} else if (app.union_logs && diamondSetLater(r, mine)) {
+				// An older copy is not imported, but the join takes a name or tags set later there by
+				// their stamps, with that device's History rows.
+				var sdata = await diamondData(r);
+				if (sdata != null) {
+					var sj = null;
+					try {
+						sj = await holdDiamond(r.id, async function () {
+							return joinCounts(await app.union_logs(r.id, sdata));
+						}, DIAMOND_LOCK_WAIT);
+					} catch (e) { sj = null; }		// waited too long, or would not join: next round
+					if (sj) noteLogsHeld(r.id, mine.name, !!sj.held);
+					if (sj && !sj.held && sj.arriving > 0) changed = true;
+				}
+				sdata = null;
 			}
 			continue;
 		}

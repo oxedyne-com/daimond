@@ -1714,9 +1714,10 @@ pub async fn list() -> Outcome<String> {
         fmt!(
             "{{\"id\":\"{}\",\"name\":\"{}\",\"crystal_version\":{},\"updated\":{},\
               \"touched\":{},\"builtin\":\"{}\",\"builtin_named\":{},\"tags\":{},\
-              \"provisional\":{}}}",
+              \"provisional\":{},\"name_at\":{},\"tags_at\":{}}}",
             json_escape(id), json_escape(&m.name), m.version, m.updated,
             m.touched, json_escape(&m.builtin), m.named, m.tags_json(), m.provisional,
+            m.name_at, m.tags_at,
         )
     }).collect();
     Ok(fmt!("[{}]", items.join(",")))
@@ -10133,9 +10134,13 @@ pub async fn import_diamond_pack(json: &str, pack: Pack, keep_conflict: bool)
 ///
 /// `pack` is that device's [`export_diamond`] as the page's parser read it.  A local log is written
 /// only where the other copy holds rows it lacks (#8), and then one version is minted for what was
-/// written.  The Diamond is not stamped here: the answer's `here` says whether this device holds
-/// rows the other lacks, and the caller stamps on it so the join travels back.  A log over the cap
-/// or unreadable writes nothing at all, and the answer is held.
+/// written.  The Diamond is not stamped for its logs here: the answer's `here` says whether this
+/// device holds rows the other lacks, and the caller stamps on it so the join travels back.  A log
+/// over the cap or unreadable writes nothing at all, and the answer is held.
+///
+/// The record's name and tags set later on the other device are taken by their stamps and the
+/// record stamped ([`crate::diamond_meta::take_set_fields`], U96-SYNCRACE), counted in `arriving`:
+/// a copy older by `touched` reaches this door too, and its name has no other way here.
 ///
 /// The activity files are joined here too (item 24), by [`crate::activity::join_plan`] as the
 /// import joins them, and count in `here` and `arriving` the same way; one this device cannot
@@ -10180,6 +10185,18 @@ pub async fn union_logs_from_pack(id: &str, pack: Pack) -> Outcome<ImportOutcome
     for (rel, text) in &act.writes {
         res!(own::write_file(&fmt!("{}/{}", dir, rel), text.as_bytes()).await);
     }
+    // No row of its own: the change's row is the origin's, in the activity joined above.
+    let meta_rel = fmt!("{}/meta.json", STORE_DIR);
+    let mut took = 0;
+    if let Some((_, body)) = arriving.iter().find(|(rel, _)| *rel == meta_rel) {
+        let local = res!(read_meta(id).await);
+        if let Some(m) = crate::diamond_meta::take_set_fields(&local,
+            &String::from_utf8_lossy(body), now as u64)
+        {
+            res!(write_meta(id, &m).await);
+            took = 1;
+        }
+    }
     let mut counts = j.local_counts();
     if counts.files > 0 {
         let wrote = j.logs.into_iter()
@@ -10194,7 +10211,7 @@ pub async fn union_logs_from_pack(id: &str, pack: Pack) -> Outcome<ImportOutcome
     flush_meta_notes(&hold, id, Vec::new()).await;     // what waited for this hold (UNBLOCK-96)
     drop(hold);
     counts.here += act.here;
-    counts.arriving += act.arriving;
+    counts.arriving += act.arriving + took;
     Ok(ImportOutcome::Joined(counts))
 }
 

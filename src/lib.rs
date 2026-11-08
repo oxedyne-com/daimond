@@ -55,6 +55,7 @@ pub mod handle_cache;
 /// The question a turn puts before it changes a file the person made, and what each answer
 /// means.  Target-agnostic; the asking edge is `wasm::deletes::ask_change`.
 pub mod held_change;
+pub mod kinds;
 /// How fast each host serves each model, and the hosts routing leaves out (D-20261020-10).
 pub mod hostspeed;
 pub mod image_edit;

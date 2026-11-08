@@ -298,6 +298,38 @@ pub fn keep_set_fields(incoming: &str, local: &Meta, now: u64) -> Option<String>
 	Some(m.to_json())
 }
 
+/// This device's record with the name and tags of an arriving copy wherever they were set later
+/// there, or `None` where neither was (U96-SYNCRACE): the mirror of [`keep_set_fields`], for a
+/// copy that is not imported because this device's is the fresher by `touched`.
+///
+/// A device that worked in a Diamond just after another renamed it held the fresher copy and the
+/// older name, and the other's copy was never read for it.  A guess brings no name or tags.  The
+/// record is stamped, so the copy the collect sends next is the settled one, and `updated` keeps
+/// the later of the two, the rename that moved it there being part of what is taken.
+pub fn take_set_fields(local: &Meta, incoming: &str, now: u64) -> Option<Meta> {
+	let inc = Meta::from_json(incoming);
+	if inc.provisional {
+		return None;
+	}
+	let mut m = local.clone();
+	let name = inc.name_at > m.name_at && inc.name != m.name;
+	let tags = inc.tags_at > m.tags_at && inc.tags != m.tags;
+	if name {
+		m.name		= inc.name;
+		m.name_at	= inc.name_at;
+	}
+	if tags {
+		m.tags		= inc.tags;
+		m.tags_at	= inc.tags_at;
+	}
+	if !name && !tags {
+		return None;
+	}
+	m.updated = m.updated.max(inc.updated);
+	m.bump_touched(now);
+	Some(m)
+}
+
 /// The fields that differ between two records, as `(field, old, new)` (UNBLOCK-96): what the
 /// activity record says of a change.  The stamps, the version and the bookkeeping flags are not
 /// fields a person sees, so they never make a line; equal records make none.

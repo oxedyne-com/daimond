@@ -159,6 +159,11 @@ pub struct TurnState {
     // turn end ([`crate::engine::turn::end_keeper_turn_said`]) into the asker's transcript.
     // Reset by `begin_turn`, as the act's turn is.
     pub unkept: Vec<String>,
+    // Events heard from outside while a turn runs (BG-WAKE: a background command's end), as their
+    // JSON, oldest first: each is said to the model at the next request ([`crate::engine::bg`]).
+    // Not reset by `begin_turn` or the turn end: what is still here when the turn ends is the
+    // caller's to take ([`take_late`]) and wake a turn on.
+    pub late: Vec<String>,
     // What was said about a command keeping its network
     //
     // The user's answer, once, about this conversation's commands reaching the network (see
@@ -328,6 +333,9 @@ pub struct WorkerLedger {
     // object, several conversations run turns at once (a chat on screen and an errand on the
     // runner, two Diamonds steering), and the call itself says only a name and a task.
     pub turn_tag:   String,
+    pub kinds:      crate::kinds::Kinds,    // read at the turn's start
+    pub kinds_shown: usize,
+    pub kind_said:  usize,                  // characters of each kind's description shown
 }
 
 /// The end of a turn, as a value: dropping it drops what the turn held
@@ -357,6 +365,20 @@ pub(crate) fn note_unkept(cache: &ReadCache, line: String) {
 /// What [`note_unkept`] held for this turn, taken.
 pub(crate) fn take_unkept(cache: &ReadCache) -> Vec<String> {
     std::mem::take(&mut lock_cache(cache).unkept)
+}
+
+/// Hold event `json` for the running turn's next request (BG-WAKE).  Said once however often it
+/// is heard: a parent that hands it again after a reconnect does not say it twice.
+pub fn note_late(cache: &ReadCache, json: String) {
+    let mut c = lock_cache(cache);
+    if !c.late.contains(&json) {
+        c.late.push(json);
+    }
+}
+
+/// What [`note_late`] held and no request has said yet, taken.
+pub fn take_late(cache: &ReadCache) -> Vec<String> {
+    std::mem::take(&mut lock_cache(cache).late)
 }
 
 /// A fresh, empty read cache for a new [`ToolContext`].

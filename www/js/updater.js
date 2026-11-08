@@ -122,10 +122,20 @@
 	// `lastActive` is user INPUT only -- a turn ending is not input, so a forced
 	// reload applies as soon as a turn finishes (unless a key was just pressed).
 	var QUIESCE_MS = knob('quiesceMs', 600000);  // ~10 min of no input: a safe moment for a soft update
+	// At a turn's end the person has what they asked for, so a visible tab needs only
+	// this long without input (UPDATE-LAG-c): argonaut sat on a superseded build
+	// because whoever reads the reply seldom leaves the page untouched for ten minutes.
+	var TURN_IDLE_MS = knob('turnIdleMs', 60000);
+	var turnEndedAt  = 0;      // epoch-ms of the last `daimond:idle` (0: no turn has ended)
 	var GRACE_MS   = knob('graceMs', 20000);     // a short pause after the last keystroke before a forced reload
 	var lastActive = Date.now();   // epoch-ms of the last keydown/pointerdown (a fresh tab counts as just-active)
 	var graceTimer = null;
 	function quietFor() { return Date.now() - lastActive; }
+	/// Has a visible tab been left alone long enough for a soft update?
+	function idleEnough() {
+		if (turnEndedAt && Date.now() - Math.max(turnEndedAt, lastActive) >= TURN_IDLE_MS) return true;
+		return quietFor() >= QUIESCE_MS;
+	}
 
 	// ── The scheduled reload (2026-09-12) ───────────────────────
 	//
@@ -375,7 +385,7 @@
 		try {
 			if (window.DaimondIdentity && DaimondIdentity.isUnlocked() && !idleUnlocked()) return false;
 		} catch (e) {}
-		if (!document.hidden && quietFor() < QUIESCE_MS) return false;
+		if (!document.hidden && !idleEnough()) return false;
 		return true;
 	}
 
@@ -435,7 +445,7 @@
 				return mobileDevice() ? 'phone' : 'lease';
 			}
 		} catch (e) {}
-		if (!document.hidden && quietFor() < QUIESCE_MS) return 'foreground-active';
+		if (!document.hidden && !idleEnough()) return 'foreground-active';
 		return '';   // safeNow() && quietEnough() && softAllowed() all pass; should not be reached
 	}
 
@@ -1404,6 +1414,7 @@
 			// on every idle event for as long as `stale` was true, with no
 			// loop-breaker at all -- so a tab the gateway kept refusing reloaded
 			// again every time a turn ended, for ever.
+			turnEndedAt = Date.now();
 			if (waiting) { drain(); return; }            // a held reload goes first
 			if (stale) { force(); return; }              // was only waiting on the turn
 			if (pending) { reflect(); apply(false); }

@@ -6,7 +6,7 @@ import { DEVICE_TOMBS_KEY, SYNC_FILE_TOMBS_KEY, fileHash } from './parcel_collec
 import { _dispatchedIx, deriveNativeTotals, dispatchedChat, dropDispatchedPlaceholder, hereOf,
 	nativeJoin, rebuildDispatchedIndex, updateExpedite } from './handoff.js';
 import { armRunnerReady, mergeFold, runnerReadyReject } from './send.js';
-import { drainHeldQueues } from './steer.js';
+import { drainHeldQueues, wakeBgEnds } from './steer.js';
 import { Workers } from './workers.js';
 import { signalDiamondChanged } from './links.js';
 import { BACKUP_VERSION, diag, toast } from './passkey_phrase.js';
@@ -528,8 +528,54 @@ export function applyChatTaint(c, app) {
 /// One-way, like every mark: an earlier stamp stands.
 export function takeReportTaint(report) {
 	if (!report || typeof report.taintedAt !== 'number' || !report.chatId) return;
-	var rec = pg.chats.find(function (c) { return c.id === report.chatId; });
-	if (rec) taintChat(rec, report.taintedAt);
+	taintChatById(report.chatId, report.taintedAt);
+}
+/// Taint owed to a chat this device holds no record of yet, `{ chatId: at }` (TAINT-PENDING): a
+/// gather round or a runner's report can land before the record does. Durable in the `tombs`
+/// store under its own map, with the localStorage cache another tab reads and the `tombMem`
+/// overlay, and never pruned, since a taint that expired before its record came would start that
+/// chat clean. `takePendingTaint` hands it to `taintChat` when the record arrives.
+var TAINT_PENDING_KEY = 'daimond-taint-pending';
+function taintPendingNow() {
+	var out = {};
+	[readJson(TAINT_PENDING_KEY, {}), tombMemMap(TAINT_PENDING_KEY)].forEach(function (m) {
+		Object.keys(m || {}).forEach(function (id) {
+			var ta = DaimondStamp.taint(out[id], m[id]);
+			if (ta) out[id] = ta;
+		});
+	});
+	return out;
+}
+/// Mark chat `chatId` as having read outside content at `at` (default the clock): through
+/// `taintChat` when this device holds its record, and otherwise as a pending taint its record
+/// takes when it arrives. A pending taint that cannot be kept durably raises the storage alarm.
+/// Answers whether the record was here.
+export function taintChatById(chatId, at) {
+	if (!chatId) return false;
+	var rec = pg.chats.find(function (c) { return c.id === chatId; });
+	if (rec) { taintChat(rec, at); return true; }
+	var m = tombMemMap(TAINT_PENDING_KEY), obj = {};
+	m[chatId] = DaimondStamp.taint(m[chatId], (typeof at === 'number') ? at : Date.now());
+	obj[chatId] = m[chatId];
+	try { localStorage.setItem(TAINT_PENDING_KEY, JSON.stringify(taintPendingNow())); }
+	catch (e) { /* cache only; the durable row is the `tombs` store's */ }
+	ChatStore.putTombs(TAINT_PENDING_KEY, obj).then(function (ok) {
+		if (!ok) storageAlarm(tOr('store.taint_unrecorded',
+			'a conversation’s outside-content mark could not be recorded — this browser’s storage is full'));
+	});
+	return false;
+}
+/// Take every pending taint owed to a record among `recs` (default every record held), by
+/// `taintChat`. Called wherever a record arrives: the boot's load, a merge from another tab or a
+/// pull, an errand's seeded chat. The entry stays, since the mark is one-way; a record that
+/// already holds it is passed over, so a daimon's client is not built again on every pull.
+export function takePendingTaint(recs) {
+	var pend = taintPendingNow();
+	if (!Object.keys(pend).length) return;
+	(recs || pg.chats).forEach(function (c) {
+		var ta = c && c.id ? pend[c.id] : 0;
+		if (ta && DaimondStamp.taint(chatTaintOf(c), ta) !== chatTaintOf(c)) taintChat(c, ta);
+	});
 }
 /// Mark chat record `rec` as having read outside content at `at`: its record, saved, and its
 /// engine. A daimon's conversation is marked through its Diamond (`taintDaimon`), since its
@@ -2330,6 +2376,7 @@ export async function onChatsChangedElsewhere(touchedIds) {
 	var railBefore = {};
 	pg.chats.forEach(function (c) { if (c && c.id) railBefore[c.id] = true; });
 	pg.chats = merged;
+	takePendingTaint();
 	try {
 		var added = merged.map(function (c) { return c && c.id; })
 			.filter(function (id) { return id && !railBefore[id]; });
@@ -2415,6 +2462,7 @@ export async function onChatsChangedElsewhere(touchedIds) {
 	catch (e) { /* no document */ }
 	// A merge may have landed the answer or the end a queue waits behind (QA ccp2 M1).
 	try { drainHeldQueues(); } catch (e) { /* the hold's wake asks again */ }
+	try { wakeBgEnds(); } catch (e) { /* the next merge asks again */ }
 }
 // Another tab changed the Diamonds. Re-read the rail from the store, which
 // is the truth; a turn in flight here is not disturbed, because nothing but
@@ -2669,7 +2717,7 @@ export function install() { // page-split: install
 				var now = Date.now(), ttl = tombTtl();
 				rows.forEach(function (r) {
 					if (!r || !r.map || !r.id) return;
-					if (typeof r.at === 'number' && now - r.at >= ttl) return;   // prune on read
+					if (r.map !== TAINT_PENDING_KEY && typeof r.at === 'number' && now - r.at >= ttl) return;   // prune on read; a pending taint never expires
 					var m = tombMem[r.map] || (tombMem[r.map] = {});
 					if (!m[r.id] || (r.at || 0) > m[r.id]) m[r.id] = r.at || 0;
 				});
@@ -3305,6 +3353,12 @@ export function install() { // page-split: install
 			return out;
 		}
 
+		/// How many turns background commands' ends are owed in a transcript (BG-WAKE), or undefined for none.
+		function bgOwedCount(msgs) {
+			var n = (window.DaimondPeer && DaimondPeer.bgOwed) ? DaimondPeer.bgOwed(msgs).length : 0;
+			return n || undefined;
+		}
+
 		/// The SUMMARY row for a chat: the rail's scalars, the counts, a marker for the
 		/// model session (whose bytes stay in the legacy row this stage), the dispatched
 		/// iturns, and a fingerprint of the serialised transcript so a re-run can tell an
@@ -3346,6 +3400,7 @@ export function install() { // page-split: install
 				hasSession: !!(c.session),                        // session-ref: the bytes stay in the legacy row this stage
 				sessionMsgs: (c.session && c.session.msgs) ? c.session.msgs.length : 0,
 				iturns: dispatchedIturns(c.messages),
+				bgOwed: bgOwedCount(c.messages),		// absent when none: `wakeBgEnds` reads a chat not resident in
 				fp: fp,
 				// The measure of the copy this row was written from. A row written here has
 				// `fp` equal to it, because the chunks were written from that same copy; the

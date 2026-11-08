@@ -4046,6 +4046,9 @@ export async function collectDiamonds(budget, plan) {
 				touched: stamp,
 				anc:     anc,
 				model:   models[d.id] || null,
+				// When this device last set each field a person sets: a copy older by `touched` that
+				// set one later is still read for it (U96-SYNCRACE).
+				set:     { name: d.name_at || 0, tags: d.tags_at || 0 },
 				data:    data,
 			});
 			continue;
@@ -4107,6 +4110,7 @@ export async function collectDiamonds(budget, plan) {
 					touched: stamp,
 					anc:     ancI,
 					model:   models[d.id] || null,
+					set:     { name: d.name_at || 0, tags: d.tags_at || 0 },
 					data:    text,
 				});
 				text = null;
@@ -4139,6 +4143,7 @@ export async function collectDiamonds(budget, plan) {
 			touched: stamp,
 			anc:     ancR,
 			model:   models[d.id] || null,
+			set:     { name: d.name_at || 0, tags: d.tags_at || 0 },
 			dataRef: ref,
 		});
 	}

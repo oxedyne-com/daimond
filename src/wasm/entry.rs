@@ -986,6 +986,17 @@ pub fn skill_draft_refusal(name: &str, text: &str) -> String {
     crate::skills::draft_refusal(name, text).unwrap_or_default()
 }
 
+/// The kind files a store is given once (KINDS-1), as `[{"path","text"}]`, on the worker model the
+/// user has picked; the page writes them to the store under a flag, as it does `DAIMOND.md`.
+#[wasm_bindgen]
+pub fn kinds_seed(provider: String, model: String) -> String {
+    let files: Vec<String> = crate::kinds::seeds(&provider, &model).iter()
+        .map(|(p, t)| fmt!("{{\"path\":\"{}\",\"text\":\"{}\"}}",
+            crate::llm::json_escape(p), crate::llm::json_escape(t)))
+        .collect();
+    fmt!("[{}]", files.join(","))
+}
+
 /// The starter `DAIMOND.md` a store that has never held one is given, once.
 ///
 /// The text lives in `prompts::INSTRUCTIONS_SEED` rather than in the page, for

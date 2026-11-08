@@ -971,18 +971,27 @@ function notRunRecord(why, r) {
 /// End a send whose pressed runner cannot take it as the "not run" row with Retry on
 /// this device (`answerUnhanded`): the composer gives up the words, the prompt is
 /// written under the turn id, and nothing runs anywhere. True, so no local run follows.
-function endSendNotRun(chat, text, words, mid, app, why, nr) {
+/// `kept` is the prompt when the transcript already holds it (`keptPrompt`).
+function endSendNotRun(chat, text, words, mid, app, why, nr, kept) {
 	var nmid = mid || newMid();
 	giveUpSent(chat, words === undefined ? text : words);
 	commitRatings(chat.id, { });
 	var nts = Date.now();
-	if (ownsChat(chat)) {
-		try { appendUserMessage(text, nts, undefined, undefined, !!app); } catch (e) { /* the record below is the truth */ }
+	if (kept) keptPrompt(kept, nmid);
+	else {
+		if (ownsChat(chat)) {
+			try { appendUserMessage(text, nts, undefined, undefined, !!app); } catch (e) { /* the record below is the truth */ }
+		}
+		pushUserRecord(chat, touchMsg({ role: 'user', content: text, mid: nmid, iturn: nmid, ts: nts,
+			effort: turnEffortOf(chat) }), !app);
 	}
-	pushUserRecord(chat, touchMsg({ role: 'user', content: text, mid: nmid, iturn: nmid, ts: nts,
-		effort: turnEffortOf(chat) }), !app);
 	answerUnhanded(chat, nmid, text, { ok: false, why: why, nr: nr });
 	return true;
+}
+
+/// Tag prompt `m`, already in the transcript, as turn `tid`'s: every device then reads it taken.
+export function keptPrompt(m, tid) {
+	if (m.iturn !== tid) { m.iturn = tid; touchMsg(m); }
 }
 
 /// At send-time: hand this turn to a peer instead of running it here, when the
@@ -994,6 +1003,8 @@ function endSendNotRun(chat, text, words, mid, app, why, nr) {
 /// `drawn` is the runner the switch drew at the press (`seatDrawnRunner`), where the press
 /// came before this call; read here, before the first wait, where it did not. `how.pendingOnly`
 /// rides the errand for a mail trigger's turn, which reports on the Pending panel alone (§16).
+/// `how.kept` is a prompt the transcript already holds under `mid` (a background command's end,
+/// BG-WAKE): it is tagged as the turn's, never written a second time.
 export async function maybeAutoDispatch(chat, text, words, mid, app, drawn, how) {
 	try {
 		// A DAIMON DISPATCHES TOO. The election/lease/hand-off is proven for chats and
@@ -1062,7 +1073,8 @@ export async function maybeAutoDispatch(chat, text, words, mid, app, drawn, how)
 				if (!pressed || turnHold(chat)) return false;
 				if (how && how.prep) how.prep();		// a retry's turn is retracted at the commit
 				return endSendNotRun(chat, text, words, mid, app, 'presence read did not land in '
-					+ PRESENCE_READ_CAP_MS + 'ms; runner ' + shown + ' unconfirmed', notRunCause('unchecked', '', shown));
+					+ PRESENCE_READ_CAP_MS + 'ms; runner ' + shown + ' unconfirmed', notRunCause('unchecked', '', shown),
+					how && how.kept);
 			}
 			presence = read;
 			refreshLanded = true;
@@ -1177,7 +1189,7 @@ export async function maybeAutoDispatch(chat, text, words, mid, app, drawn, how)
 			var gone = d.reason === 'no-genuine-peer' || d.reason === 'no-runner';
 			return endSendNotRun(chat, text, words, mid, app, 'runner ' + shown
 				+ ' was pressed and the election declined it (' + String(d.reason || 'no reason') + ')',
-				gone ? notRunCause('gone', '', shown) : null);
+				gone ? notRunCause('gone', '', shown) : null, how && how.kept);
 		}
 		// ASKED AGAIN AT THE COMMIT (R53-U8, 2026-09-25). The question at the top was asked
 		// before the presence refresh, which can hold the send for NOMINEE_REFRESH_CAP_MS,
@@ -1246,17 +1258,20 @@ export async function maybeAutoDispatch(chat, text, words, mid, app, drawn, how)
 		// pending is a record before the note for this message is composed, and sits before it.
 		commitRatings(chat.id, { });
 		var uts = Date.now();
-		// Drawn only into its own thread: the refresh's wait may have taken the person to
-		// another conversation, whose thread this prompt is not.
-		if (ownsChat(chat)) {
-			try { appendUserMessage(text, uts, undefined, undefined, !!app); } catch (e) { /* the record below is the truth */ }
+		if (how && how.kept) keptPrompt(how.kept, umid);
+		else {
+			// Drawn only into its own thread: the refresh's wait may have taken the person to
+			// another conversation, whose thread this prompt is not.
+			if (ownsChat(chat)) {
+				try { appendUserMessage(text, uts, undefined, undefined, !!app); } catch (e) { /* the record below is the truth */ }
+			}
+			// STAMPED: the runner writes this message too (from the seed or the errand), and
+			// those copies carry no stamp, so the copy this device wrote -- with its `iturn`
+			// and its `ts` -- is the one every device keeps (`msgJoin`).
+			// The Effort it is sent with is on it too, so the runner and a re-dispatch read the same one.
+			pushUserRecord(chat, touchMsg({ role: 'user', content: text, mid: umid, iturn: umid, ts: uts,
+				effort: turnEffortOf(chat) }), !app);
 		}
-		// STAMPED: the runner writes this message too (from the seed or the errand), and
-		// those copies carry no stamp, so the copy this device wrote -- with its `iturn`
-		// and its `ts` -- is the one every device keeps (`msgJoin`).
-		// The Effort it is sent with is on it too, so the runner and a re-dispatch read the same one.
-		pushUserRecord(chat, touchMsg({ role: 'user', content: text, mid: umid, iturn: umid, ts: uts,
-			effort: turnEffortOf(chat) }), !app);
 		touchChat(chat); persistChats();
 		// SHOW THE HAND-OFF THE INSTANT IT IS DECIDED, from the DURABLE record.
 		// `dispatchToPeer` now MARKS the turn dispatched FIRST -- before it seals or

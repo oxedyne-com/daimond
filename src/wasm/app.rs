@@ -573,6 +573,14 @@ impl DaimondApp {
         });
     }
 
+    /// Narrow this worker's belt to the tools its kind names (KINDS-1), comma-separated.  Only
+    /// ever a narrowing, as a skill's is ([`crate::tools::ToolRegistry::narrowed`]); call after
+    /// [`Self::adopt_fork`], which sets the belt a forked worker starts from.
+    pub fn narrow_tools(&self, names: String) {
+        let keep: Vec<&str> = names.split(',').map(|n| n.trim()).filter(|n| !n.is_empty()).collect();
+        self.set_registry(|r| r.tools.retain(|t| keep.contains(&t.name())));
+    }
+
     /// Start this worker as a copy of its parent (r578c): the request the parent's spawn round
     /// held, filed under `id` by the engine.  The worker takes the parent's belt and Diamond with
     /// it, so its tools array and its dispatch match and `crystal_read` reads the same crystal.

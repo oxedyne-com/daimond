@@ -861,7 +861,7 @@ pub fn load_skill(ws: &Workspace, name: &str)
 ///
 /// An empty declaration (`uses:` or `uses: []`) is not the same as no declaration at all: it says
 /// the skill needs no tools, and the turn is run with none.
-fn parse_uses(val: &str) -> Vec<String> {
+pub(crate) fn parse_uses(val: &str) -> Vec<String> {
     val.trim()
         .trim_start_matches('[')
         .trim_end_matches(']')
@@ -887,52 +887,50 @@ pub fn parse_skill(text: &str, stem: &str) -> Skill {
     let mut name        = stem.to_string();
     let mut description = String::new();
     let mut uses:  Option<Vec<String>> = None;
-
-    let lines: Vec<&str> = text.lines().collect();
-    // Frontmatter must open with a `---` line at the very top.
-    if !lines.is_empty() && lines[0].trim() == "---" {
-        // Find the closing `---` line.
-        let mut close = None;
-        for (i, line) in lines.iter().enumerate().skip(1) {
-            if line.trim() == "---" {
-                close = Some(i);
-                break;
-            }
-        }
-        if let Some(j) = close {
-            // Parse `key: value` pairs between the fences.
-            for line in &lines[1..j] {
-                if let Some((k, v)) = line.split_once(':') {
-                    let key = k.trim();
-                    let val = v.trim();
-                    match key {
-                        "name" => {
-                            // Only override the stem when a value is present.
-                            if !val.is_empty() {
-                                name = val.to_string();
-                            }
-                        }
-                        "description" => description = val.to_string(),
-                        // Present but empty means "no tools", which is a declaration. Absent means
-                        // no declaration, which is not the same thing.
-                        "uses"        => uses = Some(parse_uses(val)),
-                        _             => {}
-                    }
+    match frontmatter(text) {
+        Some((pairs, body)) => {
+            for (key, val) in pairs {
+                match key {
+                    // Only override the stem when a value is present.
+                    "name" if !val.is_empty()   => name = val.to_string(),
+                    "description"               => description = val.to_string(),
+                    // Present but empty means "no tools", which is a declaration. Absent means
+                    // no declaration, which is not the same thing.
+                    "uses"                      => uses = Some(parse_uses(val)),
+                    _                           => {}
                 }
             }
-            let body = lines[j + 1..].join("\n").trim().to_string();
-            return Skill { name, description, uses, body, dir: None, scripts: Vec::new() };
+            Skill { name, description, uses, body, dir: None, scripts: Vec::new() }
         }
+        // No frontmatter — the whole file is the body.
+        None => Skill {
+            name,
+            description,
+            uses: None,
+            body: text.trim().to_string(),
+            dir: None,
+            scripts: Vec::new(),
+        },
     }
-    // No frontmatter — the whole file is the body.
-    Skill {
-        name,
-        description,
-        uses: None,
-        body: text.trim().to_string(),
-        dir: None,
-        scripts: Vec::new(),
+}
+
+/// A file's `---` fenced header as trimmed `key: value` pairs, and the trimmed body after it, or
+/// `None` where the file does not open with a fence that closes.  Shared by skills and worker
+/// kinds ([`crate::kinds`]), which use Claude Code's same header shape.
+pub fn frontmatter(text: &str) -> Option<(Vec<(&str, &str)>, String)> {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() || lines[0].trim() != "---" {
+        return None;
     }
+    let close = match lines.iter().skip(1).position(|l| l.trim() == "---") {
+        Some(i) => i + 1,
+        None    => return None,
+    };
+    let pairs = lines[1..close].iter()
+        .filter_map(|l| l.split_once(':'))
+        .map(|(k, v)| (k.trim(), v.trim()))
+        .collect();
+    Some((pairs, lines[close + 1..].join("\n").trim().to_string()))
 }
 
 

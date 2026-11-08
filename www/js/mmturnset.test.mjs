@@ -85,10 +85,10 @@ const SRC = source('daimond.js');
 const FNS = ['readJson', 'diamondModels', 'diamondModel', 'modelPicksOf', 'diamondPicks', 'chatPicks',
 	'summarisingPick', 'diamondWorkerModel', 'diamondVisionModel', 'turnModelOf', 'chatWorkerModel',
 	'taskWantsVision', 'turnModelsOfDiamond', 'turnModelsOfChat', 'steerModelFor', 'steerTurnSet',
-	'copyTurnSet', 'sentModelsOf', 'steerModelsFor'];
+	'copyTurnSet', 'sentModelsOf', 'steerModelsFor', 'kindPick'];
 const METHODS = ['holdTurn', 'turnModelsFor', 'spawn', 'dispatch', 'routeFor', 'gather', 'isTerminal'];
 // Optional: a revision before U1d2 has none of these, and is judged on what it does in their place.
-const OPTIONAL = ['steerTurnSet', 'copyTurnSet'];
+const OPTIONAL = ['steerTurnSet', 'copyTurnSet', 'kindPick'];
 const L = lift(SRC, FNS, ['DIAMOND_MODELS_KEY', 'IMAGE_EXT']);
 const meth = METHODS.map((n) => [n, liftMethod(SRC, n)]);
 const missing = L.missing.filter((n) => !OPTIONAL.includes(n)).concat(meth.filter((x) => !x[1]).map((x) => x[0]));

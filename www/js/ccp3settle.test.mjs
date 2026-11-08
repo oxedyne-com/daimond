@@ -68,7 +68,7 @@ await section('R2', async () => {
 		window: { DaimondJournal: J1, DaimondDrafts: DD }, DaimondJournal: J1, DaimondDrafts: DD,
 		diag() {}, syncSendMode() {}, renderQueue: () => api.journalQueue(chat), fitComposer() {}, updateQueueBadges() {},
 		chatInput: box, chatDraftKey: (c) => (c ? 'chat/' + c.id : ''), toast: () => { st.toasts++; }, t: (k) => k,
-		askHolds: () => false, dispatchInFlight: () => null, returnQueue() {}, recoveringHere: () => false,
+		askHolds: () => false, dispatchInFlight: () => null, returnQueue() {}, wakeBgEnds() {}, recoveringHere: () => false,
 		holdSend: () => () => {}, runTurn: async () => {}, _unloading: false, chats: [chat], _queueGiven: {},
 		maybeAutoDispatch: async (c, text) => { st.elected.push(text); await sleep(30); return true; },
 	};

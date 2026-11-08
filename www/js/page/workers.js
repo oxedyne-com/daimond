@@ -3,13 +3,13 @@ import { DaimondApp, Wasm } from './wasm.js';
 import { TAG_CHIPS_SHOWN, agentsCount, agentsGrid, agentsList, diamondBusy, pg } from './state.js';
 import { appCfgFor, dsEvent, engineFor, fmtCtx, friendlyError, maxOutFor, readJson, t, tn } from './util.js';
 import { RESUMABLE_ENDINGS, isFailedEnding, jsonBytes, newMid, persistChats, priorSessionRun,
-	reportBody, reportHasSubstance, taintChat, touchChat, touchedCount, withCommas, workerEndStatus,
+	reportBody, reportHasSubstance, taintChatById, touchChat, touchedCount, withCommas, workerEndStatus,
 	workerEndingNote, workerFoldable, workerProse, workerWrites } from './chatstore.js';
 import { deviceId, loadDevices } from './parcel_collect.js';
 import { shortModel } from './parcel_apply.js';
 import { liveDispatchNotes, redrawHandoffWorkers, takeDispatchNotes } from './handoff.js';
 import { canRemint, creditsGen, keyRefused } from './send.js';
-import { appSpend, chatWorkerModel, recordSpend, runTurn, turnMeter, updateSpend } from './steer.js';
+import { appSpend, chatWorkerModel, kindPick, recordSpend, runTurn, turnMeter, updateSpend, workerEffort } from './steer.js';
 import { Files } from './files_view.js';
 import { WakeLock, isPassingFailure, revealAgents } from './layout.js';
 import { diag } from './passkey_phrase.js';
@@ -299,6 +299,10 @@ export var Workers = {
 				var pick = tm ? tm.workers
 					: live.chatId ? (chat ? chatWorkerModel(chat) : null)
 					: diamondWorkerModel(live.diamondId || '');
+				// A KIND OF WORKER (KINDS-1) runs on the model its file names; the chat's
+				// worker pick is what an ordinary worker, or a kind naming none, runs on.
+				var kind = (o && o.kind && typeof o.kind === 'object') ? o.kind : null;
+				pick = kindPick(kind, pick) || pick;
 				if (!pick || !pick.model) {
 					return JSON.stringify({ started: false,
 						why: 'this conversation has no model its workers could run on' });
@@ -311,7 +315,9 @@ export var Workers = {
 				var ids = self.dispatch(live.diamondId || '', live.diamondName || '',
 					// THE PARENT'S COPY (r578c): the engine held the request this call was made
 					// in and sends its id; the worker adopts it at start. No id: a brief worker.
-					[{ name: name, task: task, fork: String((o && o.fork) || ''), fb: (o && o.fb) | 0 }],
+					[{ name: name, task: task, fork: String((o && o.fork) || ''), fb: (o && o.fb) | 0,
+						kind: kind ? String(kind.name || '') : '', effort: kind ? String(kind.effort || '') : '',
+						kindTools: (kind && Array.isArray(kind.tools)) ? kind.tools.map(String) : null }],
 					tainted, pick, live.depth | 0,
 					{ chatId: live.chatId || '', chatName: live.chatName || '',
 						turnId: turn, how: live.how || null, web: String((o && o.web) || ''), models: tm });
@@ -667,6 +673,7 @@ export var Workers = {
 					// a reload unable to say where it came from, and its answer read as
 					// orphaned.
 					chatId: r.chatId || '', chatName: r.chatName || '',
+					kind: r.kind || '', effort: r.effort || '', kindTools: r.kindTools || null,
 					// Which turn started it, whether from inside that turn, and whether its
 					// report was ever handed back. A reload kills the turn, so `load` treats
 					// every in-turn run as releasable -- but a tile still has to be able to
@@ -939,6 +946,11 @@ export var Workers = {
 				// brief worker, which starts from `task` alone (D-20261020-05).
 				fork: spec.fork || '',
 				forkBytes: spec.fb | 0,
+				// The kind it was asked for as (KINDS-1): its effort, and the tools its belt is
+				// narrowed to; '' and null for an ordinary worker.
+				kind: spec.kind || '',
+				effort: spec.effort || '',
+				kindTools: spec.kindTools || null,
 				diamondId: diamondId,
 				diamondName: diamondName,
 				// Which chat sent it, when a chat did. `start` reads this to decide which
@@ -1137,9 +1149,7 @@ export var Workers = {
 		// ways below decides whether a turn reads it now or later.
 		if (mine.some(function (r) { return !!r.tainted; })) {
 			var taintAt = Date.now();
-			var rec = b.chatId ? pg.chats.find(function (c) { return c.id === b.chatId; }) : null;
-			if (rec) taintChat(rec, taintAt);
-			else taintDaimon(b.diamondId, taintAt);
+			if (!taintChatById(b.chatId, taintAt)) taintDaimon(b.diamondId, taintAt);
 		}
 
 		// The reports themselves, composed before any decision about where they
@@ -1642,9 +1652,7 @@ export var Workers = {
 			// A worker on its chat's own model thinks as hard as the chat was told to;
 			// on any other model it takes that model's default.
 			var effChat = run.chatId ? pg.chats.find(function (x) { return x.id === run.chatId; }) : null;
-			applyEffort(run.app, run.provider || '', run.model || '',
-				(effChat && effChat.model === run.model && (effChat.provider || '') === (run.provider || ''))
-					? (effChat.effort || '') : '');
+			applyEffort(run.app, run.provider || '', run.model || '', workerEffort(run, effChat));
 			applyCrystalCap(run.app);
 			// EVERY worker, from either surface. A worker cannot ask a question and
 			// is told so in its own prompt, while the safety clause on top of that
@@ -1670,6 +1678,8 @@ export var Workers = {
 			else if (run.chatId) await scopeChatTo(run.app, run.chatId);
 			else await scopeAgentTo(run.app, run.diamondId);
 			adoptFork(run);
+			// A kind's tools narrow the belt, the copy's included, so it is done after adoption.
+			if (run.kindTools && run.app.narrow_tools) run.app.narrow_tools(run.kindTools.join(','));
 		};
 		var build = function () {
 			if (onCredits) {

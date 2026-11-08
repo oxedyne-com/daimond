@@ -30,7 +30,10 @@
          beyond the runner exemption, and an unlocked device
          holding a lease for another is never reloaded;
      (i) a turn whose lease is complete holds nothing: the idle
-         tab takes the build on the next tick (UPDATE-LAG).
+         tab takes the build on the next tick (UPDATE-LAG);
+     (j) at a turn's end a visible tab takes it after a minute
+         without input, behind the countdown, and a key inside
+         that minute holds it (UPDATE-LAG-c).
 
    The browser-side companion is dev/verify_updates.mjs, which
    covers the chip, the forced (stale) path and the loop guard
@@ -614,7 +617,7 @@ async function main() {
 		for (const m of table.matchAll(/\("update_\w+",\s*"(\w+)",\s*([\d_]+)\)/g)) gw[m[1]] = +m[2].replace(/_/g, '');
 		const names = Object.keys(page).sort();
 		check('updater.js reads ' + names.length + ' timings, every one the gateway serves',
-			names.length === 20 && JSON.stringify(names) === JSON.stringify(Object.keys(gw).sort()));
+			names.length === 21 && JSON.stringify(names) === JSON.stringify(Object.keys(gw).sort()));
 		const off = names.filter((n) => page[n] !== gw[n]);
 		check('and ships the gateway\'s fallback for each (' + off.join(', ') + ')', off.length === 0);
 		const bare = src.split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l))
@@ -991,6 +994,62 @@ async function main() {
 		await tab.clock.advance(11000);		// one tick of "is it safe yet?"
 		check('letting the lease go lets the update through', tab.U().countdown() > 0,
 			'countdown=' + tab.U().countdown());
+	}
+
+	// UPDATE-LAG-c (8 Nov, argonaut): its tab stayed on t24's build after t25 went live,
+	// because a visible tab waited ten idle minutes and a person reading the reply
+	// often touches the page within ten. At a turn's end a visible tab needs only a
+	// minute without input (`turnIdleMs`), and then the usual countdown.
+	console.log('\nupdater: at a turn\'s end a visible tab takes the build after a minute idle (UPDATE-LAG-c)');
+	const turnEnds = async (net) => {
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { busy: true }, hidden: false, net });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		tab.state.busy = false;
+		tab.fireWin('daimond:idle');
+		await settle();
+		return tab;
+	};
+	{
+		const tab = await turnEnds();
+		check('the newer build is pending', tab.U().pending() === NEWER.build);
+		await tab.clock.advance(59000);
+		check('no countdown inside the minute', tab.U().countdown() === 0 && tab.reloads.n === 0);
+		check('held for being in front of the user', tab.U().held() === 'foreground-active');
+		await tab.clock.advance(11000);
+		check('a minute idle after the turn starts the countdown', tab.U().countdown() > 0);
+		check('the banner names the countdown', /update\.reloading_in/.test(tab.bannerText() || ''));
+		await tab.clock.advance(21000);
+		check('and the visible tab reloads onto the new build', tab.reloads.n === 1);
+	}
+	{
+		const tab = await turnEnds();
+		await tab.clock.advance(30000);
+		tab.fireDoc('keydown');
+		await tab.clock.advance(40000);
+		check('a keypress inside the minute holds it', tab.U().countdown() === 0 && tab.reloads.n === 0);
+		check('and names why', tab.U().held() === 'foreground-active');
+		await tab.clock.advance(30000);
+		check('a minute after the last key it counts down', tab.U().countdown() > 0);
+		await tab.clock.advance(5000);
+		tab.fireDoc('keydown');
+		await tab.clock.advance(1000);
+		check('a key during the countdown stops it', tab.U().countdown() === 0);
+		await tab.clock.advance(30000);
+		check('and nothing reloaded under the key', tab.reloads.n === 0);
+	}
+	{
+		const tab = await turnEnds({ updater: () => ({ turnIdleMs: 20000 }) });
+		await tab.clock.advance(31000);
+		check('a served turnIdleMs governs the wait', tab.U().countdown() > 0);
+	}
+	{
+		// No turn has ended: the visible tab keeps the ten-minute wait.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: {}, hidden: false });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		await tab.clock.advance(3 * MIN);
+		check('with no turn ended a visible tab still waits the long idle', tab.U().countdown() === 0);
 	}
 
 	// UPDATE-LAG (6 Nov, argonaut): a turn ended at 09:49:58 and its lease was

@@ -264,7 +264,9 @@ kase('the copy is forgotten for a fork worker and not asked about for a brief on
 });
 
 kase('Workers.start adopts after EVERY build (scope) and opens with firstAsk, the re-mint too', () => {
-	ok(/adoptFork\(run\);\n\t\t\t\};/.test(START), 'scope does not end by adopting the copy');
+	// A kind's tool narrowing (KINDS-1) is the one step after adoption: it narrows the copy's belt too.
+	ok(/adoptFork\(run\);\n(\t\t\t\t\/\/[^\n]*\n\t\t\t\tif \(run\.kindTools && run\.app\.narrow_tools\) [^\n]*\n)?\t\t\t\};/.test(START),
+		'scope does not end by adopting the copy');
 	ok(START.indexOf(': firstAsk(run);') > 0, 'the first message is not firstAsk');
 	// The re-mint re-sends what the first attempt sent (U3a QRFIX2 F2): `nudge`, which is firstAsk(run) for a
 	// fresh dispatch or a continuation, so both sends go out as `nudge`.

@@ -728,6 +728,21 @@ pub(super) const SPAWN_AGENT_DESC: &str = concat!("Ask for a worker to carry out
     cannot wait for one here -- their reports reach you as a later turn. So ask for every worker \
     you want, finish your own answer, and stop. One call per worker.", spawn_context_desc!());
 
+/// `spawn_agent`'s definition where kinds of worker are in force: its description names them
+/// (`listing`, bounded) and its `kind` argument takes one of their names.
+pub(super) fn spawn_definition_json(kinds: &crate::kinds::Kinds, listing: &str) -> String {
+    let names: Vec<String> = kinds.found.iter().map(|k| fmt!("\"{}\"", json_escape(&k.name))).collect();
+    let says = fmt!("{} KINDS: give 'kind' to run the worker as one, on that kind's own model and \
+        instructions -- {}. Leave 'kind' out for an ordinary worker on this conversation's worker \
+        model.", SPAWN_AGENT_DESC, listing);
+    let params = Tool::SpawnAgent.parameters().replacen(r#""context":"#, &fmt!(
+        r#""kind":{{"type":"string","enum":[{}],"description":"Which kind of worker, by name; omit for an ordinary one"}},"context":"#,
+        names.join(",")), 1);
+    fmt!(r#"{{"type":"function","function":{{"name":"spawn_agent","description":"{}","parameters":{}}}}}"#,
+        json_escape(&says), params)
+}
+
+
 /// How a worker starts: as a copy of its parent's conversation, or from its task alone.
 ///
 /// The parent chooses, through `spawn_agent`'s `context` argument; see `SPAWN_AGENT_DESC` for
@@ -3308,6 +3323,7 @@ impl Tool {
             return Err(err!("spawn_agent: 'task' must not be empty."; Invalid, Input));
         }
         res!(SpawnContext::read(args_json));
+        res!(Self::spawn_kind(args_json, ctx));
         // NOT "dispatched". Nothing has been dispatched: `www/js/daimond.js` collects every
         // `spawn_agent` call a turn makes and starts the workers AFTER the turn ends, so at the
         // moment this sentence is written no worker request has reached the relay and none can
@@ -3347,6 +3363,34 @@ impl Tool {
         }
         Ok(out)
     }
+
+    /// The kind of worker a `spawn_agent` call names, or `None` where it names none.  A name no
+    /// kind file in force answers to is refused, naming the kinds there are.
+    pub fn spawn_kind<H: Host>(args_json: &str, ctx: &ToolContext<H>) -> Outcome<Option<crate::kinds::Kind>> {
+        let asked = match extract_json_string(args_json, "kind") {
+            Some(k) if !k.trim().is_empty() => k.trim().to_string(),
+            _                               => return Ok(None),
+        };
+        let kinds = ctx.kinds();
+        Ok(Some(res!(kinds.resolve(&asked)).clone()))
+    }
+
+    /// The request a bridged `spawn_agent` hands the page, for the worker `args_json` asks for:
+    /// [`spawn_payload`] with the kind's prompt put before the task.
+    pub fn spawn_request<H: Host>(args_json: &str, ctx: &ToolContext<H>, target: &str, fork: &str,
+        fb: usize) -> Outcome<String>
+    {
+        let name = res!(Self::arg(args_json, "name"));
+        let task = res!(Self::arg(args_json, "task"));
+        let kind = res!(Self::spawn_kind(args_json, ctx));
+        let task = match &kind {
+            Some(k) => crate::kinds::task_for(k, &task),
+            None    => task,
+        };
+        Ok(spawn_payload(&name, &task, &ctx.turn_tag(), ctx.is_tainted(), ctx.web_consent_word(),
+            target, fork, fb, kind.as_ref()))
+    }
+
 
     /// The parent's copy a worker of `kind` starts from: the request this turn's spawn round
     /// held for a full worker, nothing for a brief one -- nor for a full one where no round held
@@ -3766,6 +3810,8 @@ impl Tool {
         if let Some(refused) = crate::engine::worker::brief::at_dispatch(&task, ctx) {
             return Ok(MessageContent::text(refused));
         }
+        // An unknown kind is refused before a copy is filed or anything is spent.
+        res!(Self::spawn_kind(args_json, ctx));
         let target = crate::engine::worker::brief::target_of(ctx)
             .map(|t| crate::engine::worker::brief::target_word(&t))
             .unwrap_or_default();
@@ -3790,8 +3836,13 @@ impl Tool {
             Some((b, id)) => (id.as_str(), *b),
             None          => ("", 0),
         };
-        let payload = spawn_payload(&name, &task, &ctx.turn_tag(), ctx.is_tainted(),
-            ctx.web_consent_word(), &target, fid, fb);
+        let payload = match Self::spawn_request(args_json, ctx, &target, fid, fb) {
+            Ok(p)  => p,
+            Err(e) => {
+                if !fid.is_empty() { crate::fork::forget(fid); }
+                return Err(e);
+            },
+        };
         let answered = match ctx.host().ui().spawn(&payload).await {
             Ok(j)  => j,
             // The bridge is absent, so nothing started and the unbridged sentence is the true

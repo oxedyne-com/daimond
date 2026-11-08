@@ -3126,6 +3126,48 @@ export function appendNote(msg) {
 	pinBottom();
 }
 
+/// `ms` as a span: `950 ms`, `42 s`, `21 min 3 s`, `2 h 4 min` (as `engine::bg` says it).
+function bgSpan(ms) {
+	var s = Math.floor((+ms || 0) / 1000), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
+	if (!s) return t('bg.ms', { n: Math.floor(+ms || 0) });
+	if (h) return t('bg.h_min', { h: h, m: m });
+	if (m) return t('bg.min_s', { m: m, s: s % 60 });
+	return t('bg.s', { n: s });
+}
+
+/// A background command's end `bg` (its `bg_end` event) as the thread's one line, "command ·
+/// exit 0 · 21 min 3 s", in the note register; opened, its last output and where the whole is.
+export function appendBgNote(bg) {
+	var how = bg.kind === 'match' ? t('bg.matched', { pattern: String(bg.pattern || '') })
+		: bg.stopped ? t('bg.stopped')
+		: bg.timed_out ? t('bg.timed_out')
+		: (typeof bg.exit === 'number') ? t('bg.exit', { n: bg.exit })
+		: t('bg.no_exit');
+	var div = document.createElement('div');
+	div.className = 'chat-msg chat-msg-compacted chat-msg-bg';
+	var det = document.createElement('details');
+	det.className = 'chat-msg-content';
+	var sum = document.createElement('summary');
+	sum.textContent = [String(bg.command || ''), how, bgSpan(bg.ms)].join(' · ');      // escaped
+	det.appendChild(sum);
+	var said = bg.kind === 'match' ? String(bg.line || '') : String(bg.tail || '');
+	if (said.trim()) {
+		var pre = document.createElement('pre');
+		pre.textContent = said.replace(/\s+$/, '');
+		det.appendChild(pre);
+	}
+	var where = bg.lost ? t('bg.lost', { why: String(bg.lost) }) : bg.spill ? t('bg.spill', { path: String(bg.spill) }) : '';
+	if (where) {
+		var p = document.createElement('div');
+		p.textContent = where;
+		det.appendChild(p);
+	}
+	div.appendChild(det);
+	tagTurn(div);
+	postToChat(div);
+	pinBottom();
+}
+
 	// ── The Admin panel ────────────────────────────────────────
 
 // The chat whose transcript is currently drawn in the thread, so a re-render can
@@ -3259,6 +3301,8 @@ export function drawHistoryMessage(m, i, arr) {
 	if (m.role === 'user' && m.interject) appendInterjected(m.content);
 	// An undo's note (UNDO-HISTORY): for the model, a user row; on screen, a note, never "You".
 	else if (isUndoNote(m)) appendNote(undoNoteShown(m));
+	// A background command's end: for the model, the wake's prompt; on screen, one line about it.
+	else if (m.role === 'user' && m.bg) appendBgNote(m.bg);
 	else if (m.role === 'user') {
 		// A question already answered is drawn as answered (`askMarkAnswered`, inside).
 		var ut = appendUserMessage(m.content, m.ts, m.prod, m.files, m.app === true);

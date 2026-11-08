@@ -80,6 +80,30 @@ export function instructionsSeed() {
 	try { return String((Wasm.instructions_seed && Wasm.instructions_seed()) || ''); }
 	catch (e) { return ''; }
 }
+// ── Kinds of worker (KINDS-1): two starters, once ───────────────
+//
+// A builder and a reviewer, written to the STORE (the user's own layer, which a folder's
+// `.daimond/agents/` overrides by name), on the Workers model the user has picked. The text is
+// the wasm's (`kinds::seeds`). Only once a Workers pick exists: the starred default may be a
+// model the user would never send a worker to, so a store with no pick is seeded on a later
+// load. A kind file already there is never overwritten, and the flag makes it once.
+var KINDS_SEEDED_KEY = 'daimond.kinds.seeded';
+async function seedKindsOnce() {
+	var done = true;
+	try { done = localStorage.getItem(KINDS_SEEDED_KEY) === '1'; } catch (e) { return; }
+	if (done || !Wasm.kinds_seed || !window.DaimondModels || !DaimondModels.getJob) return;
+	var w = DaimondModels.getJob('workers') || {};
+	if (!w.model) return;
+	var files = [];
+	try { files = JSON.parse(Wasm.kinds_seed(w.provider || '', w.model)); } catch (e) { return; }
+	for (var i = 0; i < files.length; i++) {
+		var had = null;
+		try { had = await Wasm.store_read(files[i].path); } catch (e) { had = null; }
+		if (typeof had === 'string') continue;
+		try { await Wasm.store_write(files[i].path, files[i].text); } catch (e) { return; }
+	}
+	try { localStorage.setItem(KINDS_SEEDED_KEY, '1'); } catch (e) { /* once more, then */ }
+}
 // ── Two layers, because there are two authors ────────────────────
 //
 // `dev/ROOT_SEPARATION.md` §2.5(d) specifies this and seq 65 deferred it. The
@@ -214,6 +238,7 @@ export var Instructions = {
 		// fresh workspace is already better than nothing and the shape to extend is on
 		// the screen rather than in a document nobody opens.
 		if (!this.mine.trim()) this.mine = await this.seedOnce();
+		await seedKindsOnce();
 		this.theirs = '';
 		this.md = this.layered();
 		// Existing agents hold a system prompt composed at construction, so a

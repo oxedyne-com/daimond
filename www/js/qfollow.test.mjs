@@ -86,6 +86,7 @@ function world(over) {
 		renderQueue: () => {},
 		updateQueueBadges: () => {},
 		returnQueue: (c) => { log.push(['returnQueue']); },
+		wakeBgEnds() {},							// an emptied queue asks for owed background wakes (bgwake.test.mjs)
 		askHolds: () => false,
 		diag: () => {},
 		recoveringHere: () => false, dispatchInFlight: () => null,

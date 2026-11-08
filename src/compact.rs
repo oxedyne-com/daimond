@@ -238,6 +238,11 @@ pub const ORPHAN_GRACE_ROUNDS: usize = 5;
 /// its workers are terminal, so the wait only bites while one is genuinely still running.
 pub const GATHER_TIMEOUT_S: u64 = 600;
 
+/// Most worker kinds `spawn_agent`'s description names, and the characters of each one's own
+/// description it carries: the tools array is cached, but a long one is still paid per cache.
+pub const KINDS_SHOWN: usize = 12;
+pub const KIND_SAID_CHARS: usize = 120;
+
 /// Milliseconds a turn may go without its model stream saying anything before it is taken as
 /// stalled: `N` of the liveness rule (U3a, UNBLOCK-16; [`crate::engine::worker::Liveness`]).
 ///
@@ -533,6 +538,10 @@ pub struct Limits {
 	// How long an in-turn gather waits
 	pub gather_timeout_s: u64,	// seconds; see `GATHER_TIMEOUT_S`
 
+	// The kinds `spawn_agent` names
+	pub kinds_shown:      usize,	// see `KINDS_SHOWN`
+	pub kind_said_chars:  usize,	// see `KIND_SAID_CHARS`
+
 	/// Say, once per turn, that independent calls belong in one reply.  On by default; the
 	/// `batchline_off` arm is the pair a measurement turns it off with.
 	pub batch_line: bool,
@@ -611,6 +620,8 @@ impl Default for Limits {
 			orphan_grace_rounds:  ORPHAN_GRACE_ROUNDS,
 			no_progress_rounds:   NO_PROGRESS_ROUNDS,
 			gather_timeout_s:     GATHER_TIMEOUT_S,
+			kinds_shown:          KINDS_SHOWN,
+			kind_said_chars:      KIND_SAID_CHARS,
 			batch_line:           true,
 			compound:             false,
 			ocr:                  crate::tools::OcrConf::default(),

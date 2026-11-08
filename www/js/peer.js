@@ -7579,6 +7579,18 @@
 		return out;
 	}
 
+	/// The rows of `messages` that wake a turn (BG-WAKE): a background command's end Kimberlite posted
+	/// after its run's turn had ended (`bg`, mid `bg-<run>-<id>`), which no row names as its turn. A turn
+	/// started on it tags it (`keptPrompt`), so it is owed until one has. Pure.
+	function bgOwed(messages) {
+		var taken = {}, out = [];
+		(messages || []).forEach(function (m) { if (m && m.iturn) taken[String(m.iturn)] = 1; });
+		(messages || []).forEach(function (m) {
+			if (m && m.bg && m.role === 'user' && m.mid && !taken[String(m.mid)]) out.push(m);
+		});
+		return out;
+	}
+
 	/// The rows of `note` a device holding `messages` should add now, or null. Pure. None
 	/// when the note is this device's own, the turn's placeholder is already held, any row
 	/// of the turn has come (it ran, or its answer merged), or the note is past the
@@ -7857,6 +7869,7 @@
 		agentsFromFrame: agentsFromFrame,
 		dispatchNote:  dispatchNote,
 		dispatchNoteRows: dispatchNoteRows,
+		bgOwed:        bgOwed,
 		peerRunsMerge: peerRunsMerge,
 		peerRunsList:  peerRunsList,
 		turnWorkers:   turnWorkers,

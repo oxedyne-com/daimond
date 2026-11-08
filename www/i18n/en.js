@@ -3825,6 +3825,7 @@
 	// A deletion whose tombstone could not be recorded, so it was refused rather
 	// than left to resurrect from disk or from the other device (S-SYNC #6).
 	'store.delete_unrecorded': 'a deletion could not be recorded — this browser’s storage is full',
+	'store.taint_unrecorded': 'a conversation’s mark that it read outside content could not be recorded — this browser’s storage is full',
 	'store.records_owed': 'This device is out of browser storage, so a change made here is not saved yet. This page is keeping it, and saves it as soon as there is room.',
 	// The cloud index (`contentSet`/`setIndex`) lost to quota: an offloaded chat, Diamond
 	// or message tail rides inline, and a deletion or ledger merge cannot be recorded.
@@ -5469,5 +5470,16 @@
 	'stack.back':               'Back',
 	'diamond.files':            'Files',
 	'settings.title':           'Settings',
+	'bg.exit':                  'exit {n}',
+	'bg.no_exit':               'no exit code',
+	'bg.stopped':               'stopped',
+	'bg.timed_out':             'ended at its time limit',
+	'bg.matched':               'matched {pattern}, still running',
+	'bg.spill':                 'The whole output is at {path}.',
+	'bg.lost':                  'The whole output was not kept: {why}.',
+	'bg.ms':                    '{n} ms',
+	'bg.s':                     '{n} s',
+	'bg.min_s':                 '{m} min {s} s',
+	'bg.h_min':                 '{h} h {m} min',
 	});
 })();
