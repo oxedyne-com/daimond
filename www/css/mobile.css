@@ -37,12 +37,12 @@
 .panel.rail:not([data-fold-status="on"]) .admin-status > *:not(.astat-id):not(.astat-needs):not(.astat-summary) { display: none !important; }
 /* A desktop has no status fold, so an open state stored on a phone (the key is per
    device, but a window can be dragged across the breakpoint) changes nothing here. */
-@media (min-width: 761px) {
+@media not ((max-width: 760px) or ((pointer: coarse) and (max-height: 500px))) {
 	.panel.rail .admin-status > *:not(.astat-id):not(.astat-needs):not(.astat-summary) { display: none !important; }
 }
 #msheet     { display: none; }
 
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 
 	/* The Pending tile's presses (the ✓ ? ✕ and U7b's worded ones) are a finger's work: 44px,
 	   as every phone control is (bar rule 8). They drew at 29px. */
@@ -818,11 +818,4 @@
 	   about the settings card needs saying twice here. */
 	/* The view's own × sits top-right and is the close. Make it a clear target. */
 	#settings-slot .admin-back { font-size: var(--fs-4xl); padding: 4px 10px; }
-}
-
-/* A wider phone / small tablet in landscape gets a roomier sheet and
-   drawer, but the same paradigm. The single 760 cliff is deliberately
-   the only structural switch for now; this is a comfort tweak. */
-@media (max-width: 760px) and (min-width: 560px) and (orientation: landscape) {
-	.panel.rail { width: 380px !important; }
 }

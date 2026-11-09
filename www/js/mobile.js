@@ -25,7 +25,7 @@
 (function () {
 	'use strict';
 
-	var mq = window.matchMedia('(max-width: 760px)');
+	var mq = window.matchMedia('(max-width: 760px), (pointer: coarse) and (max-height: 500px)');
 	function isPhone() { return mq.matches; }
 
 	// ── Is this MACHINE a mobile one? ──────────────────────────
@@ -1137,17 +1137,11 @@
 		});
 
 		// Crossing the phone boundary: fold the phone surfaces away when we
-		// grow to desktop, and let the engine reseat everything. Driven off
-		// `resize` (not only the media-query `change`, which some engines fire
-		// unreliably under a scripted viewport) so the desktop restore is sure.
-		if (mq.addEventListener) mq.addEventListener('change', scheduleMode);
-		else if (mq.addListener) mq.addListener(scheduleMode);
-		window.addEventListener('resize', scheduleMode);
+		// grow to desktop, and let the engine reseat everything. js/phone.js
+		// tells the flip whichever event carries it.
+		window.DaimondPhone.watch(scheduleMode);
 	}
 
-	// Debounced, and gated on the live width rather than the media query — some
-	// engines flip matchMedia a beat after the resize event, and the reseat must
-	// not miss that beat and leave a guest stranded in the sheet.
 	var modeTimer = null;
 	function scheduleMode() {
 		if (modeTimer) clearTimeout(modeTimer);
@@ -1157,7 +1151,7 @@
 		// Either way the chip row has to be in the bar this width uses, so this
 		// comes before the desktop-only restore below it.
 		placeChips();
-		if (window.innerWidth <= 760) return;
+		if (isPhone()) return;
 		if (guest) teardown();
 		if (window.DaimondPanels) DaimondPanels.reflow();
 	}

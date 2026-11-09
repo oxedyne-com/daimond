@@ -415,7 +415,7 @@
 		def.addEventListener('click', function () { choose(o.kind, o.id, ''); done(); });
 		x.addEventListener('click', done);
 
-		var phone = root.matchMedia && root.matchMedia('(max-width: 640px)').matches;
+		var phone = root.matchMedia && root.matchMedia('(max-width: 760px), (pointer: coarse) and (max-height: 500px)').matches;
 		box.classList.toggle('av-sheet', !!phone);
 		document.body.appendChild(box);
 		if (!phone && anchor && anchor.getBoundingClientRect) {

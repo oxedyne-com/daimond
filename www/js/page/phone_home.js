@@ -40,9 +40,7 @@ export function install() {
 		}
 	}
 	place();
-	const mq = window.matchMedia('(max-width: 760px)');
-	if (mq.addEventListener) mq.addEventListener('change', place);
-	else if (mq.addListener) mq.addListener(place);
+	window.DaimondPhone.watch(place);
 
 	// Swipe or hold a row for its cog and Delete; then the tap that opens a row
 	// pushes the turn, after the swipe has had the chance to take the click.

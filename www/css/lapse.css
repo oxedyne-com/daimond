@@ -101,7 +101,7 @@
    this notice links to. The top of the chat is the one region a sheet never
    takes. Full width, because at 420px a 380px card centred on nothing looks
    like a mistake. */
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	.lapse-notices {
 		left:   calc(8px + var(--safe-l, 0px));
 		right:  calc(8px + var(--safe-r, 0px));

@@ -100,9 +100,7 @@
 		});
 
 		// The 760 cliff, watched the same way the shell watches it.
-		var mq = window.matchMedia('(max-width: 760px)');
-		if (mq.addEventListener) mq.addEventListener('change', sync);
-		else if (mq.addListener) mq.addListener(sync);
+		window.DaimondPhone.watch(sync);
 
 		// Re-label on a language change.
 		if (window.DaimondI18n && DaimondI18n.onChange) DaimondI18n.onChange(sync);

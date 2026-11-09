@@ -2,7 +2,7 @@
    Phone only: every rule sits under the phone media query, so nothing changes at >= 761 px.
    Settings and each of its groups are pages of the stack (admin.js, settingsgroups.js): a large title,
    then grouped inset rows of an icon tile, a title and a one-line subtitle, in iOS's Settings idiom. */
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	/* Appearance lives in Settings now: the top bar's door to it goes (Help folds it in below 760 px). */
 	#settings-menu-btn { display: none !important; }
 

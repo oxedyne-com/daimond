@@ -810,9 +810,7 @@ export function install() { // page-split: install
 				if (escaper) cancelForm(); else DaimondStack.pop();
 			}, function () { return drawerOpen && onPhone() && isSettings(DaimondStack.top()); });
 			// The body goes home when the window widens (QA ccp29 F5).
-			var mq = window.matchMedia ? window.matchMedia('(max-width: 760px)') : null;
-			if (mq && mq.addEventListener) mq.addEventListener('change', seatBody);
-			else if (mq && mq.addListener) mq.addListener(seatBody);
+			window.DaimondPhone.watch(seatBody);
 		}
 		function isSettings(n) { return n === 'settings' || n === 'settings-group' || n === 'settings-view'; }
 		/// Put view `v` on the view page, pushed over Settings or the group it was opened

@@ -23,9 +23,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CSS  = readPage(path.join(HERE, '..', 'css', 'mobile.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
 const JS   = readPage(path.join(HERE, 'mobile.js'), 'utf8');
 
-// The body of the first `@media (max-width: 760px) {` block, braces balanced.
+// The body of the first `@media <the phone query> {` block, braces balanced.
 function phoneBlock() {
-	const at = CSS.indexOf('@media (max-width: 760px) {');
+	const at = CSS.indexOf('@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {');
 	assert.ok(at >= 0, 'mobile.css has no phone block');
 	let depth = 0;
 	for (let i = CSS.indexOf('{', at); i < CSS.length; i++) {

@@ -4,11 +4,13 @@
    Loaded AFTER app.css. On small screens the four desktop
    panels become one panel at a time, switched with the bottom
    nav (.mnav). The active panel is chosen by body[data-mpanel].
-   Everything here is confined to `@media (max-width: 760px)`
-   so desktop (>760px) is untouched.
+   Everything here is confined to the phone query (a narrow
+   viewport, or a touch screen whose short side is phone-sized,
+   so a phone held sideways is still a phone), so desktop is
+   untouched. www/js/phonequery.test.mjs holds every site to it.
    ============================================================ */
 
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	/* A phone's crystal is a few hundred pixels tall: three file tiles under it. */
 	:root { --crystal-files-cap: 3; }
 
@@ -275,7 +277,7 @@
    Every name the rows and their labels go by is listed. Miss one and that row
    alone keeps its 116px column and overflows the card exactly as before —
    which is why the colour rows are named here as well as the model rows. */
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	.tile-dlg-field,
 	.tile-dlg-model { flex-direction: column; align-items: stretch; gap: 4px; }
 	.tile-dlg-label,

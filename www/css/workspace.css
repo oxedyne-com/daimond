@@ -384,6 +384,6 @@
    still `#panel-tags`, moved by `placeChips` in js/mobile.js -- and it scrolls
    sideways, which is what a phone does with a list too long for its width.
    Its rules are in css/mobile.css, with the rest of the phone shell. */
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	.pal-scrim { padding-top: max(6vh, calc(var(--safe-t) + 8px)); }
 }

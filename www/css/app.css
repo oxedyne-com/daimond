@@ -598,8 +598,8 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 /* Wherever the summary row is shown it says it, so the flag steps aside: always on a
    desktop, and on a phone once the section is open (RAILSTATUS: folded, the phone's
    pinned status is the identity row alone, and the flag is its warning). */
-@media (min-width: 761px) { .panel.rail .astat-flag { display: none; } }
-@media (max-width: 760px) { .panel.rail[data-fold-status="on"] .astat-flag { display: none; } }
+@media not ((max-width: 760px) or ((pointer: coarse) and (max-height: 500px))) { .panel.rail .astat-flag { display: none; } }
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) { .panel.rail[data-fold-status="on"] .astat-flag { display: none; } }
 /* The one line, and the eight behind it (audit 2026-09-15, STRIP-01). The chevron
    is drawn by the rule rather than put in the markup, so nothing has to keep a
    glyph and an `aria-expanded` in step by hand. */
@@ -4146,8 +4146,8 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 /* The stage needs room to be the stage — but only where there is room to give.
    On a phone one panel fills the screen, so a desktop minimum would just force
    an overflow. */
-@media (min-width: 761px) { #stage { min-width: 420px; } }
-@media (max-width: 760px) { #stage { min-width: 0; } }
+@media not ((max-width: 760px) or ((pointer: coarse) and (max-height: 500px))) { #stage { min-width: 420px; } }
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) { #stage { min-width: 0; } }
 
 
 body.resizing { cursor: col-resize; user-select: none; }
@@ -5244,7 +5244,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    its text; where the label is a tap row it keeps its height instead. A body with nothing in
    it (see .ctile-body:empty) leaves the label its full padding. :has() cannot nest, so the
    empty-wrapper case is read off the tile. */
-@media (min-width: 761px) {
+@media not ((max-width: 760px) or ((pointer: coarse) and (max-height: 500px))) {
 	.ctile:not(.collapsed):not(:has(> .ctile-body > .chat-msg-content:only-child:empty)) > .ctile-lbl:has(+ .ctile-body:not(:empty)),
 	.ctile[data-t="user"]:not(:has(> .ctile-body > .chat-msg-content:only-child:empty)) > .ctile-lbl:has(+ .ctile-body:not(:empty)) { padding-bottom: 2px; }
 }
@@ -5356,7 +5356,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 /* Desktop/tablet only, as the shared-stage overhang this guards against was:
    a phone gives the AI panel the full screen and handles its control row by
    scrolling it (responsive.css), not by dropping it to a second line. */
-@media (min-width: 761px) {
+@media not ((max-width: 760px) or ((pointer: coarse) and (max-height: 500px))) {
 	@container aipane (max-width: 440px) {
 		.panel.ai .chead { flex-wrap: wrap; row-gap: 3px; }
 		.panel.ai .chead-right { margin-left: auto; }
@@ -5401,7 +5401,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	.turn-file-rate button { position: relative; }
 	.turn-file-rate button::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
 }
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	@container aipane (max-width: 440px) {
 		.turn-file-rate button { position: relative; }
 		.turn-file-rate button::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
@@ -5592,7 +5592,7 @@ span.agsq:not(.o) { cursor: default; }
 /* The sheet wrapper draws nothing on a desktop: the list is the panel's flex child as before. */
 .agents-sheet { display: contents; }
 .agents-dots { display: none; }
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	/* The lower half as a bottom sheet (mock after-iphone.png): one tile at a time, swiped
 	   sideways with scroll-snap, a dot per tile, a grab bar on top. */
 	.agents-sheet.has-pins { display: flex; flex-direction: column; flex: none; margin-top: auto; background: var(--bg-secondary);
@@ -5674,7 +5674,7 @@ span.agsq:not(.o) { cursor: default; }
 .agents-fuel .spendh .fig { font-family: var(--font-mono); font-size: var(--dl-md); line-height: 1; }
 .agents-fuel .spendh .lab { font-size: var(--dl-2xs); color: var(--text-muted); line-height: 1; }
 /* On a phone the lens buttons take a row of their own under the fuel figure (mock iphone view). */
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	.agents-fuel { flex-wrap: wrap; row-gap: 10px; }
 	.agents-fuel .dview { flex-basis: 100%; margin-left: 0; }
 	/* A finger's 44 px, drawn at the mock's size: the hit rides an ::after, so the group

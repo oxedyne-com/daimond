@@ -12,7 +12,7 @@
    width it would cost the composer the same. Out of flow, it costs nothing. */
 #phone-stack { position: absolute; top: 0; left: 0; }
 
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	/* ── The stack bar ─────────────────────────────────────────
 	   The top bar on a phone: Back while a page lies behind this one, the page's
 	   title centred (the brand stands in when it gives none), and one trailing

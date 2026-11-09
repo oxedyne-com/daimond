@@ -498,7 +498,7 @@ function onPhone() {
 		const sh = window.DaimondShell;
 		if (sh && (sh.isMobileDevice() || sh.isPhone())) return true;
 	} catch (e) { /* the shell is not up yet */ }
-	try { return window.matchMedia('(max-width: 760px)').matches; } catch (e) { return false; }
+	try { return window.matchMedia('(max-width: 760px), (pointer: coarse) and (max-height: 500px)').matches; } catch (e) { return false; }
 }
 
 /// The RENDERER's wasm heap in MB, which is not the compiler's.

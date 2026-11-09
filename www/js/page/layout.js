@@ -1222,7 +1222,7 @@ export function install() { // page-split: install
 	});
 
 	// ── Mobile: one panel at a time ────────────────────────────
-	/* var */ mobileMq = window.matchMedia('(max-width: 760px)');
+	/* var */ mobileMq = window.matchMedia('(max-width: 760px), (pointer: coarse) and (max-height: 500px)');
 	// page-split: install 60
 
 
@@ -3183,16 +3183,14 @@ export function install() { // page-split: install
 			});
 			// AND AGAIN WHEN THE BREAKPOINT ITSELF FLIPS, because the two do not
 			// arrive together. `resize` fires with `innerWidth` already 390 while
-			// `matchMedia('(max-width: 760px)')` still answers false -- measured on a
+			// `matchMedia('(max-width: 760px), (pointer: coarse) and (max-height: 500px)')` still answers false -- measured on a
 			// rotation back to portrait, where `apply()` therefore took the DESKTOP
-			// branch and hid the rail on a phone. `mobile.js` gates its own mode
-			// restore on the live width for the same reason and says so.
+			// branch and hid the rail on a phone.
 			//
 			// One more `apply()` on the flip settles the layout from the branch that
 			// was right, whichever event was late. It is cheap: `apply()` is already
 			// run on every resize, and this adds one per boundary crossing.
-			if (mobileMq.addEventListener) mobileMq.addEventListener('change', apply);
-			else if (mobileMq.addListener) mobileMq.addListener(apply);
+			window.DaimondPhone.watch(apply);
 			apply();
 		}
 

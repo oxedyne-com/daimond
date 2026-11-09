@@ -834,7 +834,7 @@
 	function isPhone() {
 		var s = window.DaimondShell;
 		if (s && s.isPhone) return s.isPhone();
-		return window.matchMedia('(max-width: 760px)').matches;
+		return window.matchMedia('(max-width: 760px), (pointer: coarse) and (max-height: 500px)').matches;
 	}
 
 	// ── Binding ───────────────────────────────────────────────

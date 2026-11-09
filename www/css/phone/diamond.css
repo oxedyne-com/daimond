@@ -10,7 +10,7 @@
 #dview-files { display: none; }
 #chead-tags { display: none; }
 
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	/* ── The bar: Back, then the crystal's ✎ and ⋯ (b4) ───────── */
 	#app[data-stack="turn"] #stack-acts:not(:empty) { display: flex; align-items: center; gap: 4px; }
 	#app[data-stack="turn"] .topbar:has(#stack-acts:not(:empty)) :is(.brand-group, #sync-ico, #panel-tags, #help-btn, #fullscreen-btn, .update-chip) { display: none !important; }

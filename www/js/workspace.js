@@ -941,7 +941,7 @@
 	}
 	function closeFolds(returnFocus) { MENUS.forEach(function (m) { closeFold(m, returnFocus); }); }
 
-	var phoneMQ = window.matchMedia ? window.matchMedia('(max-width: 760px)') : null;
+	var phoneMQ = window.matchMedia ? window.matchMedia('(max-width: 760px), (pointer: coarse) and (max-height: 500px)') : null;
 
 	function isPhone() { return !!(phoneMQ && phoneMQ.matches); }
 
@@ -1262,15 +1262,10 @@
 			if (b) b.addEventListener('click', function () { closeFold(HELP, false); });
 		});
 
-		// The fold is a function of width alone, so it is set once here for
-		// whatever width the tab opened at, and again wherever the width can
-		// change (resize below, and the matchMedia listener beside it).
+		// The fold is a function of the phone layout alone, so it is set once here
+		// for the layout the tab opened in, and again at each flip of it.
 		foldAll();
-		if (phoneMQ) {
-			var onFoldChange = function () { foldAll(); };
-			if (phoneMQ.addEventListener) phoneMQ.addEventListener('change', onFoldChange);
-			else if (phoneMQ.addListener) phoneMQ.addListener(onFoldChange);	// old Safari
-		}
+		window.DaimondPhone.watch(function () { foldAll(); });
 
 		// A language or currency change repaints what this file draws. The chip
 		// row and the gallery are redrawn from the model, which is re-read from

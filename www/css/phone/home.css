@@ -6,7 +6,7 @@
 /* The head is the home page's alone. */
 .home-head { display: none; }
 
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	/* ── The page ─────────────────────────────────────────────
 	   The drawer's frame, opened out to the screen: no slide, no shadow, no
 	   scrim's edge. The ids outrank mobile.css's drawer rules, `!important` ones

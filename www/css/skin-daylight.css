@@ -170,7 +170,7 @@
 }
 /* On the desk they take the desk's own ground. On a phone they are drawers
    and sheets, which mobile.css makes opaque, and that stands. */
-@media (min-width: 761px) {
+@media not ((max-width: 760px) or ((pointer: coarse) and (max-height: 500px))) {
 	:root[data-skin="daylight"] .rail,
 	:root[data-skin="daylight"] .agents,
 	:root[data-skin="daylight"] .work,
@@ -200,7 +200,7 @@
 :root[data-skin="daylight"] .panel.trash .trash-list { padding-inline: calc(var(--dock-inset) - 6px); }
 :root[data-skin="daylight"] .panel.trash .trash-list .rail-note { padding-inline: 6px; }
 /* The Workspace's head sat 7px left of the card under it (the reach and toolchain notes, x 1139 at 1440px). */
-@media (min-width: 761px) {
+@media not ((max-width: 760px) or ((pointer: coarse) and (max-height: 500px))) {
 	:root[data-skin="daylight"] .panel.work > .railhead { padding-left: 11px; }
 }
 :root[data-skin="daylight"] .railhead > span:first-child {
@@ -297,7 +297,7 @@
 :root[data-skin="daylight"] :is(.chead-right, .top-actions, .railhead) > .icon-btn { padding: 0; width: 30px; justify-content: center; }
 :root[data-skin="daylight"] :is(.panel:not(.ai) .chead-right, .top-actions, .railhead) > :is(#collapse-btn, .cfull-btn) { padding: 0; width: 30px; justify-content: center; }
 /* The phone's chat head keeps 5.2.5's own box for both. */
-@media (min-width: 761px) {
+@media not ((max-width: 760px) or ((pointer: coarse) and (max-height: 500px))) {
 	:root[data-skin="daylight"] .panel.ai .chead-right > :is(#collapse-btn, .cfull-btn) { padding: 0; width: 30px; justify-content: center; }
 }
 :root[data-skin="daylight"] .top-actions > #settings-menu-btn { padding: 0 9px; line-height: 12px; width: auto; }
@@ -912,7 +912,7 @@
    `#msheet #panel-social > .railhead .imp-chip` carries two ids, which the
    desk rule above cannot out-specify at any width. Repeated at that
    selector so it wins under Daylight without touching Sharp or Warm's. */
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	:root[data-skin="daylight"] #msheet #panel-social > .railhead .imp-chip {
 		border-color: transparent;
 		background: transparent;
@@ -1215,7 +1215,7 @@
 :root[data-skin="daylight"] .tile-ctx-pct { min-width: 4ch; text-align: right; }
 
 /* ── Phone ─────────────────────────────────────────────────── */
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	/* The drawer is the one raised surface on a phone: the page's white, a
 	   shadow for its edge, and no rule. */
 	:root[data-skin="daylight"] .panel.rail {
@@ -1326,7 +1326,7 @@
    the "+" under them; they now sit in the composer row, so that reason is
    gone. Below the phone breakpoint the row still keeps base's two lines:
    folding it there would change what a phone shows, a separate call. */
-@media (min-width: 761px) {
+@media not ((max-width: 760px) or ((pointer: coarse) and (max-height: 500px))) {
 	:root[data-skin="daylight"] .ws-group:has(> .ws-body > .ws-empty:only-child) {
 		display: flex;
 		flex-direction: row-reverse;
@@ -1415,7 +1415,7 @@
    keeps its own box and wears the house 44px overlay (as `#drawer-btn` does, mobile.css), set
    at a 44px pitch so neighbours' overlays tile. Read-only rows are not controls and stay as
    they were. The chat head's tools are the head block's (the end of this file). */
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	/* Each role's own list, as its rule above names it. Fields and selects: */
 	:root[data-skin="daylight"] :is(select, input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]), textarea) { min-height: 44px; }
 	/* Dialog actions, create buttons, the primary and plain text buttons: */
@@ -1540,7 +1540,7 @@
    wrapping row, and `order` plus two empty full-width breaks set the rows: the title, then a Diamond's
    face switch and Fold or full screen, then select mode's own row. This block loads after mobile.css
    (index.html), which is why it lives here: the numbers were measured with this order. */
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	:root[data-skin="daylight"] .panel.ai .chead {
 		flex-wrap: wrap; align-content: flex-start; align-items: center; justify-content: flex-start;
 		gap: 0; padding: 4px 4px 4px 16px; min-height: 52px;

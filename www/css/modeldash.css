@@ -142,7 +142,7 @@
    panel's own padding then cut by a further few pixels (§11: "Median" and
    its figure cut 9px). The table's own right padding restores the panel's
    gutter once scrolling is what "flush" is measured against. */
-@media (max-width: 760px) {
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
 	/* R14 (D-20260929-03 r526 residual): the view itself clipped 3px off the
 	   last numeric column ("Median", its figure) -- the table's own scroller
 	   (above) was not the only `overflow-x: hidden` in the chain. */

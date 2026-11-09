@@ -14,7 +14,7 @@ import { confirmHold, dispatchInFlight, giveUpSent, holdSend, sessionCut } from 
 import { giveBackQueue, giveBackQueues, intoComposer, runTurn } from './steer.js';
 import { Workers } from './workers.js';
 import { Files } from './files_view.js';
-import { isMobile, mobileMq } from './layout.js';
+import { isMobile } from './layout.js';
 import { commitRatings, errandModelOf, pushUserRecord, recoverUserRecord, turnEffortOf } from './rating.js';
 import { diag, toast } from './passkey_phrase.js';
 import { appendUserMessage, askOpenIn, chatRunningOn, endContinuable, fleetCurrentBuild,
@@ -2669,8 +2669,7 @@ export function install() { // page-split: install
 	// page-split: install 67
 	try {
 		placeWalkPair();
-		if (mobileMq.addEventListener) mobileMq.addEventListener('change', placeWalkPair);
-		else if (mobileMq.addListener) mobileMq.addListener(placeWalkPair);
+		window.DaimondPhone.watch(placeWalkPair);
 	} catch (e) { /* no DOM */ }
 	// page-split: install 68
 	/// BEAT AT ONCE WHEN THIS MACHINE GOES BUSY OR IDLE (r544, QA F-A1). The beat is 45 s
