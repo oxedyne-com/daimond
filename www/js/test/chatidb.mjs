@@ -11,7 +11,8 @@ export const WAIT = 200;	// ms: the policy's store wait for these arms
 /// An IndexedDB held in `data` (store -> Map), shared by every page made on it. A
 /// transaction's writes land when it commits; one holding a put over WRAP never does, nor
 /// one aborted. While `data.failPut(store, value)` answers true, that put throws at once,
-/// as IndexedDB's does on a value it cannot clone.
+/// as IndexedDB's does on a value it cannot clone. While `data.failTx(names)` answers true,
+/// opening a transaction on `names` throws, as one on a broken store does.
 export function fakeIdb(data, gate = (fn) => fn()) {
 	const puts = [];
 	const PATHS = { chats: 'id', chatsum: 'id', msgchunks: 'k' };
@@ -22,6 +23,7 @@ export function fakeIdb(data, gate = (fn) => fn()) {
 		objectStoreNames: { contains: () => true },
 		close() {},
 		transaction(names) {
+			if (data.failTx && data.failTx(names)) throw Object.assign(new Error('the store failed'), { name: 'UnknownError' });
 			if (data.callers) data.callers.push(new Error().stack.split('\n')[2] || '');	// the gate's: who opened it
 			const ops = [];
 			let pending = 0, over = false, done = false, aborted = false;

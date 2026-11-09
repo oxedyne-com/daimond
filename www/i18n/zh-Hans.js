@@ -1303,6 +1303,7 @@
 	'store.taint_unrecorded':  '未能记录某个对话读取过外部内容——这个浏览器为本站点留的{store}已满',
 	'store.records_owed':      '这个浏览器为本站点留的本地存储 (localStorage) 已满，因此在这里更改的设置或记录尚未保存。此页面会保留它，并在有空间时立即保存。',
 	'store.cloud_index_full':  '这个浏览器为本站点留的{store}已满，跨设备同步所依据的索引无法保存。腾出空间后，你的内容就会重新开始同步。',
+	'store.chats_unread':      '无法从这个浏览器的存储里读出你的聊天，所以可能有些没有显示。它们没有被删除。',
 	'identity.err_no_sealing_key': '此设备没有封装密钥，因此无法打开已封装的消息。解锁一次身份后就会生成一个。',
 	'store.empty_read': '这个浏览器持有 {n} 段对话，却一段也没有返回',
 	// ── 权限阶梯 ───────────────────────────────────────────────
@@ -2314,6 +2315,7 @@
 	'identity.err_mismatch':        '两次输入的密码短语不一致。',
 	'identity.err_create':          '无法创建账户。',
 	'identity.err_wrong_pass':      '密码短语对不上。再试一次。',
+	'identity.reading_chats': '正在从这个浏览器的存储里读取你的聊天…',
 	'identity.err_locked':          'Daimond 身份已锁定。',
 	'identity.err_no_webcrypto':    '这个浏览器里没有 WebCrypto。',
 

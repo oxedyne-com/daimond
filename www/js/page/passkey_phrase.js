@@ -1170,8 +1170,29 @@ function offerToSaveCredential(name, pass) {
 /// The shared tail of every successful create or unlock, whether the passphrase
 /// was typed or recovered from a passkey. Records the account in the registry,
 /// decrypts the stored keys into memory, takes the lock card off the screen and
-/// draws the app the user is now entitled to see.
-export async function completeUnlock() {
+/// draws the app the user is now entitled to see. One at a time: a second call while one
+/// runs joins it.
+export function completeUnlock() {
+	if (!unlocking) unlocking = unlockTail().finally(function () { unlocking = null; });
+	return unlocking;
+}
+var unlocking = null;	// the unlock tail in flight
+
+async function unlockTail() {
+	// The gate is drawn before the boot's chat read returns, so an unlock can come first. The
+	// app is drawn from the chats, never from the empty list they start as.
+	if (!pg.chatsUp && pg.chatsIn) {
+		var wait = document.getElementById('id-error');
+		var btn  = document.getElementById('id-primary');
+		if (wait) wait.textContent = t('identity.reading_chats');
+		if (btn) btn.disabled = true;
+		await pg.chatsIn;
+		if (wait) wait.textContent = '';
+		if (btn) syncPrimaryEnabled();
+	}
+	// Each wait here can outlast the identity: a lock that lands meanwhile (a removal of this
+	// device) must not be followed by the app drawn with his chats.
+	if (!DaimondIdentity.isUnlocked()) return;
 	// A cold iOS/WebKit tab can have read the models store EMPTY at boot -- the
 	// timing family behind the seq-222/223 identity reports (see existsSettled).
 	// Re-read it over the same bounded budget BEFORE the keys are unsealed and
@@ -1181,6 +1202,7 @@ export async function completeUnlock() {
 	// simply stays empty.
 	if (window.DaimondModels && DaimondModels.loadSettled) {
 		try { await DaimondModels.loadSettled(); } catch (e) { /* the sync load already ran */ }
+		if (!DaimondIdentity.isUnlocked()) return;
 	}
 	// Copies become follows (D-20261018-09 U1f) once the boot has read the Diamond list
 	// (`bootInherit`, in `renderAll`), not here: before it a Diamond with no model record is
@@ -1193,6 +1215,7 @@ export async function completeUnlock() {
 	trail('afterUnlock start');
 	await afterUnlock();
 	trail('afterUnlock done');
+	if (!DaimondIdentity.isUnlocked()) return;
 	// At every load into an identity, a passkey from before the recovery record is
 	// recorded once its sealed copy is found on the gateway. Not awaited: the chip
 	// follows `daimond:recoverable`, and the offer awaits the same answer.

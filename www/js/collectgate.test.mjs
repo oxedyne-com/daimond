@@ -15,7 +15,7 @@
    cloud.js, on an in-memory IndexedDB, and the REAL sync.js on the same
    window against a stub mailbox. `applySync` stands in for parcel_apply's
    merge by its one gate on this path: chats are refused while
-   `ChatStore.vouched()` is false (parcel_apply.js `applyChats`).
+   `ChatStore.read()` is false (parcel_apply.js `applyChats`).
 
      S. the store (QA's probe, qa_livecollect/probe.log): five chats, a boot
         read that throws once or answers empty, one save --
@@ -94,6 +94,8 @@ function tab(data, ls, fx, cloud) {
 	w.indexedDB = fakeIdb(data, fx); w.IDBKeyRange = { bound: (lower, upper) => ({ lower, upper }) };
 	w.setTimeout = setTimeout; w.clearTimeout = clearTimeout;
 	loadScript(w, 'trash.js');	// DaimondPolicy: storewait.js bounds each wait by its storeWaitMs
+	// The store's bounded waits (PAGESTORE): every chat store request is raced against the policy's wait.
+	w.DaimondPolicy = { ...(w.DaimondPolicy || {}), storeWaitMs: () => 2000, storePieceBytes: () => 32768, tombTtlMs: () => 37 * 86400e3 };
 	loadScript(w, 'storewait.js');	// ChatStore opens through it, as index.html loads it before the page
 	w.DaimondTime = { fmtLocal: () => '' };	// the re-read's re-render formats times
 	const P = loadPage({ window: w, want: ['ChatStore', 'storedChats', 'collectChatsRefs', 'mayCommitChunks', 'offloadBlockedReason', 'pg'],
@@ -135,7 +137,7 @@ async function storeCase(name, fx) {
 
 {
 	const { B, cs, booted, before } = await storeCase('S1 control: a healthy boot', { n: 0, open: 0 });
-	check('S1. a healthy boot reads and vouches', readOf(cs) === true && cs.vouched() === true, 'read=' + readOf(cs));
+	check('S1. a healthy boot reads and vouches', readOf(cs) === true, 'read=' + readOf(cs));
 	cs.save(booted.concat([chat('c-new', 99)]));
 	await cs.settled(); await sleep(20);
 	const r = await collect(B.P);
@@ -146,14 +148,14 @@ async function storeCase(name, fx) {
 for (const [label, fx] of [['THROW: every read throws until the store answers', { mode: 'throw', n: 1e6, open: 0 }],
 	['EMPTY: every read answers nothing against a watermark of 5 until the store answers', { mode: 'empty', n: 1e6, open: 0 }]]) {
 	const { B, cs, booted, before } = await storeCase('S2/S3 ' + label, fx);
-	check('S2. the boot is not read and not vouched', readOf(cs) === false && cs.vouched() === false,
-		'read=' + readOf(cs) + ' vouched=' + cs.vouched());
+	check('S2. the boot is not read and not vouched', readOf(cs) === false,
+		'read=' + readOf(cs));
 	const cleared0 = B.w.cleared || 0;
 	cs.save(booted.concat([chat('c-new', 99)]));
 	await cs.settled();
-	const mid = { read: readOf(cs), vouched: cs.vouched(), cleared: (B.w.cleared || 0) - cleared0 };
+	const mid = { read: readOf(cs), cleared: (B.w.cleared || 0) - cleared0 };
 	const r = await collect(B.P);
-	check('S2. a landed save does not vouch for the unread store', mid.vouched === false, JSON.stringify(mid));
+	check('S2. a landed save does not vouch for the unread store', mid.read === false, JSON.stringify(mid));
 	check('S2. nor clear its "not read" alarm', mid.cleared === 0, JSON.stringify(mid));
 	check('S2. the collect refuses while the store is unread', !!r.refused, JSON.stringify(r).slice(0, 160));
 	const dropped = before.filter((k) => !cKeys(B.w.DaimondCloud).includes(k));
@@ -163,8 +165,8 @@ for (const [label, fx] of [['THROW: every read throws until the store answers', 
 	cs.save(B.P.storedChats().map((c) => (c.id === 'c-new' ? Object.assign({}, c, { name: 'renamed', metaAt: 100 }) : c)));
 	await cs.settled();
 	for (let i = 0; i < 50 && readOf(cs) !== true; i++) await sleep(10);
-	check('S3. the store answered, so the save re-read it: read and vouched', readOf(cs) === true && cs.vouched() === true,
-		'read=' + readOf(cs) + ' vouched=' + cs.vouched());
+	check('S3. the store answered, so the save re-read it: read and vouched', readOf(cs) === true,
+		'read=' + readOf(cs));
 	check('S3. the mirror holds every chat again', B.P.storedChats().map((c) => c.id).sort().join() === OLD.concat(['c-new']).sort().join(),
 		JSON.stringify(B.P.storedChats().map((c) => c.id)));
 	const r2 = await collect(B.P);
@@ -196,7 +198,7 @@ function syncOn(w, P, v) {
 		} };
 	w.DaimondCore = {
 		// parcel_apply's applyChats gate, the one this route turns on.
-		applySync: async () => (P.ChatStore.vouched() ? {} : { failed: ['chats'] }),
+		applySync: async () => (P.ChatStore.read() ? {} : { failed: ['chats'] }),
 		collectSync: async () => {
 			S.collects++;
 			const chats = await P.collectChatsRefs(1 << 20);
@@ -265,7 +267,7 @@ function syncOn(w, P, v) {
 	const got = await Promise.race([pulled, new Promise((r) => { dl = setTimeout(() => r(null), 10000); })]);
 	clearTimeout(dl);
 	if (got) await got.p.catch(() => null);
-	check('E3. the store answered: read, vouched, every chat back', readOf(cs) === true && cs.vouched() === true
+	check('E3. the store answered: read, vouched, every chat back', readOf(cs) === true
 		&& B.P.storedChats().length === 6, 'read=' + readOf(cs) + ' chats=' + B.P.storedChats().length);
 	check('E3. the store, read again, pulled once', rereadPulls.length === 1 && rereadPulls[0] === true, JSON.stringify(rereadPulls));
 	check('E3. the pull merged: nothing refused', !(DS.state().failedParts || []).length, JSON.stringify(DS.state().failedParts));
@@ -296,8 +298,8 @@ function syncOn(w, P, v) {
 	fx.n = 1;
 	await cs.refresh();
 	const before = cKeys(B.w.DaimondCloud);
-	check('R2. the failed refresh leaves the store unread', readOf(cs) === false && cs.vouched() === false,
-		'read=' + readOf(cs) + ' vouched=' + cs.vouched());
+	check('R2. the failed refresh leaves the store unread', readOf(cs) === false,
+		'read=' + readOf(cs));
 	check('R2. and closes the commit gate', B.P.mayCommitChunks() === false && B.P.offloadBlockedReason() === 'chats-unread',
 		String(B.P.offloadBlockedReason()));
 	const r = await collect(B.P);

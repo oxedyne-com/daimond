@@ -3464,6 +3464,7 @@
 	'identity.err_mismatch':        'The passphrases do not match.',
 	'identity.err_create':          'Could not create the account.',
 	'identity.err_wrong_pass':      'That passphrase did not match. Try again.',
+	'identity.reading_chats':       'Reading your chats from this browser’s storage…',
 	'identity.err_locked':          'Daimond identity is locked.',
 	'identity.err_no_webcrypto':    'WebCrypto is unavailable in this browser.',
 	'identity.err_storage_full':    'This device is out of storage, so the new identity could not be saved. Free some space in this browser and try again.',
@@ -3869,6 +3870,7 @@
 	'store.where_db':          'database (IndexedDB)',
 	'store.where_box':         'local storage (localStorage)',
 	'store.where_files':       'file storage (OPFS)',
+	'store.chats_unread':      'Your chats could not be read from this browser’s storage, so some may not be shown. They are not deleted.',
 	// A deletion whose tombstone could not be recorded, so it was refused rather
 	// than left to resurrect from disk or from the other device (S-SYNC #6).
 	'store.delete_unrecorded': 'a deletion could not be recorded — this browser’s {store} for this site is full',

@@ -1997,6 +1997,8 @@ export async function readChatLog(chat) {
 /// a turn the log holds open here (a view in this device's place), and every chat holding a
 /// hand-off placeholder, each once its transcript is resident. One at a time.
 export async function readLogsAtBoot() {
+	// An unlock can come before the boot's chat read lands; the logs are read for the chats it returns.
+	await pg.chatsIn;
 	await readLogPlaces();
 	var places = logPlaces(), held = {};
 	try { ChatStore.stored().forEach(function (s) { if (s && s.id && Array.isArray(s.iturns) && s.iturns.length) held[s.id] = 1; }); }

@@ -2103,28 +2103,32 @@ function ranHereProvenance(fellBack, meta) {
 	return (to || why) ? { to: to, why: why } : null;
 }
 
+/// Where the turn ran, drawn once per turn above its answer.
+export function appendProvenance(ranOn, handoffFellBack, meta) {
+	// WHICH DEVICE RAN THE TURN, when it was not this one: a turn dispatched to
+	// the always-on runner (or grabbed by another device) carries `ranOn` on the
+	// stored assistant message. It used to ride as a "ran on <device>" meta on
+	// the answer header; the owner asked for it as a proper tile instead, so a
+	// hand-off is drawn in the flow above the answer (see `appendHandoff`), once
+	// per turn. A plain local turn (`ranOn` equal to self, and never handed off)
+	// is quiet. But a turn that WAS handed off and then FELL BACK to run here is
+	// not quiet: `handoffFellBack` names the device it was sent to, so provenance
+	// is drawn ("Ran here — hand-off to X didn't finish") rather than the tile
+	// vanishing and leaving the owner unable to tell where it ran.
+	if (pg._handoffTurn === pg._turn) return;
+	var rh = null;			// the ran-here provenance
+	if (ranOn && String(ranOn) !== selfDeviceId()) {
+		appendHandoff(ranOn, meta);
+		pg._handoffTurn = pg._turn;
+	} else if ((rh = ranHereProvenance(handoffFellBack, meta))) {
+		appendRanHere(rh.to || null, meta, rh.why);
+		pg._handoffTurn = pg._turn;
+	}
+}
+
 export function appendAssistantText(text, ranOn, handoffFellBack, meta) {
 	if (!pg.curAsstDiv) {
-		// WHICH DEVICE RAN THE TURN, when it was not this one: a turn dispatched to
-		// the always-on runner (or grabbed by another device) carries `ranOn` on the
-		// stored assistant message. It used to ride as a "ran on <device>" meta on
-		// the answer header; the owner asked for it as a proper tile instead, so a
-		// hand-off is drawn in the flow above the answer (see `appendHandoff`), once
-		// per turn. A plain local turn (`ranOn` equal to self, and never handed off)
-		// is quiet. But a turn that WAS handed off and then FELL BACK to run here is
-		// not quiet: `handoffFellBack` names the device it was sent to, so provenance
-		// is drawn ("Ran here — hand-off to X didn't finish") rather than the tile
-		// vanishing and leaving the owner unable to tell where it ran.
-		if (pg._handoffTurn !== pg._turn) {
-			var rh = null;			// the ran-here provenance
-			if (ranOn && String(ranOn) !== selfDeviceId()) {
-				appendHandoff(ranOn, meta);
-				pg._handoffTurn = pg._turn;
-			} else if ((rh = ranHereProvenance(handoffFellBack, meta))) {
-				appendRanHere(rh.to || null, meta, rh.why);
-				pg._handoffTurn = pg._turn;
-			}
-		}
+		appendProvenance(ranOn, handoffFellBack, meta);
 		// The model's prose — the ANSWER — in a Daimond tile: accent-coloured,
 		// from the model (left indent), expanded. `drawAsst` streams into the
 		// `.chat-msg-content` inside its body exactly as it did into the bubble.
@@ -3411,6 +3415,10 @@ export function drawHistoryMessage(m, i, arr) {
 			appendDispatchedTile(m);
 		} else if (notRunEnded(m)) {
 			// A "not run" row a later turn follows is history, drawn nowhere (UNBLOCK-99).
+		} else if (!m.interrupted && !logRowText(m).trim()) {
+			// A turn that ended before it said a word (a Kimberlite turn stopped while it was
+			// thinking) has no answer to draw, only where it ran (STOP-STALE-REPLY).
+			appendProvenance(m.ranOn, m.handoffFellBack, m);
 		} else {
 			appendAssistantText(logRowText(m), m.ranOn, m.handoffFellBack, m);
 			var div = pg.curAsstDiv;

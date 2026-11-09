@@ -1990,19 +1990,22 @@ async function applyChats(remote, from) {
 	// NOT-YET-READ IS NOT UNREADABLE, and the two used to be one throw. A
 	// wake-driven pull on a cold tab (the iOS case: a backgrounded WebKit tab
 	// re-instantiates slowly, and the account wakes it at a new version on
-	// every push) can land BEFORE the store's first read has vouched the
+	// every push) can land BEFORE the store's first read has landed on the
 	// mirror. Refusing outright recorded `chats` as failed for a store that was
 	// moments from being perfectly readable -- and sync.js then adopted the
 	// version anyway (the strand this whole change is about). So first WAIT for
 	// the first read to settle, then judge again: a store that simply had not
-	// been read yet vouches here and the merge proceeds on this very pull. A
+	// been read yet is read here and the merge proceeds on this very pull. A
 	// genuine read FAILURE (an empty read against a non-zero watermark, or a
-	// read that threw) leaves it unvouched AND raises the storage alarm inside
+	// read that threw) leaves it unread AND raises the storage alarm inside
 	// `boot`/`judge` -- so this still refuses that case, exactly as before, and
 	// the caller (sync.js) then declines to adopt the version and re-pulls.
-	if (!ChatStore.vouched()) {
+	if (!ChatStore.read()) {
 		try { await ChatStore.booted(); } catch (e) { /* boot raised its own alarm */ }
-		if (!ChatStore.vouched()) {
+		// A boot read that failed once stays unread until something reads it again; this pull
+		// does, so a store that answers now merges here rather than holding every push.
+		if (!ChatStore.read()) await ChatStore.readAgain();
+		if (!ChatStore.read()) {
 			diag('apply chats REFUSED', 'store not read yet');
 			throw new Error('the chat store has not been read; not merging against it');
 		}
@@ -2181,7 +2184,7 @@ async function applyChats(remote, from) {
 		var st = byId[r.id];
 		if (!st) {
 			// A chat this device had NO record of. Adopted wholesale -- the
-			// vouched() gate above is what makes that safe. See the refuse note.
+			// read() gate above is what makes that safe. See the refuse note.
 			// Absent is an empty transcript, as a chat whose chunks are gone lands.
 			if (r.messages == null) r.messages = [];
 			diag('apply chat NEW', r.id + ' n=' + (Array.isArray(r.messages) ? r.messages.length : 0));

@@ -2411,7 +2411,7 @@ export async function selectDiamond(f, view) {
 			if (prev) prev.remove();
 			var blank = document.createElement('div');
 			blank.className = 'chat-msg chat-msg-empty';
-			blank.textContent = t('crystal.chat_empty');
+			blank.textContent = ChatStore.read() ? t('crystal.chat_empty') : t('store.chats_unread');
 			chatOutput.appendChild(blank);
 		}
 		syncComposer();

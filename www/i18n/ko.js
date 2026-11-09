@@ -1308,6 +1308,7 @@
 	'store.taint_unrecorded':  '대화가 외부 콘텐츠를 읽었다는 기록을 남기지 못했어요 — 이 브라우저의 이 사이트 {store}가 가득 찼어요',
 	'store.records_owed':      '이 브라우저의 이 사이트 로컬 저장소(localStorage)가 가득 차서 여기서 바꾼 설정이나 기록이 아직 저장되지 않았습니다. 이 페이지가 보관하고 있으며 공간이 생기는 즉시 저장합니다.',
 	'store.cloud_index_full':  '이 브라우저의 이 사이트 {store}가 가득 차서 기기 간 동기화가 쓰는 색인을 저장할 수 없어요. 공간을 확보하면 작업이 다시 오갈 거예요.',
+	'store.chats_unread':      '이 브라우저 저장 공간에서 채팅을 읽지 못해 일부가 보이지 않을 수 있어요. 삭제된 건 아니에요.',
 	'identity.err_no_sealing_key': '이 기기에는 봉인 키가 없어서 봉인된 메시지를 열 수 없어요. 아이덴티티를 한 번 잠금 해제하면 키가 만들어집니다.',
 	'store.empty_read': '이 브라우저가 가지고 있는 대화 {n}개 중 하나도 돌려주지 않았어요',
 	// ── 권한 단계 ──────────────────────────────────────────────
@@ -2320,6 +2321,7 @@
 	'identity.err_mismatch':        '두 암호문구가 서로 달라요.',
 	'identity.err_create':          '계정을 만들지 못했어요.',
 	'identity.err_wrong_pass':      '암호문구가 맞지 않았어요. 다시 해 보세요.',
+	'identity.reading_chats': '이 브라우저 저장 공간에서 채팅을 읽는 중이에요…',
 	'identity.err_locked':          'Daimond 신원이 잠겨 있어요.',
 	'identity.err_no_webcrypto':    '이 브라우저에서는 WebCrypto를 쓸 수 없어요.',
 

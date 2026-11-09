@@ -2186,11 +2186,15 @@ export function renderSessionList() {
 	// `chats` (spend, the fold-model sweep, "is anything generating", the sync
 	// parcel) wants it counted exactly like the rest.
 	var loose = pg.chats.filter(function (c) { return !c.diamondId; });
-	if (loose.length === 0) {
+	// A list from a store that was not read is not all of his chats, empty or not.
+	var unread = !ChatStore.read();
+	if (unread || loose.length === 0) {
 		var note = document.createElement('div');
 		note.className = 'rail-note';
-		note.textContent = t('rail.no_chats');
+		note.textContent = unread ? t('store.chats_unread') : t('rail.no_chats');
 		sessionList.appendChild(note);
+	}
+	if (loose.length === 0) {
 		repaintPause();
 		return;
 	}

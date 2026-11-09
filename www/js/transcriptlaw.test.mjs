@@ -75,7 +75,7 @@ function world(opts) {
 	const stored = [{ id: 'own', name: 'own', messages: [], msgCount: MINE.length, _loaded: false,
 		updatedAt: 100, metaAt: 100 }];
 	const ChatStore = {
-		vouched: () => true,
+		read: () => true,
 		booted: async () => {},
 		putTombs: async () => true,
 		stored: () => (rec.saved || stored).slice(),

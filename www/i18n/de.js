@@ -1130,6 +1130,7 @@
 	'store.taint_unrecorded':  'dass ein Gespräch Inhalte von außen gelesen hat, konnte nicht erfasst werden — der Speicherort {store} dieses Browsers für diese Seite ist voll',
 	'store.records_owed':      'Der lokale Speicher dieses Browsers für diese Seite (localStorage) ist voll, daher ist eine hier geänderte Einstellung oder ein Eintrag noch nicht gespeichert. Diese Seite behält sie und speichert sie, sobald wieder Platz ist.',
 	'store.cloud_index_full':  'Der Speicherort {store} dieses Browsers für diese Seite ist voll, daher kann der Index, mit dem die geräteübergreifende Synchronisierung arbeitet, nicht gespeichert werden. Schaffe Platz, und deine Arbeit reist wieder.',
+	'store.chats_unread':      'Deine Chats ließen sich nicht aus dem Speicher dieses Browsers lesen, darum fehlen hier vielleicht einige. Gelöscht sind sie nicht.',
 	'identity.err_no_sealing_key': 'Dieses Gerät hat keinen Versiegelungsschlüssel und kann eine versiegelte Nachricht deshalb nicht öffnen. Entsperre die Identität einmal, dann wird einer erzeugt.',
 	'store.empty_read': 'dieser Browser hat keine der {n} Unterhaltungen zurückgegeben, die er hält',
 	// ── Die Berechtigungsstufen ────────────────────────────────
@@ -2304,6 +2305,7 @@
 	'identity.err_mismatch': 'Die Passphrasen stimmen nicht überein.',
 	'identity.err_create': 'Das Konto ließ sich nicht anlegen.',
 	'identity.err_wrong_pass': 'Diese Passphrase stimmt nicht. Versuch es noch einmal.',
+	'identity.reading_chats': 'Deine Chats werden aus dem Speicher dieses Browsers gelesen …',
 	'identity.err_locked': 'Die Daimond-Identität ist gesperrt.',
 	'identity.err_no_webcrypto': 'WebCrypto steht in diesem Browser nicht zur Verfügung.',
 

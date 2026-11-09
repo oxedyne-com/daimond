@@ -1131,6 +1131,7 @@
 	'store.taint_unrecorded':  'le fait qu’une conversation a lu du contenu extérieur n’a pas pu être enregistré — l’espace de ce navigateur pour ce site, {store}, est plein',
 	'store.records_owed':      'Le stockage local de ce navigateur pour ce site (localStorage) est plein : un réglage ou un enregistrement modifié ici n’est pas encore enregistré. Cette page le conserve et l’enregistre dès qu’il y a de la place.',
 	'store.cloud_index_full':  'L’espace de ce navigateur pour ce site, {store}, est plein : l’index sur lequel repose la synchronisation entre appareils ne peut pas être enregistré. Libérez de l’espace, et votre travail circulera de nouveau.',
+	'store.chats_unread':      'Vos chats n’ont pas pu être lus dans le stockage de ce navigateur, certains peuvent donc manquer ici. Ils ne sont pas supprimés.',
 	'identity.err_no_sealing_key': 'Cet appareil n’a pas de clé de scellement, il ne peut donc pas ouvrir un message scellé. Déverrouillez l’identité une fois et une clé sera créée.',
 	'store.empty_read': 'ce navigateur n’a rendu aucune des {n} conversations qu’il détient',
 	// ── L’échelle des permissions ──────────────────────────────
@@ -2311,6 +2312,7 @@
 	'identity.err_mismatch': 'Les phrases secrètes ne correspondent pas.',
 	'identity.err_create': 'Impossible de créer le compte.',
 	'identity.err_wrong_pass': 'Cette phrase secrète ne correspond pas. Réessayez.',
+	'identity.reading_chats': 'Lecture de vos chats dans le stockage de ce navigateur…',
 	'identity.err_locked': 'L’identité Daimond est verrouillée.',
 	'identity.err_no_webcrypto': 'WebCrypto est indisponible dans ce navigateur.',
 

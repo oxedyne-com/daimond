@@ -130,6 +130,10 @@ async function serve(dev, rawPath, method, bodyText) {
 	const p = String(rawPath).split('?')[0];
 	const body = bodyText ? JSON.parse(bodyText) : {};
 	if (p === '/api/sync') {
+		// The side doors on the same path (`?presence=1`, `?removed=1`, `?lease=1`) are not the mailbox:
+		// answered as accepted and never written over the parcel. A beat on an empty mailbox otherwise
+		// lands as a blobless v1 that no device can open, and none is whole again.
+		if (method !== 'GET' && String(rawPath).indexOf('?') !== -1) return { status: 200, json: { ok: true } };
 		// THE BLOCK: the device's own sync timers must not reach the mailbox in a window an
 		// arm has to order (D2: B must not pull A's copy, nor land first).
 		if (cloud.block === dev) return { status: 503, json: { ok: false } };

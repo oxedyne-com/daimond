@@ -144,7 +144,9 @@
 				}, ev);
 			};
 			req.onsuccess = function () {
-				if (given) { try { req.result.close(); } catch (e) { /* already */ } } else resolve(held(req.result));
+				if (given) { try { req.result.close(); } catch (e) { /* already */ } }
+				// Resolved even when given: the answer is what tells the wait the store is back.
+				resolve(held(req.result));
 			};
 			req.onerror   = function () { reject(req.error || new Error('the store would not open while ' + what)); };
 			req.onblocked = function () {

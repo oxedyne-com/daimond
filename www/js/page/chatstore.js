@@ -2326,12 +2326,13 @@ export async function onChatsChangedElsewhere(touchedIds) {
 	// way -- they read the tombstones and the rebuilt list, not this set.
 	var only = touchedIds ? {} : null;
 	if (touchedIds) for (var ti = 0; ti < touchedIds.length; ti++) only[touchedIds[ti]] = true;
-	var tombs = loadTombs();
 	// Trashed as well as tombstoned. This is also the path a RESTORE comes
 	// back through: the record never left the store, so re-reading it with the
 	// trash record lifted is the whole of putting the chat back on the rail.
-	var stored = (await ChatStore.refresh())
-		.filter(function (c) { return c && c.id && !tombs[c.id] && !trashed(c.id); });
+	// The tombs are taken after the read, which loads them when the boot's read never landed.
+	var stored = await ChatStore.refresh();
+	var tombs = loadTombs();
+	stored = stored.filter(function (c) { return c && c.id && !tombs[c.id] && !trashed(c.id); });
 	var mine = {}, mtombs = loadMsgTombs();		// one tombstone parse for the whole merge
 	pg.chats.forEach(function (c) { mine[c.id] = c; });
 	var joinedNew = false;
@@ -2594,12 +2595,13 @@ export function install() { // page-split: install
 		var storedFns = {};      // chat id -> { gen, fn }: run once save `gen` has landed for it
 		var loadProbe = 0;       // transcript loads served, for verify_collectheap only
 		var usable  = false;     // the store opened and was read at least once
-		var vouched = false;     // and what it read can be believed -- see CHATS_COUNT
-		var read    = false;     // a read of the store has landed and been believed; a write that lands is not one
+		var read    = false;     // a read of the store has landed and been believed (see CHATS_COUNT); a write that lands is not one
 		var rereading = null;    // the re-read run once an unread store answers again
+		var again = null;        // the one read of an unread store in flight, shared by every asker
 		var bootPromise = null;  // the one-and-only first read, memoised; see boot/booted
 		var shadowDone = Promise.resolve();   // resolves when the last transcript-shadow pass settled
-		var slimDone   = Promise.resolve();   // resolves when the boot's pass over old fat rows settled
+		var slimDone   = null;                // the first read's pass over old fat rows, once started
+		var tombsIn    = false;               // the deletions in IndexedDB are loaded into `tombMem`
 		var skipNoted = {};      // id|why of each chat a write left alone, trailed once per page
 		DaimondStoreWait.tell({
 			stalled: function (what, ms) {
@@ -2888,46 +2890,44 @@ export function install() { // page-split: install
 		}
 
 		/// Seed `tombMem` from IndexedDB, migrate the pre-fix localStorage maps in,
-		/// and rewrite the localStorage cache from the merged truth. Runs once at
-		/// boot, BEFORE the first `write`, so a deletion recorded yesterday is not
-		/// forgotten today. Never throws: a store that will not open leaves the tombs
-		/// on their localStorage cache, and `putTombs` keeps trying IDB.
+		/// and rewrite the localStorage cache from the merged truth. Runs in the first
+		/// store read that lands, BEFORE the first `write`, so a deletion recorded
+		/// yesterday is not forgotten today. Throws when the deletions cannot be read,
+		/// so no read is believed over them; `putTombs` keeps trying IDB meanwhile.
 		async function bootTombs() {
-			try {
-				var rows = await readAllTombs();
-				var now = Date.now(), ttl = tombTtl();
-				rows.forEach(function (r) {
-					if (!r || !r.map || !r.id) return;
-					if (r.map !== TAINT_PENDING_KEY && typeof r.at === 'number' && now - r.at >= ttl) return;   // prune on read; a pending taint never expires
-					var m = tombMem[r.map] || (tombMem[r.map] = {});
-					if (!m[r.id] || (r.at || 0) > m[r.id]) m[r.id] = r.at || 0;
+			var rows = await readAllTombs();
+			var now = Date.now(), ttl = tombTtl();
+			rows.forEach(function (r) {
+				if (!r || !r.map || !r.id) return;
+				if (r.map !== TAINT_PENDING_KEY && typeof r.at === 'number' && now - r.at >= ttl) return;   // prune on read; a pending taint never expires
+				var m = tombMem[r.map] || (tombMem[r.map] = {});
+				if (!m[r.id] || (r.at || 0) > m[r.id]) m[r.id] = r.at || 0;
+			});
+			// Migrate the maps a pre-S-SYNC-#6 build left in localStorage into IDB.
+			var migrate = [];
+			allTombKeys().forEach(function (key) {
+				var ls = readJson(key, {});
+				var m = tombMem[key] || (tombMem[key] = {});
+				Object.keys(ls).forEach(function (id) {
+					var ts = ls[id];
+					if (typeof ts !== 'number' || now - ts >= ttl) return;
+					if (!m[id] || ts > m[id]) m[id] = ts;
+					migrate.push({ map: key, id: id, at: ts });
 				});
-				// Migrate the maps a pre-S-SYNC-#6 build left in localStorage into IDB.
-				var migrate = [];
-				allTombKeys().forEach(function (key) {
-					var ls = readJson(key, {});
-					var m = tombMem[key] || (tombMem[key] = {});
-					Object.keys(ls).forEach(function (id) {
-						var ts = ls[id];
-						if (typeof ts !== 'number' || now - ts >= ttl) return;
-						if (!m[id] || ts > m[id]) m[id] = ts;
-						migrate.push({ map: key, id: id, at: ts });
-					});
-				});
-				// And the file tombstones, whose value is the hash the deleting device held
-				// rather than a time (A5): the cache's rows the store has not got go in.
-				var fls = readJson(SYNC_FILE_TOMBS_KEY, {}), fm = tombMemMap(SYNC_FILE_TOMBS_KEY);
-				Object.keys(fls || {}).forEach(function (p) {
-					if (typeof fls[p] !== 'string' || fm[p]) return;
-					fm[p] = fls[p];
-					migrate.push({ map: SYNC_FILE_TOMBS_KEY, id: p, at: fls[p] });
-				});
-				if (migrate.length) {
-					try { await writeTombRows(migrate); }
-					catch (e) { /* migration retries next boot; tombMem already holds them */ }
-				}
-				allTombKeys().forEach(function (key) { tombCacheWrite(key); });
-			} catch (e) { /* tombs stay on the localStorage cache; putTombs still tries IDB */ }
+			});
+			// And the file tombstones, whose value is the hash the deleting device held
+			// rather than a time (A5): the cache's rows the store has not got go in.
+			var fls = readJson(SYNC_FILE_TOMBS_KEY, {}), fm = tombMemMap(SYNC_FILE_TOMBS_KEY);
+			Object.keys(fls || {}).forEach(function (p) {
+				if (typeof fls[p] !== 'string' || fm[p]) return;
+				fm[p] = fls[p];
+				migrate.push({ map: SYNC_FILE_TOMBS_KEY, id: p, at: fls[p] });
+			});
+			if (migrate.length) {
+				try { await writeTombRows(migrate); }
+				catch (e) { /* the migration retries next boot; tombMem already holds them */ }
+			}
+			allTombKeys().forEach(function (key) { tombCacheWrite(key); });
 		}
 
 		/// A stamp that changes whenever a chat's stored bytes would, without
@@ -3247,10 +3247,8 @@ export function install() { // page-split: install
 				// only a store that was read can be believed: one whose read never landed holds
 				// chats this mirror lacks, so `disk` is not its count, the "not read" alarm
 				// stands, and it is read now that it answers.
-				if (read) {
-					vouched = true;
-					setWatermark(Object.keys(disk).length);
-				} else reread();
+				if (read) setWatermark(Object.keys(disk).length);
+				else reread();
 				list.forEach(function (c) { if (c && c.id && !missed[c.id]) landed(c.id, gen); });
 				if (failure) {
 					// The rest landed; this chat did not, and the person is told so.
@@ -3280,11 +3278,114 @@ export function install() { // page-split: install
 			}
 		}
 
-		/// Read the store again once it answers after a read that never landed, merge what it
-		/// holds into the page's chats, and pull, so the merge sync refused runs now.
+		/// Read the whole store: the deletions, then any chats the old localStorage key still
+		/// holds, then the summaries. Boot and every later read run this one read, so a read of
+		/// a store whose boot never landed finishes the boot's work, and `read` is never set
+		/// over deletions that did not load. Throws when any part of it fails.
+		async function readStore() {
+			var wasRead = read;
+			await conn();
+			// Tombstones are moved into IndexedDB and seeded into `tombMem`
+			// BEFORE the first `write`, or a deletion recorded yesterday would
+			// be invisible to today's save and the row would resurrect (S-SYNC #6).
+			if (!tombsIn) { await bootTombs(); tombsIn = true; }
+			var old = readJson(CHATS_KEY, []);
+			if (Array.isArray(old) && old.length) {
+				// RARE: the pre-IndexedDB localStorage store is still present. It has to
+				// be unioned into the rows, which needs the full transcripts -- so this
+				// one-time migration pays a full read, writes, shadows, and then falls
+				// through to the summary mirror below. (`write` unions, so nothing the
+				// old store holds can shorten a row already migrated.)
+				var full = await readAll();
+				full.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
+				usable = true;
+				read = true;		// the full read landed; the summary read below judges it again
+				full = mergeInto(full, old);
+				if (await write(full, ++saveGen)) {
+					// Kept as a readable archive, but MOVED off the live key so nothing
+					// unions it back in and resurrects a chat deleted after the move.
+					try {
+						localStorage.setItem(CHATS_LEGACY, JSON.stringify(old));
+						localStorage.setItem(CHATS_LEGACY_AT, String(Date.now()));
+					}
+					catch (e2) { /* no room for the archive; the store above has it */ }
+					try { localStorage.removeItem(CHATS_KEY); } catch (e3) { /* best effort */ }
+				}
+			}
+			// THE SESSION MIRROR IS SUMMARIES (seq 213, Stage 1): boot loads a small
+			// row per chat, NOT every transcript. A chat's messages are read on open
+			// (see `loadMessages`). `readSummaries` reconciles against the legacy rows,
+			// so a store the shadow never covered is surfaced whole and summarised.
+			// A read that throws leaves `disk` as it was, not emptied.
+			var got = await readSummaries();
+			var stamps = {};
+			got.forEach(function (c) { if (c && c.id) stamps[c.id] = stampOf(c); });
+			disk = stamps;
+			mirror = got;
+			usable = true;
+			read = judge(mirror);
+			if (read && !wasRead) storageAlarmClear();	// the store answers again
+			if (!slimDone) slimDone = shadowDone.then(slimRows).catch(function () { /* the next boot tries again */ });
+			// STAGE 2d SCAFFOLDING (deferred). The reader is the chunks now; the
+			// legacy `chats` rows are slimmed (`slimRows`) but NOT pruned yet, and
+			// since v4 no older build can read them (CHATS_DB_VERSION). Start the grace clock the first time the store is believed, so a
+			// future build can retire the legacy one-row after a vouch PLUS a window
+			// -- the same shape as the CHATS_LEGACY prune. Setting the stamp is all
+			// this stage does; nothing reads it to delete.
+			if (read) {
+				try {
+					if (localStorage.getItem(CHATS_CHUNKS_AT) === null) {
+						localStorage.setItem(CHATS_CHUNKS_AT, String(Date.now()));
+					}
+				} catch (e5) { /* best effort — the clock is scaffolding, not load-bearing */ }
+			}
+			// Prune the pre-migration archive once it is safe to. It was kept as a
+			// safety net in case the IndexedDB move had failed, but it is a frozen
+			// snapshot that never grows — so it is dead weight on the localStorage
+			// budget, and the biggest single thing on it: the first to trip a
+			// QuotaExceeded once the budget is tight. Remove it only when BOTH hold:
+			// the new store has been read and BELIEVED (`read`, so the move
+			// provably landed and this is not the fallback rail), AND the grace
+			// window has passed since the move — so a person restoring an old backup,
+			// or noticing a chat that went missing, still has the archive for the
+			// span it was kept for. An archive stamped by a build before CHATS_LEGACY_AT
+			// existed has its clock started here rather than being deleted unaged, so
+			// nothing is ever pruned without having served the full window.
+			if (usable && read) {
+				try {
+					if (localStorage.getItem(CHATS_LEGACY) !== null) {
+						var stampedAt = parseInt(readJson(CHATS_LEGACY_AT, 0), 10);
+						if (!isFinite(stampedAt) || stampedAt <= 0) {
+							localStorage.setItem(CHATS_LEGACY_AT, String(Date.now()));
+						} else if (Date.now() - stampedAt > LEGACY_GRACE_MS) {
+							localStorage.removeItem(CHATS_LEGACY);
+							localStorage.removeItem(CHATS_LEGACY_AT);
+						}
+					}
+				} catch (e4) { /* best effort — the archive is dead weight, not load-bearing */ }
+			}
+		}
+
+		/// Read an unread store again and merge what it holds into the page's chats. A stalled
+		/// store is not asked, and a read left unread by a stall arms `reread` for when it answers.
+		function readAgain() {
+			if (read) return Promise.resolve();
+			if (!again) {
+				again = (DaimondStoreWait.stalled() ? Promise.resolve() : onChatsChangedElsewhere())
+					.catch(function () { /* still unread; the next pull or write asks again */ })
+					.then(function () {
+						again = null;
+						if (!read && DaimondStoreWait.stalled()) DaimondStoreWait.whenAnswers('\u0000store read', reread);
+					});
+			}
+			return again;
+		}
+
+		/// Read the store again once it answers after a read that never landed, and pull, so the
+		/// merge sync refused runs now.
 		function reread() {
 			if (read || rereading) return;
-			rereading = onChatsChangedElsewhere()
+			rereading = readAgain()
 				.then(function () {
 					if (read && window.DaimondSync && window.DaimondSync.pull) return window.DaimondSync.pull();
 				})
@@ -3999,90 +4100,14 @@ export function install() { // page-split: install
 				if (bootPromise) return bootPromise;
 				bootPromise = (async function () {
 				try {
-					// Tombstones are moved into IndexedDB and seeded into `tombMem`
-					// BEFORE the first `write`, or a deletion recorded yesterday would
-					// be invisible to today's save and the row would resurrect (S-SYNC #6).
-					await conn();
-					await bootTombs();
-					var old = readJson(CHATS_KEY, []);
-					if (Array.isArray(old) && old.length) {
-						// RARE: the pre-IndexedDB localStorage store is still present. It has to
-						// be unioned into the rows, which needs the full transcripts -- so this
-						// one-time migration pays a full read, writes, shadows, and then falls
-						// through to the summary mirror below. (`write` unions, so nothing the
-						// old store holds can shorten a row already migrated.)
-						var full = await readAll();
-						full.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
-						usable = true;
-						read = true;		// the full read landed; the summary read below judges it again
-						full = mergeInto(full, old);
-						if (await write(full, ++saveGen)) {
-							// Kept as a readable archive, but MOVED off the live key so nothing
-							// unions it back in and resurrects a chat deleted after the move.
-							try {
-								localStorage.setItem(CHATS_LEGACY, JSON.stringify(old));
-								localStorage.setItem(CHATS_LEGACY_AT, String(Date.now()));
-							}
-							catch (e2) { /* no room for the archive; the store above has it */ }
-							try { localStorage.removeItem(CHATS_KEY); } catch (e3) { /* best effort */ }
-						}
-					}
-					// THE SESSION MIRROR IS SUMMARIES (seq 213, Stage 1): boot loads a small
-					// row per chat, NOT every transcript. A chat's messages are read on open
-					// (see `loadMessages`). `readSummaries` reconciles against the legacy rows,
-					// so a store the shadow never covered is surfaced whole and summarised.
-					disk = {};
-					mirror = await readSummaries();
-					mirror.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
-					usable = true;
-					read = vouched = judge(mirror);
-					if (vouched) storageAlarmClear();
-					slimDone = shadowDone.then(slimRows).catch(function () { /* the next boot tries again */ });
-					// STAGE 2d SCAFFOLDING (deferred). The reader is the chunks now; the
-					// legacy `chats` rows are slimmed (`slimRows`) but NOT pruned yet, and
-					// since v4 no older build can read them (CHATS_DB_VERSION). Start the grace clock the first time the store is believed, so a
-					// future build can retire the legacy one-row after a vouch PLUS a window
-					// -- the same shape as the CHATS_LEGACY prune. Setting the stamp is all
-					// this stage does; nothing reads it to delete.
-					if (vouched) {
-						try {
-							if (localStorage.getItem(CHATS_CHUNKS_AT) === null) {
-								localStorage.setItem(CHATS_CHUNKS_AT, String(Date.now()));
-							}
-						} catch (e5) { /* best effort — the clock is scaffolding, not load-bearing */ }
-					}
+					await readStore();
 				} catch (e) {
 					usable = false;
-					vouched = false;
 					read = false;
 					mirror = legacy();
 					storageAlarm(storeReason(e));
+					if (DaimondStoreWait.stalled()) DaimondStoreWait.whenAnswers('\u0000store read', reread);
 					return mirror.slice();
-				}
-				// Prune the pre-migration archive once it is safe to. It was kept as a
-				// safety net in case the IndexedDB move had failed, but it is a frozen
-				// snapshot that never grows — so it is dead weight on the localStorage
-				// budget, and the biggest single thing on it: the first to trip a
-				// QuotaExceeded once the budget is tight. Remove it only when BOTH hold:
-				// the new store has been read and BELIEVED (`vouched`, so the move
-				// provably landed and this is not the fallback rail), AND the grace
-				// window has passed since the move — so a person restoring an old backup,
-				// or noticing a chat that went missing, still has the archive for the
-				// span it was kept for. An archive stamped by a build before CHATS_LEGACY_AT
-				// existed has its clock started here rather than being deleted unaged, so
-				// nothing is ever pruned without having served the full window.
-				if (usable && vouched) {
-					try {
-						if (localStorage.getItem(CHATS_LEGACY) !== null) {
-							var stampedAt = parseInt(readJson(CHATS_LEGACY_AT, 0), 10);
-							if (!isFinite(stampedAt) || stampedAt <= 0) {
-								localStorage.setItem(CHATS_LEGACY_AT, String(Date.now()));
-							} else if (Date.now() - stampedAt > LEGACY_GRACE_MS) {
-								localStorage.removeItem(CHATS_LEGACY);
-								localStorage.removeItem(CHATS_LEGACY_AT);
-							}
-						}
-					} catch (e4) { /* best effort — the archive is dead weight, not load-bearing */ }
 				}
 				// The transcript shadow is kept current by `write` (the summary) and by
 				// `readSummaries` (a chat it had never covered). It is NOT re-shadowed from
@@ -4097,11 +4122,14 @@ export function install() { // page-split: install
 				return bootPromise;
 			},
 			/// Resolves when the FIRST read has settled, kicking one off if nothing
-			/// has yet. `applyChats` awaits this before it refuses an unvouched store,
+			/// has yet. `applyChats` awaits this before it refuses an unread store,
 			/// so a merge that raced the boot read waits for it rather than stranding.
-			/// It resolves whatever the read's verdict -- `vouched()` is the separate
+			/// It resolves whatever the read's verdict -- `read()` is the separate
 			/// question the caller asks next.
 			booted: function () { return bootPromise || ChatStore.boot(); },
+			/// Read the store again while it is unread. A boot read that failed once is not
+			/// retried by `booted`, so a pull asks here before it refuses the merge.
+			readAgain: readAgain,
 			/// What the store holds, without a read. This is what makes `persistChats()`
 			/// able to stay synchronous.
 			stored: function () { return mirror.slice(); },
@@ -4120,15 +4148,8 @@ export function install() { // page-split: install
 				for (var i = 0; i < 8 && (writing || queued); i++) {
 					try { await writing; } catch (e) { break; }
 				}
-				try {
-					disk = {};
-					mirror = await readSummaries();     // summaries, as boot reads them (seq 213)
-					mirror.forEach(function (c) { if (c && c.id) disk[c.id] = stampOf(c); });
-					usable = true;
-					var wasRead = read;
-					read = vouched = judge(mirror);
-					if (read && !wasRead) storageAlarmClear();	// the store answers again
-				} catch (e) { vouched = false; read = false; storageAlarm(storeReason(e)); }
+				try { await readStore(); }
+				catch (e) { read = false; storageAlarm(storeReason(e)); }
 				return mirror.slice();
 			},
 			/// Store `list`, which is already the merged truth. Returns at once with the save's
@@ -4155,19 +4176,16 @@ export function install() { // page-split: install
 			/// fallback and the alarm is up.
 			usable: function () { return usable; },
 			/// Has a read of the store landed and been believed? False means the chats on
-			/// screen may not be all of them, so nothing may treat the mirror as complete.
+			/// screen may not be all of them, so nothing may treat the mirror as complete,
+			/// and nothing may MERGE against it: absent from the mirror is unknown, not gone,
+			/// and a merge that took it as gone would write the short record over the long
+			/// one. `applyChats` and the collect refuse on it.
 			read: function () { return read; },
 			/// Is a request still waiting on a store that has stopped answering?
 			stalled: DaimondStoreWait.stalled,
 			/// Run `fn` once the stalled store answers again (at once when none is). One per
 			/// chat id: a later call for the same chat replaces the earlier one.
 			whenAnswers: DaimondStoreWait.whenAnswers,
-			/// Can the mirror be MERGED AGAINST? False means the store has not been
-			/// read, or read something this device knows to be wrong — so anything
-			/// absent from the mirror is unknown rather than gone, and a merge that
-			/// treats absence as "the other device's copy is the only one" would
-			/// write the short record over the long one. `applyChats` refuses on it.
-			vouched: function () { return vouched; },
 			/// Resolves when everything queued at this moment has reached the
 			/// database. For a caller that must not clear its own record of a change
 			/// until the change is durable. Bounded, exactly as `refresh` is, so a tab
@@ -4179,7 +4197,6 @@ export function install() { // page-split: install
 				// The watermark goes with them, or the next boot would read the empty
 				// store it was just asked to make and call it a fault.
 				setWatermark(0);
-				vouched = true;
 				read = true;
 				try {
 					await conn();
@@ -4301,7 +4318,7 @@ export function install() { // page-split: install
 			/// Resolves when the shadow pass kicked at boot (or by `migrateShadow`) settled.
 			shadowSettled: function () { return shadowDone; },
 			/// Resolves when the boot's pass slimming rows from before PAGESTORE B settled.
-			slimSettled:   function () { return slimDone; },
+			slimSettled:   function () { return slimDone || Promise.resolve(); },
 		};
 	})();
 	// page-split: install 16

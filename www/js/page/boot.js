@@ -318,7 +318,6 @@ async function boot() {
 		try { watchHeap(); } catch (e) { /* an older bundle cannot report it */ }
 		// The engine id the switch matches a native runner on (R5a). Not awaited.
 		learnEngineId().catch(function () { /* none known: no native runner offered */ });
-		window.__DAIMOND_READY = true;
 		// The module is now safe to construct against. Resolve before anything else in
 		// this block, so a panel waiting on it (graph, tools, ...) unblocks as early as
 		// possible rather than behind the rest of boot.
@@ -417,19 +416,23 @@ async function boot() {
 		window.__DAIMOND_READY = false;
 		return;
 	}
-	pg.chats = await loadChatsHeld();  // restore persisted chats (survive reload) -- SUMMARIES (seq 213)
-	takePendingTaint();
-	pg.chatsUp = true;
-	rebuildDispatchedIndex();   // seed the dispatched-placeholder cache from the summaries
-	runnerReadyResolve();       // the engine and the chats are up: errands may be worked now
-	// Load the transcripts of the few chats that hold a dispatched placeholder, so the
-	// peer subsystem finds them resident (seq 213, Stage 1). Not awaited: the rail is
-	// built from summaries above and does not wait on a transcript read.
-	ensureDispatchedResident();
-	// NOTHING IS SEEDED FROM THIS LIST. A counter used to be, and `loadChats`
-	// omits every chat in the trash — which is how a new chat came back with an
-	// id the trash still owned. See `newChatId`.
-	updateUserRow();
+	// The unlock gate does not wait on this read: a stalled store would leave a locked tab with
+	// no way in. Whatever needs the chats (an unlock, a first draw) waits on `pg.chatsIn`.
+	pg.chatsIn = loadChatsHeld().then(function (got) {
+		pg.chats = got;  // restore persisted chats (survive reload) -- SUMMARIES (seq 213)
+		takePendingTaint();
+		pg.chatsUp = true;
+		rebuildDispatchedIndex();   // seed the dispatched-placeholder cache from the summaries
+		runnerReadyResolve();       // the engine and the chats are up: errands may be worked now
+		// Load the transcripts of the few chats that hold a dispatched placeholder, so the
+		// peer subsystem finds them resident (seq 213, Stage 1). Not awaited: the rail is
+		// built from summaries above and does not wait on a transcript read.
+		ensureDispatchedResident();
+		// NOTHING IS SEEDED FROM THIS LIST. A counter used to be, and `loadChats`
+		// omits every chat in the trash — which is how a new chat came back with an
+		// id the trash still owned. See `newChatId`.
+		updateUserRow();
+	});
 
 	// Identity gate. A returning user unlocks FIRST: nothing of theirs is
 	// drawn until they are in. Rendering the app and then laying a modal
@@ -485,6 +488,7 @@ async function boot() {
 	// branch would otherwise find, and even if a stray ciphertext survived it,
 	// "removed" is the true reason and must win.
 	if (identityAvailable() && DaimondIdentity.removed()) {
+		await pg.chatsIn;
 		renderAll();
 		if (!pg.openMs) pg.openMs = Math.round(performance.now());
 		fillSettings();
@@ -517,6 +521,7 @@ async function boot() {
 		return;
 	}
 
+	await pg.chatsIn;
 	renderAll();
 	// The other way boot ends: no stored identity, so the app itself is drawn.
 	if (!pg.openMs) pg.openMs = Math.round(performance.now());
@@ -526,6 +531,9 @@ async function boot() {
 	} else if (!cfgReady(pg.cfg)) {
 		openSettings('');
 	}
+	// Set where boot ends (a lock screen, an unlocked app, or this), never before: a drive
+	// that waits on it must not read a stalled boot as a ready one.
+	window.__DAIMOND_READY = true;
 }
 
 /// Returning from Stripe. The webhook credits the ledger, and it can land a

@@ -38,6 +38,7 @@ export const pg = {
 	centreMode: undefined,
 	cfg: undefined,
 	chats: undefined,
+	chatsIn: undefined,
 	chatsUp: undefined,
 	collapseBtn: undefined,
 	curAsstDiv: undefined,
@@ -263,6 +264,7 @@ export function install() { // page-split: install
 	// ── State ──────────────────────────────────────────────────
 	/* var */ pg.chats = [];             // { id, name, app, messages:[{role,content}], promptTokens, completionTokens }
 	/* var */ pg.chatsUp = false;        // the boot's chat load has returned (`migrateInherit` waits on it)
+	/* var */ pg.chatsIn = null;         // the boot's chat load, which an unlock waits on
 	/* var */ pg.current = null;         // active chat object: changed only by `setCurrent`
 	/* var */ pg._unloading = false;     // the page is on its way out — an aborted request is not a failure
 } // page-split: end install

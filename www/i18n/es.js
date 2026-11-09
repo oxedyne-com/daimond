@@ -1127,6 +1127,7 @@
 	'store.taint_unrecorded':  'no se pudo registrar que una conversación leyó contenido externo — el espacio de este navegador para este sitio, {store}, está lleno',
 	'store.records_owed':      'El almacenamiento local de este navegador para este sitio (localStorage) está lleno, así que un ajuste o registro cambiado aquí aún no está guardado. Esta página lo conserva y lo guarda en cuanto haya espacio.',
 	'store.cloud_index_full':  'El espacio de este navegador para este sitio, {store}, está lleno, así que no se puede guardar el índice con el que trabaja la sincronización entre dispositivos. Libera espacio y tu trabajo volverá a viajar.',
+	'store.chats_unread':      'No se pudieron leer tus chats del almacenamiento de este navegador, así que puede que falten algunos. No se han borrado.',
 	'identity.err_no_sealing_key': 'Este dispositivo no tiene clave de sellado, así que no puede abrir un mensaje sellado. Desbloquea la identidad una vez y se creará una.',
 	'store.empty_read': 'este navegador no devolvió ninguna de las {n} conversaciones que guarda',
 	// ── La escalera de permisos ────────────────────────────────
@@ -2298,6 +2299,7 @@
 	'identity.err_mismatch': 'Las frases de paso no coinciden.',
 	'identity.err_create': 'No se pudo crear la cuenta.',
 	'identity.err_wrong_pass': 'Esa frase de paso no coincide. Inténtalo otra vez.',
+	'identity.reading_chats': 'Leyendo tus chats del almacenamiento de este navegador…',
 	'identity.err_locked': 'La identidad de Daimond está bloqueada.',
 	'identity.err_no_webcrypto': 'WebCrypto no está disponible en este navegador.',
 

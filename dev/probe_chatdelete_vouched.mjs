@@ -3,7 +3,7 @@
 // THE BUG (proven here in its RED form before the fix, seq 223): a pull that READ
 // the parcel but could not MERGE one of its sections still adopted the version, so
 // the client recorded itself caught up to work it never took. The one reachable
-// throw in `applyChats` is `!ChatStore.vouched()` -- a store that has not had its
+// throw in `applyChats` is `!ChatStore.read()` -- a store that has not had its
 // first read yet, which is the ordinary state of a cold iOS tab woken at a new
 // version by a push. So the deletion pull threw in the chats section, the version
 // was adopted anyway, the tombstones were never merged, and the chats lived on for
@@ -84,15 +84,15 @@ try {
 
 	// ── Force the chats section to fail from NOW ON, through a toggleable flag, so
 	// the deletion pull is the first to hit the throw. `chatStore()` returns the SAME
-	// object applyChats calls; overriding `.vouched` to read a flag makes applyChats
+	// object applyChats calls; overriding `.read` to read a flag makes applyChats
 	// throw exactly as an unread (WebKit-frozen) store would -- and it is the PUBLIC
 	// method, so the fix's `await ChatStore.booted()` (which resolves against the
 	// real, already-run boot) still leaves this returning false and the section fails.
 	await b.page.evaluate(() => {
 		const cs = window.DaimondCore.chatStore();
-		if (!cs.__realVouched) cs.__realVouched = cs.vouched;
+		if (!cs.__realRead) cs.__realRead = cs.read;
 		window.__forceUnvouched = true;
-		cs.vouched = function () { return window.__forceUnvouched ? false : cs.__realVouched.call(cs); };
+		cs.read = function () { return window.__forceUnvouched ? false : cs.__realRead.call(cs); };
 	});
 	const verBefore = await ver(b.page);
 

@@ -78,6 +78,10 @@ function serve(dev, rawPath, method, bodyText) {
 	const p = String(rawPath).split('?')[0];
 	const body = bodyText ? JSON.parse(bodyText) : {};
 	if (p === '/api/sync') {
+		// The side doors on the same path (`?presence=1`, `?removed=1`, `?lease=1`) are not the mailbox:
+		// answered as accepted and never written over the parcel. A beat on an empty mailbox otherwise
+		// lands as a blobless v1 that no device can open, and none is whole again.
+		if (method !== 'GET' && String(rawPath).indexOf('?') !== -1) return { status: 200, json: { ok: true } };
 		if (method === 'GET') {
 			if (!cloud.mailbox) return { status: 200, json: { present: false, version: 0 } };
 			return { status: 200, json: { present: true, version: cloud.mailbox.version, blob: cloud.mailbox.blob, device: cloud.mailbox.device } };

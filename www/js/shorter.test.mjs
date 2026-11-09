@@ -37,7 +37,7 @@ function world() {
 	];
 	const held = { A: A_MSGS, B: B_MSGS };
 	const ChatStore = {
-		vouched: () => true,
+		read: () => true,
 		booted: async () => {},
 		putTombs: async () => true,
 		stored: () => (rec.saved || stored).slice(),

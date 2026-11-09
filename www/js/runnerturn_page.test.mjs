@@ -441,5 +441,46 @@ console.log('\nCUT: a frame\'s "N steps not shown" row is drawn, once, where it 
 	check('the transcript export says "3 steps not shown"', text.split('3 steps not shown').length === 2, J(text));
 }
 
+console.log('\nSTOPSTALE: a turn stopped before it said a word draws no answer, only where it ran\n');
+{
+	// drawHistoryMessage, every helper it calls a recorder.
+	let drawn = [];
+	const logRowText = (m) => (m.content == null ? '' : String(m.content));
+	const pg = { curAsstDiv: {} };
+	const scope = new Proxy({ logRowText, pg, window: {} }, {
+		has: (o, k) => typeof k === 'string' && !(k in globalThis && !(k in o)),
+		get: (o, k) => (k in o ? o[k] : (...a) => { drawn.push([k, a]); return null; }),
+	});
+	const draw = new Function('S', 'with (S) {\n' + extractFn(src, 'drawHistoryMessage') + '\nreturn drawHistoryMessage; }')(scope);
+	const drawOf = (msgs) => { drawn = []; msgs.forEach((m, i, a) => draw(m, i, a)); return drawn; };
+	// zz-t30-118's stopped turn as Kimberlite now settles it: thinking, an empty answer, the Stopped end.
+	const stopped = [
+		{ mid: 'u2', role: 'user', content: 'Write the numbers 1 to 300 in words', ts: 10 },
+		{ mid: 'R2-t0', role: 'think_log', content: 'Counting.', ts: 20, run: 'R2', whole: 1, iturn: 'u2' },
+		{ mid: 'R2-final', role: 'assistant', content: '', ts: 30, run: 'R2', ranOn: 'argonaut', whole: 1, iturn: 'u2' },
+		{ mid: 'R2-end', role: 'end_log', how: 'stopped', content: '', ts: 31, run: 'R2', whole: 1, iturn: 'u2' }];
+	const d = drawOf(stopped);
+	const names = d.map((x) => x[0]);
+	check('no answer tile for a turn that said nothing', !names.includes('appendAssistantText'), J(names));
+	check('where it ran is still drawn, from the empty answer', d.some((x) => x[0] === 'appendProvenance'
+		&& x[1][0] === 'argonaut'), J(names));
+	const said = stopped.map((m) => (m.mid === 'R2-final' ? Object.assign({}, m, { content: 'one, two' }) : m));
+	const e = drawOf(said);
+	check('a stopped turn that said words draws exactly them', e.some((x) => x[0] === 'appendAssistantText'
+		&& x[1][0] === 'one, two'), J(e.map((x) => x[0])));
+	// An interrupted row with no words is not a silent answer: a local Stop before any words, a
+	// Kimberlite turn the runner lost, a 'not run' row each keep their Stopped line and Continue/Retry.
+	const empties = [
+		['a local Stop with no words', { interrupted: true }],
+		['a lost Kimberlite turn', { interrupted: true, why: 'runner', ranOn: 'argonaut' }],
+		['a \'not run\' row', { interrupted: true, why: 'notrun', notRun: { code: 'offline' } }]];
+	for (const [what, extra] of empties) {
+		const row = Object.assign({ mid: 'R3-final', role: 'assistant', content: '', ts: 40, iturn: 'u3', itext: 'ask' }, extra);
+		const f = drawOf([{ mid: 'u3', role: 'user', content: 'ask', ts: 39 }, row]);
+		check(what + ' keeps Stopped and Continue/Retry', f.some((x) => x[0] === 'markInterrupted' && x[1][1] === row),
+			J(f.map((x) => x[0])));
+	}
+}
+
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nALL PASS');
 process.exit(failures ? 1 : 0);

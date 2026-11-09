@@ -59,7 +59,7 @@ const check = (ok, what, detail) => {
 	const src = readPage(path.join(ROOT, 'www', 'js', 'daimond.js'), 'utf8');
 	const at   = src.indexOf('install_panic_hook()');
 	const init = src.indexOf('await init();');
-	const ready = src.indexOf('__DAIMOND_READY = true');
+	const ready = src.indexOf('readyResolve();');	// the engine's load; boot ends, and sets __DAIMOND_READY, later
 	check(at > 0 && init > 0 && at > init && at < ready,
 		'the hook is installed immediately after the wasm module, before anything uses it',
 		`init@${init} hook@${at} ready@${ready}`);
