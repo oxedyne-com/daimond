@@ -1864,7 +1864,7 @@
 	'identity.passphrase':         'Passphrase',
 	'identity.confirm_passphrase': 'Confirm passphrase',
 	'identity.generate_another':   'Generate another',
-	'identity.wrote_it_down':      'I have written this down',
+	'identity.wrote_it_down':      'I have written this down somewhere safe',
 	'identity.choose_own':         'Choose my own passphrase instead',
 	'identity.skip':               'Skip for now',
 	'identity.create_account':     'Create account',
