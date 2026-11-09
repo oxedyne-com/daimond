@@ -23,9 +23,13 @@ export function install() {
 	const seat = document.createComment(' the rail\'s seat off the phone (phone_home.js) ');
 	rail.parentNode.insertBefore(seat, rail);
 
-	DaimondStack.on('home', function (el) { el.classList.add('home-page'); });
+	DaimondStack.on('home', function (el) {
+		el.classList.add('home-page');
+		bindDrawer(el, rail);
+	});
 	DaimondStack.on('turn', function () {});
 
+	let booted = false;
 	function place() {
 		if (isMobile()) {
 			// Brought back first: what the wide window opened (a chat, a Diamond) goes on over
@@ -34,6 +38,10 @@ export function install() {
 			const home = DaimondStack.top() ? document.querySelector('#phone-stack > [data-page="home"]')
 				: DaimondStack.push('home');
 			if (home && rail.parentNode !== home) home.appendChild(rail);
+			// A phone opens on the drawer over the last chat, a reload on a chat included
+			// (UNBLOCK-95): the chat is the floor behind it, a swipe away, and Forward.
+			if (!booted && DaimondStack.top() === 'turn') DaimondStack.push('home');
+			booted = true;
 		} else {
 			if (seat.nextSibling !== rail) seat.parentNode.insertBefore(rail, seat.nextSibling);
 			DaimondStack.park();
@@ -72,4 +80,41 @@ export function install() {
 	const compose = document.getElementById('home-compose-btn');
 	const newChat = document.getElementById('new-session-btn');
 	if (compose && newChat) compose.addEventListener('click', function () { newChat.click(); });
+}
+
+const SHUT = 46; // px of leftward travel that puts the drawer away (the stack's back swipe, phone_stack.js)
+
+// The drawer goes away to the chat behind it on a tap of the scrim (the section itself, not
+// the rail) or a left swipe, which the rail follows. A row's own left swipe opens its tray
+// (phone_swipe.js), so a swipe that starts on a row is left to it.
+function bindDrawer(el, rail) {
+	const shut = () => { if (DaimondStack.top() === 'home') DaimondStack.push('turn'); };
+	el.addEventListener('click', function (ev) { if (ev.target === el) shut(); });
+	const G = window.DaimondGesture;
+	if (!G) return;
+	G.drag(el, {
+		passive: true,
+		match(ev) {
+			if (!isMobile() || DaimondStack.top() !== 'home') return null;
+			const t = ev.target;
+			if (t && t.closest && t.closest('.session-box')) return null;
+			return { x0: ev.clientX, y0: ev.clientY, dx: 0 };
+		},
+		lift(ev, ctx) {
+			// A hold is not a swipe, and nor is a travel more down than across (the rail scrolling).
+			if (!ev || Math.abs(ev.clientY - ctx.y0) > Math.abs(ev.clientX - ctx.x0)) return false;
+			return ev.clientX < ctx.x0;
+		},
+		move(pt, ctx) {
+			ctx.dx = Math.min(0, pt.clientX - ctx.x0);
+			rail.style.transform = 'translateX(' + ctx.dx + 'px)';
+		},
+		drop(ev, ctx, lifted) {
+			rail.style.transform = '';
+			if (lifted && ctx.dx <= -SHUT) shut();
+		},
+		cancel() {
+			rail.style.transform = '';
+		},
+	});
 }

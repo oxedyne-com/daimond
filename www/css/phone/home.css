@@ -7,21 +7,35 @@
 .home-head { display: none; }
 
 @media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
-	/* ── The page ─────────────────────────────────────────────
-	   The drawer's frame, opened out to the screen: no slide, no shadow, no
-	   scrim's edge. The ids outrank mobile.css's drawer rules, `!important` ones
-	   included. Fixed, so the section that holds it takes no room in #app. */
+	/* ── The page: a drawer over the last chat ─────────────────
+	   The rail stops short of the right edge, and the margin shows the chat
+	   behind it under a scrim; a tap on the scrim or a left swipe puts the drawer
+	   away (js/page/phone_home.js). The ids outrank mobile.css's drawer rules,
+	   `!important` ones included. Fixed, so the section that holds it takes no
+	   room in #app. */
 	.home-page > #panel-rail {
-		inset: 0;
-		width: 100% !important;
+		inset: 0 auto 0 0;
+		width: calc(100% - 56px) !important;
 		max-width: none;
 		border-right: 0;
-		box-shadow: none;
+		box-shadow: 0 0 24px rgba(0, 0, 0, .28);
 		transform: none;
 		transition: none;
 		visibility: visible;
 		background: var(--bg-primary);   /* the page; its two lists are the raised cards */
 		z-index: 60;              /* under the drawer's scrim (70) and every sheet */
+	}
+	/* Over the bottom bar (.mnav, z 60, earlier in #app) and under the rail, its next sibling. */
+	.home-page::before {
+		content: '';
+		position: fixed;
+		inset: 0;
+		z-index: 60;
+		background: rgba(0, 0, 0, .32);
+	}
+	#app[data-stack-dir="pop"] .home-page > #panel-rail { animation: drawer-in .28s cubic-bezier(.32, .72, 0, 1); }
+	@media (prefers-reduced-motion: reduce) {
+		.home-page > #panel-rail { animation: none !important; }
 	}
 	/* ── The head: lockup, search, compose (52 px, the stack's bar height) ── */
 	.home-page > #panel-rail .home-head {
@@ -37,9 +51,6 @@
 	/* The TEST chip (js/testnet.js) on the test network: beside the lockup, as on the bar. */
 	.home-page > #panel-rail .home-lockup:has(+ .net-chip) { margin-right: 0; }
 	.home-page > #panel-rail .home-head > .net-chip { margin-right: auto; }
-	/* Home covers the top bar, so the bar's brand and controls are hidden under it
-	   (as Settings does, css/phone/settings.css): nothing is left there to tap. */
-	#app[data-stack="home"] .topbar :is(.brand-group, .top-actions) { visibility: hidden; }
 	.home-page > #panel-rail .home-act {
 		width: 44px; height: 44px; flex: none;
 		display: grid; place-items: center;
@@ -249,3 +260,5 @@
 		font-weight: 600;
 	}
 }
+
+@keyframes drawer-in { from { transform: translateX(-100%); } }
