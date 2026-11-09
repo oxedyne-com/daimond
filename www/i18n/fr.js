@@ -1116,6 +1116,7 @@
 	'boot.chats_retry':        'Réessayer',
 	'store.alarm_download':    'Télécharger une copie',
 	'store.alarm_retry':       'Réessayer',
+	'store.alarm_hide':        'Masquer',
 	'store.stalled':           'Le stockage de ce navigateur a cessé de répondre ({what}). Les enregistrements des discussions attendent sur cette page et seront écrits dès qu’il répondra. Redémarrez ce navigateur pour y remédier ; les réponses seront relues ensuite.',
 	'store.blocked':           'Un autre onglet Daimond garde le stockage de ce navigateur ouvert dans une version antérieure, il a donc été refusé ({what}). Fermez les autres onglets Daimond et rechargez.',
 	'store.full':              'il ne reste plus de place dans l’espace de ce navigateur pour ce site, {store}',

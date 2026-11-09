@@ -1235,6 +1235,7 @@ var storageAlarmEl = null;
 var storageAlarmLines = null;	// [head, why, advice] of the warning drawn
 var storageAlarmWhy = '';
 var storageAlarmWhys = {};		// source -> reason, in the order raised
+var storageAlarmHid = null;		// source -> true for the reasons standing when the person hid it
 var ALARM_ASIDE = {				// source -> its head, for a source that is not the conversations
 	owed:	['store.alarm_box',   'Some changes made on this device are not being saved.'],
 	index:	['store.alarm_sync',  'Cross-device sync is paused.'],
@@ -1267,16 +1268,23 @@ export function storageAlarm(why, src) {
 	storageAlarmWhys[src] = String(why || '');
 	storageAlarmWhy = storageAlarmWhys[src];
 	try { console.error('Daimond: storage refused (' + src + ') — ' + storageAlarmWhy); } catch (e) {}
-	if (storageAlarmEl) { storageAlarmDraw(); return; }
+	if (storageAlarmEl) {
+		storageAlarmDraw();
+		// Hidden, it stays hidden for the reasons it was hidden over; a new one shows it.
+		if (storageAlarmHid && !storageAlarmHid[src]) { storageAlarmHid = null; storageAlarmEl.style.display = 'flex'; }
+		return;
+	}
 	var box = document.createElement('div');
 	box.className = 'storage-alarm';
 	box.setAttribute('role', 'alert');
-	box.style.cssText = 'position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:10000;'
-		+ 'max-width:min(720px,92vw);padding:12px 16px;border-radius:10px;font-size:var(--fs-sm);'
+	// Pinned by both edges, not centred from the middle: `left:50%` left it half the width
+	// of a phone, a column that covered the top of home and the first chats.
+	box.style.cssText = 'position:fixed;left:12px;right:12px;margin:0 auto;width:fit-content;top:12px;z-index:10000;'
+		+ 'max-width:720px;padding:12px 16px;border-radius:10px;font-size:var(--fs-sm);'
 		+ 'background:var(--warn-bg);color:var(--text-primary);border:1px solid var(--danger);'
-		+ 'box-shadow:0 6px 20px rgba(0,0,0,.32);display:flex;gap:12px;align-items:flex-start;';
+		+ 'box-shadow:0 6px 20px rgba(0,0,0,.32);display:flex;flex-wrap:wrap;gap:8px 12px;align-items:flex-start;';
 	var text = document.createElement('div');
-	text.style.cssText = 'flex:1 1 auto;';
+	text.style.cssText = 'flex:1 1 240px;';
 	var head = document.createElement('strong');
 	head.className = 'storage-alarm-head';
 	var why = document.createElement('div');
@@ -1287,7 +1295,7 @@ export function storageAlarm(why, src) {
 	advice.style.cssText = 'margin-top:4px;';
 	text.appendChild(head); text.appendChild(why); text.appendChild(advice);
 	var acts = document.createElement('div');
-	acts.style.cssText = 'display:flex;flex-direction:column;gap:6px;flex:0 0 auto;';
+	acts.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;flex:0 1 auto;';
 	var dl = document.createElement('button');
 	dl.type = 'button';
 	dl.className = 'btn-secondary';
@@ -1298,7 +1306,17 @@ export function storageAlarm(why, src) {
 	again.className = 'btn-secondary';
 	again.textContent = tOr('store.alarm_retry', 'Try again');
 	again.addEventListener('click', function () { ChatStore.retry(); });
-	acts.appendChild(dl); acts.appendChild(again);
+	// The warning must not stand between the person and their chats while the store is down.
+	var hide = document.createElement('button');
+	hide.type = 'button';
+	hide.className = 'btn-secondary';
+	hide.textContent = tOr('store.alarm_hide', 'Hide');
+	hide.addEventListener('click', function () {
+		storageAlarmHid = {};
+		Object.keys(storageAlarmWhys).forEach(function (s) { storageAlarmHid[s] = true; });
+		box.style.display = 'none';
+	});
+	acts.appendChild(dl); acts.appendChild(again); acts.appendChild(hide);
 	box.appendChild(text); box.appendChild(acts);
 	document.body.appendChild(box);
 	storageAlarmEl = box;
@@ -1323,6 +1341,7 @@ export function storageAlarmClear(src) {
 	if (storageAlarmEl.parentNode) storageAlarmEl.parentNode.removeChild(storageAlarmEl);
 	storageAlarmEl = null;
 	storageAlarmLines = null;
+	storageAlarmHid = null;
 }
 
 // A synced record the box refused is held owed on this page (`DaimondStore`), so
@@ -2827,15 +2846,46 @@ export function install() { // page-split: install
 			}, 'opening the store');
 		}
 
-		/// The open connection, reopening when the account has changed under us.
-		async function conn() {
+		/// The open connection, reopening when the account has changed under us. Callers
+		/// that ask while it opens share the one open.
+		var opening = null;      // { want, p }: the open in flight
+		function conn() {
 			var want = dbName();
-			if (db && dbOpen === want) return db;
+			if (db && dbOpen === want) return Promise.resolve(db);
+			if (opening && opening.want === want) return opening.p;
 			if (db) { try { db.close(); } catch (e) { /* already */ } db = null; disk = {}; }
-			db = await open(want);
-			dbOpen = want;
-			db.ended(function () { db = null; dbOpen = null; });
-			return db;
+			var p = open(want).then(function (d) {
+				if (opening && opening.p === p) opening = null;
+				db = d;
+				dbOpen = want;
+				d.ended(function (why) {
+					if (db === d) { db = null; dbOpen = null; }
+					if (why === 'lost') reopen();
+				});
+				return d;
+			}, function (e) {
+				if (opening && opening.p === p) opening = null;
+				throw e;
+			});
+			opening = { want: want, p: p };
+			return p;
+		}
+
+		/// Open the store again after its connection was lost (an iOS tab resumed after a
+		/// suspend), so the writes this page holds land. An open that is refused is tried
+		/// again a wait later while a write is owed or a wait outstanding; one that falls
+		/// silent is not, since its late answer is the store answering again.
+		var reopening = false;
+		function reopen() {
+			if (reopening) return;
+			reopening = true;
+			conn().then(function () { reopening = false; }, function (e) {
+				if (e && e.silent) { reopening = false; return; }
+				setTimeout(function () {
+					reopening = false;
+					if (!db && (owedWrite || DaimondStoreWait.stalled())) reopen();
+				}, window.DaimondPolicy.storeWaitMs());
+			});
 		}
 
 		function tx(what) {

@@ -1292,6 +1292,7 @@
 	'boot.chats_retry':        '再試行',
 	'store.alarm_download':    'コピーをダウンロード',
 	'store.alarm_retry':       '再試行',
+	'store.alarm_hide':        '閉じる',
 	'store.stalled':           'このブラウザのストレージが応答しなくなりました（{what}）。チャットの保存はこのページで待機し、応答が戻りしだい書き込まれます。ブラウザを再起動すると解消し、返信は再起動後に読み直されます。',
 	'store.blocked':           '別の Daimond タブがこのブラウザのストレージを古いバージョンで開いたままのため、拒否されました（{what}）。他の Daimond タブを閉じて再読み込みしてください。',
 	'store.full':              'このブラウザーのこのサイト用の{store}に空きがありません',
