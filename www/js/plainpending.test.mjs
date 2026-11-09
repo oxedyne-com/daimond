@@ -55,14 +55,14 @@ function patch(src) {
 	if (BREAK === 'address') swap("var net = window.DaimondNet, base = (net && net.runnerApprove && net.runnerApprove()) || '';", "var base = 'https://runner.daimond.app/approve';");
 	if (BREAK === 'level')  swap("DaimondHandMode.get() === 'bypass'", 'true');
 	if (BREAK === 'check')  swap("if (b.plain) return { state: plainCheck(b) ? 'plain' : 'card', k: 0, n: 0 };", "if (b.plain) return { state: 'plain', k: 0, n: 0 };");
-	if (BREAK === 'review') swap("if (url && ck && !bad && b.approve && g.e.done !== true) {", "if (url && ck && !bad && g.e.done !== true) {");
+	if (BREAK === 'review') swap("if (url && ck && !bad && b.approve && g.e.done !== true && !sh) {", "if (url && ck && !bad && g.e.done !== true && !sh) {");
 	if (BREAK === 'status') swap("else if (_submitTaps[n] && g.e.answered) submitLine(box, 'status', t('pending.plain.approved'));", '');
 	if (BREAK === 'go')     swap("runnerApproveUrl(bypass ? '?go' : '?details', n)", "runnerApproveUrl(bypass ? '' : '?details', n)");
 	return src;
 }
 
 const NAMES = ['Pending', 'runnerPoll', 'runnerSettle', 'submitTile', 'submitOpenDiff', 'submitChallenge', 'submitBody'];
-const OWN = /^(runner|RUNNER_|_runner|submit|SUBMIT_|_submit|plain|PLAIN_|_plain)/;
+const OWN = /^(runner|RUNNER_|_runner|submit|SUBMIT_|_submit|plain|PLAIN_|_plain|ship|SHIP_|_ship|relay|_relay)/;
 const STUBS = liftSource(NAMES, []).ordered.filter((n) => !NAMES.includes(n) && !OWN.test(n));
 
 const INSTALL = 'IiIiIiIiIiIiIiIiIiIiIg';

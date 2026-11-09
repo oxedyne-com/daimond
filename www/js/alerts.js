@@ -60,8 +60,16 @@
  * this machine that built a new version of itself waits for his passkey on the approve page;
  * `runnerSettle` in daimond.js raises that request here, under `RUNNER` and the page keys
  * `runner.<nonce>.<seq>.<commit>` (the tile) and `runner-alarm.<nonce>` (a witness alarm), both
- * `needs: true`, so it reaches every device he has -- his phone above all. It is the one writer.
- * A daimon's change waiting for his tap rides the same way, as `submit.<nonce>.<seq>` (SR7).
+ * `needs: true`, so it reaches every device he has -- his phone above all. Each key prefix under
+ * `RUNNER` has one writer: a daimon's change waiting for his tap rides as `submit.<nonce>.<seq>`
+ * (SR7, `submitSettle`), and a plain ship's state as `plainship.<submission id>` (`shipSettle`).
+ *
+ * A ✕ OF ONE OF THE PAGE'S ONE-SHOT ITEMS IS FINAL for the state it took down (`LAWS`). A device
+ * whose record had not yet heard of the ✕ (asleep, offline, before its pull) raises the item
+ * again with a newer stamp; under the stamp alone that would put it back up on every device
+ * (UNBLOCK-195). Under a law the order is the state the item records, then dismissed over the
+ * rest, then the stamp, so the ✕ holds whichever parcel lands first, and a newer state still
+ * comes up.
  *
  * A DISMISS IS NOT A CLEAR. The person took it down; the condition may well still hold, and the
  * daimon -- which runs again on its next trigger -- will raise it again. Raised again with the
@@ -86,17 +94,35 @@
 	var STATES       = { up: 0, clear: 1, dismissed: 2 };
 	var KEY_RE       = /^[A-Za-z0-9._-]+$/;
 	var QUIET_MS     = 24 * 3600 * 1000;		// a needs:false alert lapses a day after it is raised
-	var PAGE_KEYS    = { 'turn-failed': 1, 'mail-note': 1, 'runner': 1, 'runner-alarm': 1, 'submit': 1 };	// the page's own: outside LIVE_MAX, never the model's
+	var PAGE_KEYS    = { 'turn-failed': 1, 'mail-note': 1, 'runner': 1, 'runner-alarm': 1, 'submit': 1, 'plainship': 1 };	// the page's own: outside LIVE_MAX, never the model's
 	// The runner's own items (daimond.js `runnerSettle`, KS-p4) are held under this name in
 	// place of a Diamond's id: a runner update is the machine's, not any Diamond's. No Diamond id
 	// starts with `@`, so no Diamond's alert can sit under it.
 	var RUNNER       = '@runner';
+	// The page keys whose ✕ is final, each with the state an item records (a number): a card is
+	// one state; a ship item records its state's time, `t` in the JSON after the detail's first
+	// space (pending.js `shipDetail`). Here, not registered by pending.js, because sync.js may
+	// merge a parcel before that module has run. `keep`: up and needing him, never shed by age.
+	var LAWS = {
+		'submit':    { gen: function () { return 0; } },
+		'plainship': { gen: detailT, keep: true },
+	};
 
 	function ms(v) { var n = Number(v); return (isFinite(n) && n > 0) ? Math.floor(n) : 0; }
 	function now() { return Date.now(); }
 	function store() { return window.DaimondStore || null; }
 	function chars(s) { return Array.from(s).length; }
 	function nsKey(diamond, key) { return String(diamond) + ':' + String(key); }
+	function detailT(it) {
+		var d = String(it.detail || ''), sp = d.indexOf(' '), j = null;
+		try { j = sp > 0 ? JSON.parse(d.slice(sp + 1)) : null; } catch (e) { j = null; }
+		var t = j && typeof j === 'object' ? Number(j.t) : 0;
+		return isFinite(t) && t > 0 ? t : 0;
+	}
+	function lawOf(key) {
+		var k = String(key || ''), dot = k.indexOf('.');
+		return (dot > 0 && Object.prototype.hasOwnProperty.call(LAWS, k.slice(0, dot))) ? LAWS[k.slice(0, dot)] : null;
+	}
 
 	/// One item, checked, or null. Anything another build wrote may arrive here, so nothing is
 	/// trusted: a field out of bounds makes the item unreadable rather than clipped, because a
@@ -135,6 +161,12 @@
 	function wins(b, a) {
 		if (!b) return false;
 		if (!a) return true;
+		var L = lawOf(b.key);
+		if (L) {
+			var gb = L.gen(b), ga = L.gen(a);
+			if (gb !== ga) return gb > ga;
+			if ((b.state === 'dismissed') !== (a.state === 'dismissed')) return b.state === 'dismissed';
+		}
 		var S = window.DaimondStamp;
 		if (S) return S.beats(b.at, b, a.at, a, rank);
 		return b.at !== a.at ? b.at > a.at : rank(b) > rank(a);
@@ -175,7 +207,9 @@
 		if (t === undefined) t = now();
 		var ids = Object.keys(items);
 		ids.forEach(function (id) {
-			if (t - age(items[id]) > TOMB_MAX_MS) delete items[id];	// up or down: past the horizon
+			var it = items[id], L = lawOf(it.key);
+			if (L && L.keep && it.state === 'up' && it.needs) return;
+			if (t - age(it) > TOMB_MAX_MS) delete items[id];	// up or down: past the horizon
 		});
 		ids = Object.keys(items);
 		if (ids.length <= ITEM_MAX) return { items: items, floor: floor };
@@ -260,6 +294,9 @@
 		if (!next) return null;
 		var id = nsKey(next.diamond, next.key), prev = read().items[id];
 		if (at && prev && prev.at >= at) return 'stale';
+		var L = lawOf(next.key);
+		if (L && prev && L.gen(next) < L.gen(prev)) return 'stale';
+		if (L && prev && L.gen(next) === L.gen(prev) && prev.state === 'dismissed') return 'dismissed';
 		var up = prev && isLive(prev);
 		var same = prev && prev.headline === next.headline && prev.detail === next.detail && prev.needs === next.needs;
 		if (up && same && now() - prev.at < RESTAMP_MS) return 'same';
@@ -368,6 +405,20 @@
 		return true;
 	}
 
+	/// One item as held, in any state (up, lapsed, cleared or dismissed), or null: for a writer
+	/// that orders its items by a time it carries in them (pending.js `shipSettle`).
+	function held(diamond, key) {
+		var it = read().items[nsKey(String(diamond || ''), String(key || ''))];
+		return it ? { key: it.key, state: it.state, detail: it.detail, needs: it.needs, expires: it.expires, at: it.at } : null;
+	}
+
+	/// Every item of `diamond` whose key starts with `prefix`, in any state, as `held` answers.
+	function heldAll(diamond, prefix) {
+		var items = read().items, d = String(diamond || ''), p = String(prefix || '');
+		return Object.keys(items).filter(function (id) { return items[id].diamond === d && items[id].key.indexOf(p) === 0; })
+			.map(function (id) { return held(d, items[id].key); });
+	}
+
 	/// The items that are up, oldest first: what the Pending panel draws.
 	/// Also arms one timer for the next lapse, so a quiet alert leaves the panel on time with
 	/// nobody touching it.
@@ -431,12 +482,16 @@
 		heard:   heard,		// a runner report applied here (daimond.js `settleRunnerAlerts`)
 		hear:    hear,
 		live:    live,
+		held:    held,
+		heldAll: heldAll,
 		count:   count,
 		merge:   merge,		// pure, for the tests and the store's law
 		syncSnapshot: syncSnapshot,	// collectSync
 		adoptSync:    adoptSync,	// applySync
 		KEY:     REC_KEY,
-		RUNNER:  RUNNER,	// the runner's items, raised by daimond.js `runnerSettle` only
+		RUNNER:  RUNNER,	// the machine's items: one writer per key prefix (alerts header)
+		PLAIN_SHIP: 'plainship',	// a plain ship's key prefix under RUNNER (pending.js `shipSettle`)
+		DETAIL_MAX: DETAIL_MAX,
 	};
 
 	/// The engine's door (src/wasm/pending.rs). `diamond` is the turn's own Diamond, passed by the

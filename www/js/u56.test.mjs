@@ -70,7 +70,7 @@ const en   = readPage(join(HERE, '..', 'i18n', 'en.js'), 'utf8');
 // PAST: the provenance and an ended hand-off tile's header.
 {
 	check('PAST: en says "Ran on {name}"', /'chat\.ran_on':\s*'Ran on \{name\}'/.test(en));
-	check('PAST: no tile says "{name} is on it"', !/chat\.handed_off/.test(src) && !/is on it'/.test(en));
+	check('PAST: no tile says "{name} is on it"', !/chat\.handed_off/.test(src) && !/\{name\} is on it/.test(en));
 }
 
 // NATIVE: recBusy, the real one.

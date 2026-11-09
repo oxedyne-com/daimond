@@ -83,17 +83,17 @@ function patch(src) {
 	return src;
 }
 
-const NAMES = ['Pending', 'runnerPoll', 'runnerSettle', 'runnerTapped'];
+const NAMES = ['Pending', 'runnerPoll', 'runnerSettle', 'runnerTapped', 'runnerTile'];
 // Pending reaches most of the file (its tile, execute and discuss), so EVERYTHING it reaches but these
 // names and the runner's own is stubbed: what the exercised paths touch gets a stand-in below, and the rest is left undefined.
-const OWN = /^(runner|RUNNER_|_runner|submit|SUBMIT_|_submit)/;			// the unit under test, lifted as written
+const OWN = /^(runner|RUNNER_|_runner|submit|SUBMIT_|_submit|ship|SHIP_|_ship|relay|_relay)/;			// the unit under test, lifted as written
 const STUBS = liftSource(NAMES, []).ordered.filter((n) => !NAMES.includes(n) && !OWN.test(n));
 
 const INSTALL = 'IiIiIiIiIiIiIiIiIiIiIg';
 const N1 = 'AAAAAAAAAAAAAAAAAAAAAA', N2 = 'BBBBBBBBBBBBBBBBBBBBBB', N3 = 'CCCCCCCCCCCCCCCCCCCCCC';
 function entry(nonce, seq, commit, more) {
 	return Object.assign({ nonce: nonce, kind: 'release', install: INSTALL,
-		body: JSON.stringify({ seq: seq, sha256: '11'.repeat(32), size: 1, commit: commit, engine_id: 'kimberlite', target: 'x86_64-unknown-linux-gnu' }),
+		body: JSON.stringify({ seq: String(seq), sha256: '11'.repeat(32), size: '1', commit: commit, engine_id: 'kimberlite', target: 'x86_64-unknown-linux-gnu' }),
 		answered: false, alarmed: false, expires_in: 600 }, more || {});
 }
 
@@ -320,8 +320,10 @@ await kase('a device with NO install id (his phone) that taps: down at once with
 	const r = runners(phone);
 	eq(r.length, 1, 'the synced tile is up on the phone');
 	eq(r[0] && r[0].runner.install, INSTALL, 'the tile carries the install id');
-	eq(await phone.fns.runnerPoll(), false, 'nothing to ask before a tap');
-	eq(phone.st.fetches.length, 0, 'no poll without an install id or a tap');
+	phone.st.reply = { ok: true, entries: [entry(N1, 1760745600, 'aaaaaaa1', { answers: [], expires_in: 580 })] };
+	eq(await phone.fns.runnerPoll(), true, 'before a tap, the install the item names is read');
+	eq(runners(phone).length, 1, 'and its tile stays while the request is listed');
+	phone.st.fetches.length = 0;
 	// The tap's own immediate read sees the entry not yet answered, and takes its count (LOW-3').
 	phone.st.reply = { ok: true, entries: [entry(N1, 1760745600, 'aaaaaaa1', { answers: [], expires_in: 560 })] };
 	await tapAgo(phone, N1, 30 * 1000, INSTALL);
@@ -336,13 +338,11 @@ await kase('a device with NO install id (his phone) that taps: down at once with
 	phone.fns.runnerTapped(N1, INSTALL);
 	await phone.fns.runnerPoll();
 	eq(runners(phone).length, 0, 'still down after a second tap');
-	// The runner returns, refuses the answer and posts the entry again: back, and the poll stops.
+	// The runner returns, refuses the answer and posts the entry again: back, and the tap's poll stops.
 	phone.st.reply = { ok: true, entries: [entry(N1, 1760745600, 'aaaaaaa1', { answered: true, answers: ['a1'], expires_in: 600 })] };
 	await phone.fns.runnerPoll();
 	eq(runners(phone).length, 1, 'back on the phone once the refusal was re-posted');
-	const n = phone.st.fetches.length;
-	await phone.fns.runnerPoll();
-	eq(phone.st.fetches.length, n, 'the poll stopped on the re-post');
+	eq(JSON.parse(phone.win.localStorage.getItem(TAPPED))[N1].state, 'back', "the tap's poll stopped on the re-post (the item's minute poll goes on)");
 	// A tap again after the refusal, and the runner's done mark: down, and the poll stops.
 	await tapAgo(phone, N1, 1000, INSTALL);
 	phone.st.reply = { ok: true, entries: [entry(N1, 1760745600, 'aaaaaaa1', { answered: true, answers: ['a1', 'a2'], done: true, expires_in: 598 })] };
@@ -452,6 +452,57 @@ await kase('a refusal re-posted 2 s after the tap brings the tile back on the ta
 	pg.st.reply = { ok: true, entries: [entry(N1, 1760745600, 'aaaaaaa1', { answered: true, answers: ['a1'], expires_in: 599 })] };
 	await pg.fns.runnerPoll();
 	eq(runners(pg).length, 1, 'runner machine: back after a quick refusal re-post');
+});
+
+// UNBLOCK-146 (live, 09 Nov): the request for 49c93e939 lapsed when he installed d52b7d931, but
+// only the runner's own machine ever cleared its item, so his phone kept the tile.
+await kase('phone: a tile whose request the relay no longer holds open is cleared, synced, without the runner machine', async () => {
+	const ph = page({ install: '' });
+	const A = ph.win.DaimondAlerts;
+	const K1 = 'runner.' + N1 + '.1760745600.aaaaaaa1', K2 = 'runner.' + N2 + '.1760745700.bbbbbbb2';
+	A.raise(A.RUNNER, K1, 'runner update', 'aaaaaaa1 ' + INSTALL, true);
+	ph.st.reply = { ok: true, entries: [entry(N1, 1760745600, 'aaaaaaa1')] };
+	eq(await ph.fns.runnerPoll(), true, 'the named install was read');
+	eq(ph.st.fetches[0], '/api/runner/relay?install=' + INSTALL, 'by the install the item names');
+	eq(runners(ph).length, 1, 'kept while its request is open');
+	ph.win.fetch = async () => { throw new Error('offline'); };
+	await ph.fns.runnerPoll();
+	eq(runners(ph).length, 1, 'kept while the relay cannot be read');
+	ph.win.fetch = async (url) => { ph.st.fetches.push(String(url)); const r = ph.st.reply; return { ok: true, status: 200, json: async () => r }; };
+	ph.st.reply = { ok: true, entries: [] };
+	await ph.fns.runnerPoll();
+	eq(runners(ph).length, 0, 'gone once the relay no longer lists it');
+	const rec = A.syncSnapshot().items['@runner:' + K1];
+	eq(rec && rec.state, 'clear', 'the clear is in the synced record');
+	A.raise(A.RUNNER, K2, 'runner update', 'bbbbbbb2 ' + INSTALL, true);
+	ph.st.reply = { ok: true, entries: [entry(N2, 1760745700, 'bbbbbbb2', { done: true })] };
+	await ph.fns.runnerPoll();
+	eq(runners(ph).length, 0, 'gone once the runner marks it done');
+	eq(A.raise(A.RUNNER, K1, 'runner update', 'aaaaaaa1 ' + INSTALL, true), 'new', "the runner machine's raise after a re-post puts it back");
+});
+
+await kase('the update tile has a ✕ that dismisses it on every device, with or without an Approve', async () => {
+	for (const approve of ['https://runner.example/approve', '']) {
+		const pg = page();
+		pg.st.reply = { ok: true, entries: [entry(N1, 1760745600, 'aaaaaaa1')] };
+		await pg.fns.runnerPoll();
+		const it = runners(pg)[0];
+		const el = () => ({ children: [], on: {}, attrs: {}, appendChild(c) { this.children.push(c); return c; },
+			addEventListener(k, f) { this.on[k] = f; }, setAttribute(k, v) { this.attrs[k] = v; } });
+		pg.win.document.createElement = el;
+		pg.win.DaimondNet = { runnerApprove: () => approve };
+		const box = el();
+		pg.fns.runnerTile(box, it);
+		const all = [];
+		(function walk(n) { all.push(n); (n.children || []).forEach(walk); })(box);
+		const x = all.find((n) => n.textContent === '✕');
+		ok(x && x.on.click, 'a ✕ is drawn (approve ' + JSON.stringify(approve) + ')');
+		eq(!!all.find((n) => n.href), !!approve, 'Approve drawn only with its address');
+		if (x && x.on.click) x.on.click();
+		eq(runners(pg).length, 0, 'gone once dismissed');
+		const rec = pg.win.DaimondAlerts.syncSnapshot().items['@runner:runner.' + N1 + '.1760745600.aaaaaaa1'];
+		eq(rec && rec.state, 'dismissed', 'the dismiss is in the synced record');
+	}
 });
 
 console.log((failures ? 'FAIL' : 'PASS') + ' runnerpending: ' + (cases - failures) + '/' + cases + (BREAK ? ' (break ' + BREAK + ')' : ''));

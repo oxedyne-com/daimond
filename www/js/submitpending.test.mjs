@@ -71,7 +71,7 @@ function patch(src) {
 }
 
 const NAMES = ['Pending', 'runnerPoll', 'runnerSettle', 'submitTile', 'submitOpenDiff', 'submitChallenge', 'submitBody'];
-const OWN = /^(runner|RUNNER_|_runner|submit|SUBMIT_|_submit|plain|PLAIN_|_plain)/;
+const OWN = /^(runner|RUNNER_|_runner|submit|SUBMIT_|_submit|plain|PLAIN_|_plain|ship|SHIP_|_ship|relay|_relay)/;
 const STUBS = liftSource(NAMES, []).ordered.filter((n) => !NAMES.includes(n) && !OWN.test(n));
 
 const INSTALL = 'IiIiIiIiIiIiIiIiIiIiIg';

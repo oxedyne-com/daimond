@@ -70,7 +70,7 @@ function patchPasskey(src) {
 // ── The tile, lifted from daimond.js ────────────────────────────────
 
 const NAMES = ['Pending', 'runnerPairPoll', 'runnerPairSettle', 'runnerPairApprove', 'runnerPairRefuse'];
-const OWN = /^(runnerPair|RUNNER_PAIR_|_runnerPair)/;
+const OWN = /^(runnerPair|RUNNER_PAIR_|_runnerPair|ship|SHIP_|_ship)/;
 const STUBS = liftSource(NAMES, []).ordered.filter((n) => !NAMES.includes(n) && !OWN.test(n));
 
 const DEV1 = 'wd7q3nu5182bfz2e', DEV2 = 'c3v932cd31z6cszm';

@@ -694,10 +694,10 @@ export var Pending = {
 		});
 	},
 	/// How many tiles count on the chip: what passes the importance filter. A `steer`
-	/// proposal and an alert that does not need the person are seen, not counted.
+	/// proposal and an item of the alerts record that does not need the person are seen, not counted.
 	counted: function () {
 		return this.items.filter(function (it) {
-			return it.kind !== 'steer' && !(it.kind === 'alert' && !it.needs);
+			return it.kind !== 'steer' && !(Pending.fromAlerts(it) && it.needs === false);
 		}).length;
 	},
 	/// Is this item the synced DaimondAlerts record's (`a:` + its id), and not this list's?
@@ -978,6 +978,8 @@ export var Pending = {
 		if (it.kind === 'runner') { runnerTile(box, it); return box; }
 		// A daimon's change: its card as text, the diff checked, Approve on the approve page (SR7).
 		if (it.kind === 'submit') { submitTile(box, it); return box; }
+		// A plain ship's state, once its card is gone (PLAIN-SHIPPER).
+		if (it.kind === 'plainship') { shipTile(box, it); return box; }
 		// A runner asking to join is approved here, with his passkey (R2d1).
 		if (it.kind === 'runnerpair') { runnerPairTile(box, it); return box; }
 		// Not recoverable yet: its one act is the enrolment (`offerRecovery`), asked again.
@@ -1271,12 +1273,16 @@ export var Pending = {
 // A DEVICE WITH NO RUNNER OF ITS OWN (his phone, the common case) polls nothing above, so
 // the item carries its install id (the synced detail, `<commit> <install>`: the install id
 // is no secret, relay_v2), the tap keeps it, and `runnerTapPoll` reads that install's
-// listing at the same cadence, ONLY while a tap there is waiting for its answer or held.
+// listing at the same cadence, while a tap there is waiting for its answer or held, or a
+// runner item naming it is up.
 // The same rule judges the tapped entry, and the tap's state is kept with it: `held` (down
 // here), `done` (the runner's mark: down here, and the poll stops), `back` (re-posted after
 // the tap: shown, and the poll stops). It also stops when the entry is no longer listed (the
-// tap is dropped) or, never answered, after the relay's TTL. This poll raises and clears
-// nothing synced: the runner's own machine stays the one writer. A tap WAITING for its
+// tap is dropped) or, never answered, after the relay's TTL. The tap's state is never synced.
+// An ITEM whose request the listing no longer holds open (gone, or marked done) is cleared
+// here, synced: the tile used to stay on his phone until the runner's own machine had a
+// page open to clear it. Only the runner's machine raises one, and its raise after a
+// re-post beats this clear by its later stamp. A tap WAITING for its
 // answer (not yet held, done or back) is polled at once, on visibility return, and every
 // `RUNNER_TAP_POLL_MS` for `RUNNER_TAP_WINDOW_MS` after the tap (`runnerTapFast`), since the
 // minute poll left the tile up a minute after his tap; then the minute poll alone.
@@ -1398,6 +1404,7 @@ async function runnerRead(inst) {
 	// A guarded entry (relay_v2, QA-B 2) is listed by its nonce and flags alone: its body
 	// and alarm note are read by the nonce, which this page holds and the install id does not give.
 	return Promise.all(j.entries.map(async function (e) {
+		if (e && e.kind === 'ship') return shipRead(e, inst, j);	// PLAIN-SHIPPER: read and verified on every poll, whatever the listing carries
 		if (!e || typeof e.body === 'string' || !RUNNER_NONCE_RE.test(String(e.nonce || ''))) return e;
 		if (e.kind === 'submit' && !e.alarmed) return submitRead(e);	// SR7: read once, null when withdrawn
 		if (!e.alarmed && e.kind !== 'release') return e;
@@ -1409,23 +1416,37 @@ async function runnerRead(inst) {
 	}));
 }
 
-/// The poll of a device's taps on requests another machine's runner made (see the header):
-/// each install with a tap waiting or held is read once, and nothing synced is written.
+/// The poll of the installs other than this machine's own (see the header): each install
+/// with a tap waiting or held, or named by a runner item up on the panel, is read once. A tap
+/// writes nothing synced; an item whose request the listing no longer holds open is cleared.
 /// Resolves true when any listing was read.
 async function runnerTapPoll(own) {
-	var taps = runnerTaps(), now = Date.now(), byInst = {}, read = false, changed = false;
+	var taps = runnerTaps(), now = Date.now(), byInst = {}, items = {}, read = false, changed = false;
 	Object.keys(taps).forEach(function (n) {
 		var tp = taps[n];
 		if (!tp || typeof tp.at !== 'number' || now - tp.at > 24 * 3600 * 1000) { delete taps[n]; changed = true; return; }
 		if (!tp.inst || tp.inst === own || tp.state === 'done' || tp.state === 'back') return;
 		(byInst[tp.inst] = byInst[tp.inst] || []).push(n);
 	});
+	var A = window.DaimondAlerts;
+	if (A && A.RUNNER) A.live().forEach(function (a) {
+		if (a.diamond !== A.RUNNER || a.key.indexOf(RUNNER_KEY) !== 0) return;
+		var inst = String(a.detail || '').split(' ')[1] || '';
+		if (!RUNNER_INSTALL_RE.test(inst) || inst === own) return;
+		(items[inst] = items[inst] || []).push(a.key);
+		byInst[inst] = byInst[inst] || [];
+	});
 	for (var inst in byInst) {
 		var list = await runnerRead(inst);
 		if (!list) continue;
 		read = true;
+		shipSettle(inst, list);
 		var by = {};
 		list.forEach(function (e) { if (e && RUNNER_NONCE_RE.test(String(e.nonce || ''))) by[e.nonce] = e; });
+		(items[inst] || []).forEach(function (k) {
+			var e = by[k.slice(RUNNER_KEY.length).split('.')[0]];
+			if (!e || e.kind !== 'release' || e.done === true) { A.clear(A.RUNNER, k); changed = true; }
+		});
 		byInst[inst].forEach(function (n) {
 			var e = by[n];
 			if (e) _runnerSeen[n] = runnerAnswers(e);
@@ -1468,14 +1489,17 @@ function runnerInstall() {
 }
 
 /// What one relay entry's body says of its release: `{commit, seq}`. The body is the
-/// runner's own JSON, the manifest's fields at the top or under `manifest`; anything
-/// unreadable is an empty commit and seq 0, so it still shows, and sorts as the oldest.
+/// runner's own JSON, the manifest's fields at the top or under `manifest`, its numbers as
+/// decimal text (kimberlite `Request::body`); anything unreadable is an empty commit and
+/// seq 0, so it still shows, and sorts as the oldest.
 function runnerBody(e) {
 	var b = null;
 	try { b = JSON.parse(String(e.body || '')); } catch (err) { b = null; }
 	if (b && b.manifest && typeof b.manifest === 'object') b = b.manifest;
 	var commit = (b && typeof b.commit === 'string') ? b.commit.slice(0, 64) : '';
-	var seq = (b && typeof b.seq === 'number' && isFinite(b.seq) && b.seq > 0) ? Math.floor(b.seq) : 0;
+	var n = (b && typeof b.seq === 'string' && /^[0-9]{1,15}$/.test(b.seq)) ? Number(b.seq)
+		: (b && typeof b.seq === 'number') ? b.seq : 0;
+	var seq = (isFinite(n) && n > 0) ? Math.floor(n) : 0;
 	return { commit: commit, seq: seq };
 }
 
@@ -1531,6 +1555,7 @@ function runnerSettle(entries) {
 	});
 	if (pruned || tapsChanged) runnerTapsSave(kept);
 	submitSettle(own, list);				// a daimon's change, one item per submission (SR7)
+	shipSettle(own, list);					// its ship's state, one item per submission
 	Pending.fresh();
 	Pending.render();
 }
@@ -1546,6 +1571,7 @@ function runnerKey(nonce, seq, commit) {
 function runnerItem(a) {
 	var k = String(a.key || '');
 	if (k.indexOf(SUBMIT_KEY) === 0) return submitItem(a);
+	if (k.indexOf(SHIP_KEY) === 0) return shipItem(a);
 	if (k.indexOf(RUNNER_ALARM) === 0) {
 		return { id: 'a:' + a.id, kind: 'notice', priority: 'high', at: a.at, needs: true,
 			headline: t('pending.runner.alarm'), detail: t('pending.runner.alarm_detail', { note: a.detail || '' }) };
@@ -1574,6 +1600,7 @@ async function runnerPoll() {
 	}
 	if (await runnerTapPoll(inst)) read = true;
 	if (await submitPollOthers(inst)) read = true;
+	if (shipStall()) { Pending.fresh(); Pending.render(); }
 	return read;
 }
 
@@ -1594,9 +1621,9 @@ export function runnerWatch() {
 	runnerPoll();
 }
 
-/// The runner tile's own body: what is waiting, the Approve link and its QR. It has no
-/// tick, no `?` and no ✕: it is answered on the approve page, and it goes when the relay
-/// says the request is over.
+/// The runner tile's own body: what is waiting, the Approve link and its QR, and a ✕. It has
+/// no tick and no `?`: it is answered on the approve page, and it goes when the relay says the
+/// request is over, or when he dismisses it (synced, as any alert's ✕).
 function runnerTile(box, it) {
 	var rn = it.runner || {};
 	var url = runnerApproveUrl('', rn.nonce);
@@ -1605,19 +1632,29 @@ function runnerTile(box, it) {
 	var built = rn.seq ? new Date(rn.seq * 1000).toLocaleString() : '';
 	when.textContent = t('pending.runner.built', { commit: rn.commit || '?', when: built || '?' });
 	box.appendChild(when);
-	if (!url) { submitLine(box, 'status', t('pending.runner.no_approve')); return; }
+	if (!url) submitLine(box, 'status', t('pending.runner.no_approve'));
 	var acts = document.createElement('div');
 	acts.className = 'pend-acts';
-	var go = document.createElement('a');
-	go.className = 'pend-act pend-go pend-runner-approve';
-	go.href = url;
-	go.target = '_blank';
-	go.rel = 'noopener noreferrer';
-	go.textContent = t('pending.runner.approve');
-	go.setAttribute('aria-label', t('pending.runner.approve'));
-	go.addEventListener('click', function () { runnerTapped(rn.nonce, rn.install); });
-	acts.appendChild(go);
+	if (url) {
+		var go = document.createElement('a');
+		go.className = 'pend-act pend-go pend-runner-approve';
+		go.href = url;
+		go.target = '_blank';
+		go.rel = 'noopener noreferrer';
+		go.textContent = t('pending.runner.approve');
+		go.setAttribute('aria-label', t('pending.runner.approve'));
+		go.addEventListener('click', function () { runnerTapped(rn.nonce, rn.install); });
+		acts.appendChild(go);
+	}
+	var drop = document.createElement('button');
+	drop.type = 'button';
+	drop.className = 'pend-act pend-no';
+	drop.textContent = '✕'; drop.title = t('pending.alert.dismiss');
+	drop.setAttribute('aria-label', t('pending.alert.dismiss'));
+	drop.addEventListener('click', function () { Pending.drop(it.id); });
+	acts.appendChild(drop);
 	box.appendChild(acts);
+	if (!url) return;
 	var qr = null;
 	try {
 		if (window.DaimondPairing && DaimondPairing.ui && DaimondPairing.ui.qrCanvas) qr = DaimondPairing.ui.qrCanvas(url);
@@ -1782,13 +1819,14 @@ function submitSettle(inst, list) {
 	});
 }
 
-/// The installs named by synced submit items other than this machine's own, read for their
-/// listing: what is withdrawn or done shows here too. Writes nothing synced.
+/// The installs named by synced submit and ship items other than this machine's own, read for
+/// their listing: what is withdrawn or done shows here too, and their ships' states are settled
+/// here (`shipSettle`), so a device with no runner of its own raises them too.
 async function submitPollOthers(own) {
 	var A = window.DaimondAlerts, seen = {}, read = false;
 	if (!A || !A.RUNNER) return false;
 	A.live().forEach(function (a) {
-		if (a.diamond !== A.RUNNER || a.key.indexOf(SUBMIT_KEY) !== 0) return;
+		if (a.diamond !== A.RUNNER || (a.key.indexOf(SUBMIT_KEY) !== 0 && a.key.indexOf(SHIP_KEY) !== 0)) return;
 		var inst = String(a.detail || '').split(' ')[0];
 		if (RUNNER_INSTALL_RE.test(inst) && inst !== own) seen[inst] = true;
 	});
@@ -1796,10 +1834,23 @@ async function submitPollOthers(own) {
 		var list = await runnerRead(inst);
 		if (!list) continue;
 		submitTake(inst, list);
+		shipSettle(inst, list);
 		read = true;
 	}
 	if (read) { Pending.fresh(); Pending.render(); }
 	return read;
+}
+
+/// Is card `n`'s tile drawn here: its submit item up in the synced record, and not withdrawn as
+/// this device last read its install? The one test the card and its ship's tile both fold by.
+function submitShown(n) {
+	var A = window.DaimondAlerts;
+	if (!A || !A.RUNNER || !n || _submitGone[n]) return false;
+	return A.live().some(function (a) {
+		if (a.diamond !== A.RUNNER || a.key.indexOf(SUBMIT_KEY + n + '.') !== 0) return false;
+		var d = String(a.detail || ''), sp = d.indexOf(' '), inst = sp > 0 ? d.slice(0, sp) : '';
+		return !(RUNNER_INSTALL_RE.test(inst) && _submitRead[inst] && !_submitLive[n]);
+	});
 }
 
 /// One synced submit item as a Pending tile, or null when withdrawn or unreadable.
@@ -1809,11 +1860,12 @@ function submitItem(a) {
 	var n = p[0], d = String(a.detail || ''), sp = d.indexOf(' ');
 	var inst = sp > 0 ? d.slice(0, sp) : '';
 	if (!RUNNER_INSTALL_RE.test(inst)) inst = '';
-	if (_submitGone[n] || (inst && _submitRead[inst] && !_submitLive[n])) return null;
+	if (!submitShown(n)) return null;
 	var g = _submitLive[n], done = !!(g && g.e && g.e.done === true);
 	var approved = !!(g && g.e && g.e.answered && _submitTaps[n]);		// his tap here: the runner's to do now
 	var title = (sp > 0 ? d.slice(sp + 1) : '') || '?', b = g ? submitBody(g.e) : null;
-	return { id: 'a:' + a.id, kind: 'submit', priority: 'high', at: a.at, needs: !done && !approved && a.needs !== false,
+	var sh = shipForCard(n);					// shipping: the card is the ship's tile, and needs as it does
+	return { id: 'a:' + a.id, kind: 'submit', priority: 'high', at: a.at, needs: sh ? sh.needs : !done && !approved && a.needs !== false,
 		headline: (b && b.plain) ? t('pending.plain.headline', { summary: title }) : t('pending.submit.headline', { title: title }),
 		detail: t('pending.submit.detail'), submit: { nonce: n, seq: Number(p[1]) || 0, install: inst } };
 }
@@ -2126,7 +2178,9 @@ function plainTile(box, n, g, b) {
 		submitLine(box, 'chat', t('pending.plain.chat', { chat: b.chat || '?' }));
 	}
 	if (!b.approve) submitLine(box, 'review', t('pending.plain.review_pending'));
-	if (g.e.done === true) submitLine(box, 'status', t('pending.submit.deployed', { commit: b.commit.slice(0, 12) }));
+	var sh = shipForCard(n);
+	if (sh) { submitLine(box, 'status', shipWords(sh)); shipLines(box, sh); }	// approved: the ship's state, not Approve
+	else if (g.e.done === true) submitLine(box, 'status', t('pending.submit.deployed', { commit: b.commit.slice(0, 12) }));
 	else if (_submitTaps[n] && g.e.answered) submitLine(box, 'status', t('pending.plain.approved'));
 	var acts = document.createElement('div');
 	acts.className = 'pend-acts';
@@ -2138,8 +2192,8 @@ function plainTile(box, n, g, b) {
 		acts.appendChild(more);
 	}
 	var url = runnerApproveUrl(bypass ? '?go' : '?details', n);	// ?go: the page asks for the passkey on load
-	if (!url && !bad && b.approve && g.e.done !== true) submitLine(box, 'status', t('pending.runner.no_approve'));
-	if (url && ck && !bad && b.approve && g.e.done !== true) {	// fail closed: no Approve before the check
+	if (!url && !bad && b.approve && g.e.done !== true && !sh) submitLine(box, 'status', t('pending.runner.no_approve'));
+	if (url && ck && !bad && b.approve && g.e.done !== true && !sh) {	// fail closed: no Approve before the check
 		var go = document.createElement('a');
 		go.className = 'pend-act pend-go pend-submit-approve';
 		go.href = url;
@@ -2150,12 +2204,313 @@ function plainTile(box, n, g, b) {
 		acts.appendChild(go);
 	}
 	box.appendChild(acts);
-	if (!url || bad || !b.approve || g.e.done === true) return;
+	if (!url || bad || !b.approve || g.e.done === true || sh) return;
 	var qr = null;
 	try {
 		if (window.DaimondPairing && DaimondPairing.ui && DaimondPairing.ui.qrCanvas) qr = DaimondPairing.ui.qrCanvas(url);
 	} catch (e) { qr = null; }
 	if (qr) { qr.setAttribute('aria-label', t('pending.runner.qr')); box.appendChild(qr); }
+}
+
+// ── A plain ship's state (PLAIN-SHIPPER PS4) ─────────────────────────────────
+//
+// His tap approves a plain card; the kit's shipper ships it, and Kimberlite's desk posts each
+// state as a relay entry of kind `ship`, signed by its runner's device key (design
+// plain_shipper_design_20261109 rev 5, §2b and §5). The gateway checks only that the signer is
+// paired to some account, so the page keeps an entry only when its signature verifies under the
+// key of one of HIS approved runners (pair/list); a runner he removes drops out of that list and
+// its items stop drawing. Every
+// device that reads an install's listing (its own, a tapped one, one a synced submit or ship
+// item names) settles the item, one per submission id, so his phone shows it with no desktop
+// tab open, and two devices write the same words from the same entry.
+//
+// ORDER IS THE SHIPPER'S. The item carries the entry's `at` (`t`), and an entry no newer than
+// the item held, in any state, writes nothing: a slower read never puts an older state back,
+// a dismissed state stays down, and a quiet one that lapsed is not raised again. The raise is
+// stamped here, not with the shipper's time: a dismiss is stamped on his device's clock, often
+// after a newer state happened and before it was posted, and that state must still come up.
+// Across devices the alerts merge law orders by the same `t` (alerts.js `LAWS`), and a ✕ is
+// final for the `t` it took down, so a device that had not heard of it cannot put it back.
+//
+// NEVER CLEARED BY ABSENCE. An entry the relay no longer lists (lapsed, or a gateway restart)
+// leaves its item with its last words, and a state still under way says "as of" its time.
+// While the card's tile is drawn (`submitShown`), it draws the ship's line (`plainTile`) and the
+// item is not drawn: one tile. "Deployed", never "Live": that is `dk proof`'s word.
+var SHIP_KEY    = 'plainship.';	// alerts.js page key (PLAIN_SHIP): one item per submission
+var SHIP_ID_RE  = /^[0-9a-f]{32}$/;	// fixed: the submission id, 128 random bits (kimberlite plain.rs)
+var SHIP_SHA_RE = /^[0-9a-f]{40}$/;
+var SHIP_NEEDS  = { queued: false, shipping: false, live: false, served: false, stopped: true, refused: true };	// fixed: design §5
+var SHIP_ENDED  = { live: 1, stopped: 1, refused: 1 };	// fixed: the shipper's terminal states (design §5)
+var SHIP_OWED   = { queued: 1, shipping: 1 };	// fixed: the states whose next step is the shipper's, the only ones that stall
+var _shipListed = {};	// install -> { id: true }, as its last listing read whole
+var _shipKeys   = null;	// device -> raw Ed25519 key of his approved runners, as pair/list last said
+var _shipKeyIds = '';	// those keys as text, to tell a change
+var _shipOk     = new WeakSet();	// the entries `shipRead` verified: the only ones `shipSettle` takes
+// fixed: the keeper's signed form, DEVICE_SIGN_DOMAIN, Purpose::ShipState's tag, then the ship
+// string (kimberlite device_key.rs; gateway runner_pair.rs ship_string; design §5 r5b;
+// verify/runner_compat/ship_v1)
+var SHIP_SIGN   = ['kimberlite/device/v1\0', 'ship-state\0', 'kimberlite-ship:v1:'];
+
+/// The bytes of a base64url text, or null.
+function shipB64u(s) {
+	try {
+		var b64 = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
+		while (b64.length % 4) b64 += '=';
+		var bin = atob(b64), out = new Uint8Array(bin.length);
+		for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+		return out;
+	} catch (e) { return null; }
+}
+
+/// Hold the device keys of his approved runners (pair/list rows `active`), the only signers
+/// of a ship state this page keeps; null when they cannot be known (locked, or the session is
+/// over), so no ship item is drawn. A change redraws: synced items wait on these keys.
+function shipKeysSet(runners) {
+	var keys = runners ? Object.create(null) : null, ids = runners ? '+' : '';
+	(Array.isArray(runners) ? runners : []).forEach(function (r) {
+		if (!r || r.state !== 'active') return;
+		var sh = runnerPairShape(r), k = sh ? shipB64u(sh.pubkey) : null;
+		if (k && k.length === 32) { keys[sh.device] = k; ids += sh.device + '=' + sh.pubkey + ';'; }
+	});
+	_shipKeys = keys;
+	if (ids === _shipKeyIds) return;
+	_shipKeyIds = ids;
+	Pending.fresh(); Pending.render();
+}
+
+/// Does `one` (a ship entry read by `nonce` under install `inst`) carry a signature by one of
+/// his runners over exactly the device, install, nonce, post time and body received?
+function shipSigned(inst, nonce, one) {
+	var dev = String(one.device || ''), pub = _shipKeys[dev], sig = shipB64u(one.sig), C = window.DaimondCurveFallback;
+	if (!pub || !sig || sig.length !== 64 || !C || !C.edVerify) return false;
+	var enc = new TextEncoder();
+	var parts = [enc.encode(SHIP_SIGN[0]), enc.encode(SHIP_SIGN[1]), enc.encode(SHIP_SIGN[2] + dev + ':' + inst + ':' + nonce + ':' + one.at + ':' + one.body)];
+	var msg = new Uint8Array(parts[0].length + parts[1].length + parts[2].length);
+	msg.set(parts[0], 0);
+	msg.set(parts[1], parts[0].length);
+	msg.set(parts[2], parts[0].length + parts[1].length);
+	return C.edVerify(pub, sig, msg) === true;
+}
+
+/// A ship entry read whole by its signer and nonce, on every poll: the desk replaces its body in
+/// place. Null when the listing names no runner of his as its signer, the relay answers 404, it
+/// is not signed by that runner for this install, or its post time is further than the relay's
+/// window from the gateway's clock (`shipFresh`); the listed entry, unread, when it could not be
+/// read or his runners' keys are not known yet. Only an entry verified here is settled.
+async function shipRead(e, inst, j) {
+	if (!RUNNER_NONCE_RE.test(String(e.nonce || ''))) return null;
+	if (!_shipKeys) return e;
+	var dev = String(e.device || '');
+	if (!_shipKeys[dev]) return null;
+	try {
+		var r = await fetch(RUNNER_RELAY_ONE + encodeURIComponent(e.nonce) + '&device=' + encodeURIComponent(dev), { cache: 'no-store', credentials: 'omit' });
+		if (r && r.status === 404) return null;
+		var one = (r && r.ok) ? await r.json() : null;
+		if (one && one.ok === true && typeof one.body === 'string') {
+			if (String(one.device) !== dev || !Number.isSafeInteger(one.at) || one.at <= 0 || !shipSigned(inst, e.nonce, one)) return null;
+			if (!shipFresh(one.at, j)) return null;
+			var skew = Number.isSafeInteger(j.ship_skew_secs) && j.ship_skew_secs > 0 ? j.ship_skew_secs : 0;
+			var out = Object.assign({}, e, { body: one.body, device: dev, postAt: one.at, skewSecs: skew });
+			_shipOk.add(out);
+			return out;
+		}
+	} catch (err) { /* read again at the next poll */ }
+	return e;
+}
+
+/// Is a post at `at` (unix seconds) within the listing's window, `ship_repost_secs` and
+/// `ship_skew_secs` either way of the gateway's clock (as the gateway took it)? A post outside it
+/// is a replay after a lapse or a restart, or a shipper that stopped posting. The device's own
+/// clock is never the judge; without the gateway's clock or the window (an older gateway) no age
+/// is judged: the gateway took the post within it.
+function shipFresh(at, j) {
+	var rep = j && j.ship_repost_secs, skew = j && j.ship_skew_secs, P = window.DaimondPresence;
+	var gw = (P && P.relayNow) ? P.relayNow() : null;
+	if (!Number.isSafeInteger(rep) || !Number.isSafeInteger(skew) || rep <= 0 || skew < 0 || !(gw > 0)) return true;
+	return Math.abs(gw / 1000 - at) <= rep + skew;
+}
+
+/// Text as one line: every control character, line break and bidi control a space, each run of
+/// white space one (the fold Kimberlite applies, design §5); ZWJ and variation selectors kept.
+function shipLine(v) {
+	return (typeof v === 'string' ? v : '').replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/// What a ship entry's body says, checked, or null when it is not one this page can show.
+function shipBody(e) {
+	var b = null;
+	try { b = JSON.parse(String((e && e.body) || '')); } catch (err) { b = null; }
+	if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+	var at = typeof b.at === 'string' ? Date.parse(b.at) : NaN;
+	if (!SHIP_ID_RE.test(String(b.id || '')) || !SHIP_SHA_RE.test(String(b.commit || '')) || !(at > 0)
+		|| !Object.prototype.hasOwnProperty.call(SHIP_NEEDS, b.state)) return null;
+	// A state dated past its own post (one signer, so no clock of ours) would hold every later
+	// state down and never stall. fixed: + 1, a post time is whole seconds.
+	if (at > ((Number(e.postAt) || 0) + (Number(e.skewSecs) || 0) + 1) * 1000) return null;
+	return { id: b.id, card: RUNNER_NONCE_RE.test(String(b.card || '')) ? b.card : '', commit: b.commit.slice(0, 12),
+		state: b.state, at: at, postAt: Number(e.postAt) || 0, rc: Number.isSafeInteger(b.rc) ? b.rc : 0, alert: b.alert === true,
+		stallSecs: Number.isSafeInteger(b.stall_secs) && b.stall_secs > 0 ? b.stall_secs : 0, device: String(e.device || ''), summary: shipLine(b.summary),
+		step: shipLine(b.step), build: shipLine(b.build), words: shipLine(b.words), reds: shipLine(b.reds) };
+}
+
+/// The synced detail: the install, then the state as JSON, fitted to `max` UTF-8 bytes (design
+/// §5) by cutting the texts longest in bytes down towards the next longest, so a long summary
+/// and long words share the cut and neither leaves the other empty. A cut text ends in `…`
+/// within its byte budget and breaks no character.
+function shipDetail(inst, s, max) {
+	var size = function (x) { return new TextEncoder().encode(x).length; };
+	var f = { m: s.summary, p: s.step, b: s.build, w: s.words, x: s.reds };
+	var n = {};
+	Object.keys(f).forEach(function (k) { n[k] = size(f[k]); });
+	var text = function (k) {
+		if (n[k] >= size(f[k])) return f[k];
+		var out = '', used = size('…');
+		Array.from(f[k]).some(function (c) { var b = size(c); if (used + b > n[k]) return true; used += b; out += c; return false; });
+		return out + '…';
+	};
+	var make = function () {
+		return inst + ' ' + JSON.stringify({ c: s.card, v: s.device, d: s.commit, s: s.state, a: s.alert ? 1 : 0, k: s.stall ? 1 : 0, l: s.stallSecs, t: s.at, r: s.rc, m: text('m'), p: text('p'), b: text('b'), w: text('w'), x: text('x') });
+	};
+	var d = make(), over = size(d) - max;
+	while (over > 0) {
+		var top = Math.max.apply(null, Object.keys(n).map(function (k) { return n[k]; }));
+		if (top <= size('…')) break;
+		var tied = Object.keys(n).filter(function (k) { return n[k] === top; });
+		var next = Math.max.apply(null, [0].concat(Object.keys(n).filter(function (k) { return n[k] < top; }).map(function (k) { return n[k]; })));
+		var to = Math.min(top - 1, Math.max(next, size('…'), top - Math.ceil(over / tied.length)));
+		tied.forEach(function (k) { n[k] = to; });
+		d = make();
+		over = size(d) - max;
+	}
+	return d;
+}
+
+/// A synced ship item's detail, read back, or null when unreadable (an item another build wrote
+/// is trusted no further than its types).
+function shipParse(detail) {
+	var d = String(detail || ''), sp = d.indexOf(' '), j = null;
+	if (sp <= 0) return null;
+	try { j = JSON.parse(d.slice(sp + 1)); } catch (e) { j = null; }
+	if (!j || typeof j !== 'object' || !Object.prototype.hasOwnProperty.call(SHIP_NEEDS, j.s) || !(Number(j.t) > 0)) return null;
+	return { inst: d.slice(0, sp), card: shipLine(j.c), device: shipLine(j.v), commit: shipLine(j.d), state: j.s, alert: j.a === 1, stall: j.k === 1, stallSecs: Number.isSafeInteger(j.l) && j.l > 0 ? j.l : 0, at: Number(j.t), rc: Number(j.r) || 0,
+		summary: shipLine(j.m), step: shipLine(j.p), build: shipLine(j.b), words: shipLine(j.w), reds: shipLine(j.x) };
+}
+
+/// Raise install `inst`'s ship states from its listing `list`, one item per submission id.
+/// Writes nothing for an entry no newer than the item held, and clears nothing (see the header).
+function shipSettle(inst, list) {
+	var A = window.DaimondAlerts;
+	if (!A || !A.RUNNER || !A.held) return;
+	var ships = (Array.isArray(list) ? list : []).filter(function (e) { return e && e.kind === 'ship'; });
+	var best = {}, listed = {};
+	ships.forEach(function (e) {
+		var s = _shipOk.has(e) ? shipBody(e) : null;
+		if (!s) return;
+		listed[s.id] = true;
+		var b = best[s.id];
+		if (!b || s.at > b.at || (s.at === b.at && s.postAt > b.postAt)) best[s.id] = s;
+	});
+	// An entry not read whole this time may be any submission's: the last listing stands.
+	if (ships.every(function (e) { return _shipOk.has(e); })) _shipListed[inst] = listed;
+	if (!Object.keys(best).length) return;
+	Object.keys(best).forEach(function (id) {
+		var s = best[id], key = SHIP_KEY + id, h = A.held(A.RUNNER, key), p = h ? shipParse(h.detail) : null;
+		if (p && p.at >= s.at) return;
+		A.raise(A.RUNNER, key, 'plain ship', shipDetail(inst, s, A.DETAIL_MAX), SHIP_NEEDS[s.state] || (s.state === 'served' && s.alert));
+	});
+}
+
+/// A state whose next step is the shipper's (queued, shipping) with no newer word for its entry's `stall_secs` (Kimberlite's
+/// plain.ship_stall_secs) past the shipper's time comes back up as Stalled, needing him, until
+/// a newer state or his ✕ (lead's ruling, PS4 N5): a dead shipper never vanishes. An entry from
+/// a Kimberlite that sends no `stall_secs` never stalls; it draws "as of" alone. True when it
+/// raised one.
+function shipStall() {
+	var A = window.DaimondAlerts, now = Date.now(), up = false;
+	if (!A || !A.RUNNER || !A.heldAll) return false;
+	var due = A.heldAll(A.RUNNER, SHIP_KEY).filter(function (h) {
+		var p = h.state === 'up' ? shipParse(h.detail) : null;
+		return p && p.stallSecs > 0 && now >= p.at + p.stallSecs * 1000 && SHIP_OWED[p.state] && !!_shipKeys && !!_shipKeys[p.device];
+	});
+	// Raised again while it stays Stalled: `raise` re-stamps it a week on, so no record sheds it.
+	due.forEach(function (h) {
+		var p = shipParse(h.detail);
+		p.stall = true;
+		var was = A.raise(A.RUNNER, h.key, 'plain ship', shipDetail(p.inst, p, A.DETAIL_MAX), true);
+		if (was === 'new' || was === 'updated') up = true;
+	});
+	return up;
+}
+
+/// A live synced ship item as what its tile shows: the detail read back, its `needs`, and
+/// whether its state is under way though its install's listing no longer has it. Null when
+/// unreadable, before his runners' keys are read, or signed by a runner no longer his.
+function shipView(a) {
+	var id = String(a.key || '').slice(SHIP_KEY.length), p = shipParse(a.detail);
+	if (!SHIP_ID_RE.test(id) || !p) return null;
+	if (!_shipKeys || !_shipKeys[p.device]) return null;	// his runners not known yet, or one he removed: not drawn
+	p.id = id;
+	p.needs = a.needs !== false;
+	p.stale = !SHIP_ENDED[p.state] && !!_shipListed[p.inst] && !_shipListed[p.inst][id];
+	return p;
+}
+
+/// The newest ship state of the card whose entry is `n`, or null.
+function shipForCard(n) {
+	var A = window.DaimondAlerts, out = null;
+	if (!A || !A.RUNNER || !n) return null;
+	A.live().forEach(function (a) {
+		if (a.diamond !== A.RUNNER || a.key.indexOf(SHIP_KEY) !== 0) return;
+		var p = shipView(a);
+		if (p && p.card === n && (!out || p.at > out.at)) out = p;
+	});
+	return out;
+}
+
+/// One synced ship item as a Pending tile, or null: unreadable, or drawn on its card (the fold).
+function shipItem(a) {
+	var p = shipView(a);
+	if (!p || (p.card && submitShown(p.card))) return null;
+	return { id: 'a:' + a.id, kind: 'plainship', priority: p.needs ? 'high' : 'low', at: a.at, needs: p.needs,
+		headline: shipWords(p), detail: [p.words, p.reds].filter(Boolean).join('\n'), ship: p };
+}
+
+/// A ship state in his words. The wire's `live` is "Deployed" here.
+function shipWords(p) {
+	var v = { summary: p.summary || p.commit || '?', build: p.build, step: p.step || '?', words: p.words || '?' };
+	if (p.stall) return t('pending.ship.stalled', { summary: v.summary, when: new Date(p.at).toLocaleString() });
+	switch (p.state) {
+		case 'queued':   return t('pending.ship.queued', v);
+		case 'shipping': return t('pending.ship.shipping', v);
+		case 'live':     return p.build ? t('pending.ship.live', v) : t('pending.ship.live_already', v);
+		case 'served':   return p.alert ? t('pending.ship.served_alert', v) : t('pending.ship.served', v);
+		case 'stopped':  return t('pending.ship.stopped', v);
+		default:         return t('pending.ship.refused', v);
+	}
+}
+
+/// A ship state's lines under its words: what it waits on, the failing-first result, and how
+/// old a state still under way is once the relay no longer lists it.
+function shipLines(box, p) {
+	if (p.state === 'queued' && p.words) submitLine(box, 'ship-wait', p.words);
+	if (p.reds) submitLine(box, 'ship-reds', p.reds);
+	if (p.stale) submitLine(box, 'ship-stale', t('pending.ship.as_of', { when: new Date(p.at).toLocaleString() }));
+}
+
+/// The ship tile's body: its lines and ✕.
+function shipTile(box, it) {
+	shipLines(box, it.ship || {});
+	var acts = document.createElement('div');
+	acts.className = 'pend-acts';
+	var drop = document.createElement('button');
+	drop.type = 'button';
+	drop.className = 'pend-act pend-no';
+	drop.textContent = '✕';
+	drop.title = t('pending.alert.dismiss');
+	drop.setAttribute('aria-label', t('pending.alert.dismiss'));
+	drop.addEventListener('click', function () { Pending.drop(it.id); });
+	acts.appendChild(drop);
+	box.appendChild(acts);
 }
 
 // ── A runner asking to join, approved with his passkey (R2d1) ───────────────
@@ -2246,16 +2601,20 @@ function runnerPairSettle(runners) {
 export async function runnerPairPoll() {
 	if (document.hidden) return false;
 	// No unlocked identity, no session to ask with: nothing to settle, and no 401 a minute.
-	try { if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return false; }
+	// Locked, or the session over (401, 410): his runners' keys cannot be known, so his ship
+	// items are not drawn on the old ones. A network failure keeps them.
+	try { if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) { shipKeysSet(null); return false; } }
 	catch (e) { return false; }
 	var j = null;
 	try {
 		var r = await fetch(RUNNER_PAIR_LIST, { cache: 'no-store', credentials: 'same-origin' });
+		if (r && (r.status === 401 || r.status === 410)) shipKeysSet(null);
 		if (!r || !r.ok) return false;
 		j = await r.json();
 	} catch (e) { return false; }
 	if (!j || j.ok !== true || !Array.isArray(j.runners)) return false;
 	runnerPairSettle(j.runners);
+	shipKeysSet(j.runners);		// the signers a ship state is checked against
 	// A re-approval from any device clears this page's re-approval mark (M2).
 	if (window.DaimondPeer && DaimondPeer.rekeyApproved && DaimondPeer.rekeyApproved(j.runners)) {
 		try { renderSeatSwitch(); } catch (e) { /* the next beat redraws */ }
@@ -2307,6 +2666,7 @@ export function runnerPairWatch() {
 	_runnerPairWatching = true;
 	setInterval(function () { runnerPairPoll(); }, RUNNER_POLL_MS);
 	document.addEventListener('visibilitychange', function () { if (!document.hidden) runnerPairPoll(); });
+	window.addEventListener('daimond:lock', function () { shipKeysSet(null); });
 	runnerPairPoll();
 }
 
