@@ -2781,6 +2781,7 @@
 	'pending.plain.review_pending': 'レビュー: 保留中',
 	'pending.plain.card_bad': 'カードが Kimberlite の送信内容と一致しないため、承認できません。',
 	'pending.plain.approved': '承認しました。次に出荷されます。操作ターンによる証明は保留中です。',
+	'pending.plain.decline': '却下',
 	'pending.ship.queued': '承認済み、出荷待ち: {summary}',
 	'pending.ship.shipping': '出荷中: {summary}',
 	'pending.ship.live': 'デプロイ済み: {summary}、ビルド {build}',

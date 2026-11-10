@@ -2745,6 +2745,7 @@
 	'pending.plain.review_pending': 'Prüfung: ausstehend',
 	'pending.plain.card_bad': 'Die Karte passt nicht zu dem, was Kimberlite gesendet hat, daher kann sie nicht freigegeben werden.',
 	'pending.plain.approved': 'Freigegeben. Es wird als Nächstes ausgeliefert; Nachweis durch einen gesteuerten Zug steht aus.',
+	'pending.plain.decline': 'Ablehnen',
 	'pending.ship.queued': 'Freigegeben, wartet auf Auslieferung: {summary}',
 	'pending.ship.shipping': 'Wird ausgeliefert: {summary}',
 	'pending.ship.live': 'Bereitgestellt: {summary}, Build {build}',

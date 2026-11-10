@@ -2153,12 +2153,43 @@ function plainCheck(b) {
 	});
 }
 
+function plainB64u(bytes) {
+	var bin = '', u8 = new Uint8Array(bytes);
+	for (var i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+	return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/// His Decline of card `n`: resolve true once the relay has taken it, false when it did not. The
+/// answer carries the card's own challenge and the page's word for "no", and nothing else: no
+/// passkey, because a refusal ships nothing, and no signature, because there is nothing to sign.
+/// Kimberlite's desk judges it, marks the submission refused and takes the entry down, so the
+/// card leaves Pending on every device at its next read.
+async function plainDecline(n, e, b) {
+	var card = null;
+	try { card = submitB64u(b.raw.card); } catch (err) { card = null; }
+	if (!card || !card.length || !e || !e.nonce) return false;
+	var ch = null;
+	try { ch = await submitSha(card); } catch (err) { ch = null; }
+	if (!ch) return false;
+	var cdj = JSON.stringify({ type: 'webauthn.get', challenge: plainB64u(ch), origin: location.origin, crossOrigin: false });
+	var answer = JSON.stringify({ decline: true, cred_id: '', authData: '',
+		clientData: plainB64u(new TextEncoder().encode(cdj)), sig: '' });
+	try {
+		var r = await fetch('/api/runner/relay/answer', { cache: 'no-store', credentials: 'omit',
+			method: 'POST', headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ nonce: String(e.nonce), answer: answer }) });
+		if (!r || !r.ok) return false;
+	} catch (err) { return false; }
+	_submitGone[n] = true;
+	return true;
+}
+
 function plainBypass() {
 	try { return !!(window.DaimondHandMode && DaimondHandMode.get && DaimondHandMode.get() === 'bypass'); }
 	catch (e) { return false; }
 }
 
-/// The plain tile: the flag, Details (or the details, off Bypass), the status and Approve.
+/// The plain tile: the flag, Details (or the details, off Bypass), the status, Approve and Decline.
 function plainTile(box, n, g, b) {
 	var ck = _submitCheck[n];
 	if (!ck) submitCheckSealed(n).then(function (r) { if (r && !_submitCheck[n]) { _submitCheck[n] = r; Pending.render(); } });
@@ -2202,6 +2233,27 @@ function plainTile(box, n, g, b) {
 		go.textContent = t('pending.runner.approve');
 		go.addEventListener('click', function () { _submitTaps[n] = true; runnerPoll(); });
 		acts.appendChild(go);
+	}
+	// Decline (D-20261110-01): one tap, no passkey, and it ships nothing. It stands beside Approve
+	// for exactly as long as Approve is his to press -- a card still open, and not yet shipping --
+	// so a change he does not want is refusable while the runner still holds the card, and no
+	// card offers a Decline that could no longer reach the desk. Kimberlite marks the submission
+	// refused, takes the entry down with its own key (so it leaves Pending on every device and the
+	// card's slot with it), and stops posting it.
+	if (ck && !bad && b.approve && g.e.done !== true && !sh && !_submitTaps[n]) {
+		var no = document.createElement('button');
+		no.type = 'button';
+		no.className = 'pend-act pend-no pend-plain-decline';
+		no.textContent = t('pending.plain.decline');
+		no.setAttribute('aria-label', t('pending.plain.decline'));
+		no.addEventListener('click', function () {
+			no.disabled = true;
+			plainDecline(n, g.e, b).then(function (ok) {
+				no.disabled = false;
+				if (ok) { delete _submitLive[n]; Pending.render(); }
+			});
+		});
+		acts.appendChild(no);
 	}
 	box.appendChild(acts);
 	if (!url || bad || !b.approve || g.e.done === true || sh) return;

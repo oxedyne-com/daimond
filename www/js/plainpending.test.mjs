@@ -14,6 +14,8 @@
      node www/js/plainpending.test.mjs --break runner   # the Kimberlite-code line never shown
      node www/js/plainpending.test.mjs --break diamond  # the diamond shown by its id, not its name
      node www/js/plainpending.test.mjs --break address  # the approve address a literal, not the gateway's
+     node www/js/plainpending.test.mjs --break decline  # Decline posts the word but not the card's challenge
+     node www/js/plainpending.test.mjs --break nocance  # Decline never offered
      node www/js/plainpending.test.mjs                  # and then, clean
    ============================================================ */
 import { readFileSync } from 'node:fs';
@@ -40,7 +42,7 @@ async function kase(name, fn) {
 }
 
 const BREAK = (() => { const i = process.argv.indexOf('--break'); return i >= 0 ? (process.argv[i + 1] || '') : ''; })();
-const KNOWN = ['flag', 'level', 'check', 'review', 'status', 'go', 'runner', 'diamond', 'address'];
+const KNOWN = ['flag', 'level', 'check', 'review', 'status', 'go', 'runner', 'diamond', 'address', 'decline', 'nocance'];
 if (BREAK && !KNOWN.includes(BREAK)) { console.error('unknown break ' + JSON.stringify(BREAK) + '; known: ' + KNOWN.join(', ')); process.exit(2); }
 
 function patch(src) {
@@ -58,6 +60,8 @@ function patch(src) {
 	if (BREAK === 'review') swap("if (url && ck && !bad && b.approve && g.e.done !== true && !sh) {", "if (url && ck && !bad && g.e.done !== true && !sh) {");
 	if (BREAK === 'status') swap("else if (_submitTaps[n] && g.e.answered) submitLine(box, 'status', t('pending.plain.approved'));", '');
 	if (BREAK === 'go')     swap("runnerApproveUrl(bypass ? '?go' : '?details', n)", "runnerApproveUrl(bypass ? '' : '?details', n)");
+	if (BREAK === 'decline') swap("challenge: plainB64u(ch)", "challenge: plainB64u(new TextEncoder().encode(String(b.raw.card)))");
+	if (BREAK === 'nocance') swap("if (ck && !bad && b.approve && g.e.done !== true && !sh && !_submitTaps[n]) {", "if (false) {");
 	return src;
 }
 
@@ -88,9 +92,14 @@ const walk = (e, out = []) => { out.push(e); for (const c of e.children) walk(c,
 function page(o) {
 	o = o || {};
 	const win = makeWindow();
-	const st = { fetches: [], list: [], whole: {}, install: o.install === undefined ? INSTALL : o.install, unlocked: o.locked ? false : true, level: o.level || 'bypass' };
-	win.fetch = async (url) => {
+	const st = { fetches: [], posts: [], postOk: o.postOk, list: [], whole: {}, install: o.install === undefined ? INSTALL : o.install, unlocked: o.locked ? false : true, level: o.level || 'bypass' };
+	win.fetch = async (url, opts) => {
 		url = String(url); st.fetches.push(url);
+		if (opts && opts.method === 'POST') {	// his answer, to the relay's own route
+			st.posts.push({ url, body: JSON.parse(String(opts.body || '{}')), credentials: opts.credentials });
+			if (st.postOk === false) return { ok: false, status: 400, json: async () => ({ ok: false }) };
+			return { ok: true, status: 200, json: async () => ({ ok: true }) };
+		}
 		if (url.indexOf('?install=') >= 0) return { ok: true, status: 200, json: async () => ({ ok: true, entries: st.list.map((e) => Object.assign({}, e)) }) };
 		const n = decodeURIComponent(url.split('?nonce=')[1] || '');
 		const w = st.whole[n];
@@ -153,6 +162,7 @@ function plainEntry(pg, tag, v, extra) {
 const texts = (els) => els.map((e) => e.textContent).filter(Boolean);
 const approveOf = (els) => els.find((e) => String(e.className).indexOf('pend-submit-approve') >= 0);
 const detailsOf = (els) => els.find((e) => String(e.className).indexOf('pend-plain-details') >= 0);
+const declineOf = (els) => els.find((e) => String(e.className).indexOf('pend-plain-decline') >= 0);
 const V0 = PV1.vectors[0];
 async function shown(o, v, extra) {
 	const pg = page(o);
@@ -264,6 +274,45 @@ await kase('after his tap: Approved, then Deployed ... proof pending; never Live
 	const t2 = texts(await pg.draw(pg.tiles()[0]));
 	ok(t2.indexOf('pending.submit.deployed|commit=' + V0.commit.slice(0, 12)) >= 0, 'deployed: ' + JSON.stringify(t2));
 	ok(!t1.concat(t2).some((x) => /\bLive\b/.test(x)), 'never Live');
+});
+
+await kase('Decline stands beside Approve on Bypass and on a stricter level, and only while the card is his', async () => {
+	for (const level of ['bypass', 'guard']) {
+		const { els } = await shown({ level });
+		ok(declineOf(els), level + ': Decline offered: ' + JSON.stringify(texts(els)));
+		eq(declineOf(els).textContent, 'pending.plain.decline', level + ' words');
+	}
+	ok(!declineOf((await shown({}, V0, { approve: '0' })).els), 'no Decline on a review: pending card');
+	ok(!declineOf((await shown({ approve: null })).els) === false, 'Decline offered with no approve address: a refusal needs none');
+	ok(!declineOf((await shown({}, V0, { card: V0.card_b64u.slice(0, -2) })).els), 'no Decline on a card that does not match');
+});
+
+await kase('Decline is one tap, no passkey: the card\'s challenge and the word for "no", to the relay\'s answer route', async () => {
+	const { pg, s, it, els } = await shown();
+	const ch = b64u(await sha(new Uint8Array(Buffer.from(V0.card_b64u, 'base64url'))));
+	declineOf(els).on.click();
+	await new Promise((r) => setTimeout(r, 30));
+	eq(pg.st.posts.length, 1, 'one answer posted');
+	const p = pg.st.posts[0];
+	eq(p.url, '/api/runner/relay/answer', 'the relay\'s route');
+	eq(p.body.nonce, s.nonce1, 'the card\'s nonce');
+	const a = JSON.parse(p.body.answer);
+	eq(a.decline, true, 'the word for no');
+	eq(a.sig, '', 'no signature');
+	eq(a.authData, '', 'no credential');
+	const cdj = JSON.parse(Buffer.from(a.clientData, 'base64url').toString('utf8'));
+	eq(cdj.challenge, ch, 'the card\'s own challenge');
+	eq(cdj.origin, 'https://daimond.test', 'this page\'s origin');
+	ok(!pg.tiles().length, 'the card is gone from Pending here');
+	eq(p.credentials, 'omit', 'no passkey, no session credential sent');
+});
+
+await kase('a Decline the relay did not take leaves the card standing, so nothing is lost', async () => {
+	const { pg, els } = await shown({ postOk: false });
+	declineOf(els).on.click();
+	await new Promise((r) => setTimeout(r, 30));
+	eq(pg.st.posts.length, 1, 'the decline was tried');
+	ok(pg.tiles().length === 1, 'the card is still drawn: ' + JSON.stringify(pg.tiles().length));
 });
 
 console.log((failures ? 'FAIL' : 'PASS') + ' plainpending: ' + (cases - failures) + '/' + cases + (BREAK ? ' (break ' + BREAK + ')' : ''));

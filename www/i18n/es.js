@@ -2739,6 +2739,7 @@
 	'pending.plain.review_pending': 'revisión: pendiente',
 	'pending.plain.card_bad': 'La tarjeta no coincide con lo que envió Kimberlite, así que no se puede aprobar.',
 	'pending.plain.approved': 'Aprobado. Se publica a continuación; prueba con un turno dirigido pendiente.',
+	'pending.plain.decline': 'Rechazar',
 	'pending.ship.queued': 'Aprobado, esperando la publicación: {summary}',
 	'pending.ship.shipping': 'Publicando: {summary}',
 	'pending.ship.live': 'Desplegado: {summary}, build {build}',

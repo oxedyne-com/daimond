@@ -2774,6 +2774,7 @@
 	'pending.plain.review_pending': '审查：待定',
 	'pending.plain.card_bad': '卡片与 Kimberlite 发送的内容不一致，因此无法批准。',
 	'pending.plain.approved': '已批准。接下来发布；由驱动轮次的证明待定。',
+	'pending.plain.decline': '拒绝',
 	'pending.ship.queued': '已批准，等待发布：{summary}',
 	'pending.ship.shipping': '正在发布：{summary}',
 	'pending.ship.live': '已部署：{summary}，构建 {build}',

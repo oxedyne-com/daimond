@@ -1497,6 +1497,7 @@
 	'pending.plain.review_pending': 'review: pending',
 	'pending.plain.card_bad': 'The card does not match what Kimberlite sent, so it cannot be approved.',
 	'pending.plain.approved': 'Approved. It ships next; proof by a driven turn pending.',
+	'pending.plain.decline': 'Decline',
 	'pending.ship.queued': 'Approved, waiting to ship: {summary}',
 	'pending.ship.shipping': 'Shipping: {summary}',
 	'pending.ship.live': 'Deployed: {summary}, build {build}',

@@ -2752,6 +2752,7 @@
 	'pending.plain.review_pending': 'revue : en attente',
 	'pending.plain.card_bad': 'La carte ne correspond pas à ce que Kimberlite a envoyé, elle ne peut donc pas être approuvée.',
 	'pending.plain.approved': 'Approuvé. Il est livré ensuite ; preuve par un tour piloté en attente.',
+	'pending.plain.decline': 'Refuser',
 	'pending.ship.queued': 'Approuvé, en attente de livraison : {summary}',
 	'pending.ship.shipping': 'Livraison en cours : {summary}',
 	'pending.ship.live': 'Déployé : {summary}, build {build}',

@@ -2780,6 +2780,7 @@
 	'pending.plain.review_pending': '검토: 대기 중',
 	'pending.plain.card_bad': '카드가 Kimberlite가 보낸 것과 일치하지 않아 승인할 수 없습니다.',
 	'pending.plain.approved': '승인되었습니다. 다음에 배포됩니다. 주도된 턴에 의한 증명은 대기 중입니다.',
+	'pending.plain.decline': '거절',
 	'pending.ship.queued': '승인됨, 배포 대기 중: {summary}',
 	'pending.ship.shipping': '배포 중: {summary}',
 	'pending.ship.live': '배포됨: {summary}, 빌드 {build}',
