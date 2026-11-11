@@ -1503,3 +1503,70 @@ async fn runhist_a_chats_carried_turn_lands_where_its_own_turns_do_ozone() {
     over(Over::Ozone);
     runhist_a_chats_carried_turn_lands_where_its_own_turns_do().await
 }
+
+/// **CARRY-DIAMOND: a runner's turn carries its file BODIES, not only their hashes.**
+///
+/// The defect this closes (2026-11-11, Neil's Diamond on Kimberlite): `record_away` says "the
+/// bytes are on the runner" and puts nothing down, so the asking device records a row naming a
+/// body no door here can ever produce.  The panel draws a Diamond's crystal from `crystal.json`
+/// and falls back to its SEED when the newest version names nothing readable, so the Diamond
+/// opened on its seed line with Files 0 while the runner held crystal.json, tasks.txt and 32
+/// bodies.  The rows had arrived faithfully; they carried nothing.
+///
+/// The first half states the defect as the code stands (nothing put down, nothing to read); the
+/// second proves the door the page now uses to put the runner's bytes down before it records the
+/// version that names them.
+async fn carry_a_runner_turns_bodies_reach_the_asker() {
+    fresh();
+    let id = "cb1";
+    env("p", id).scope(async {
+        diamond_at(id).await;
+        let body = b"# Tasks\n\n- fix the sync defect\n";
+        let hash = versions::hash_of(body);
+
+        // 1. THE DEFECT, stated: the row arrives, the bytes never do, and nothing here can
+        //    produce them -- which is what `versions_body` answering `None` means for the panel.
+        let rec = fmt!("{{\"v\":1,\"keeper\":\"{}\",\"turnId\":\"t1\",\"run\":\"e-cb\",\
+            \"on\":\"dev-runner\",\"onName\":\"Kimberlite\",\"since\":1000,\"until\":2000,\
+            \"ts\":1500,\"more\":0,\"files\":[{{\"path\":\"/home/jason/x/tasks.txt\",\"hash\":\"{}\",\
+            \"created\":true,\"by\":{{\"agent\":\"daimon\",\"via\":\"file_write\"}}}}]}}", id, hash);
+        let made = ok("carried", diamond::versions_record_carried(id, &rec).await);
+        assert!(made.is_some(), "the row is recorded");
+        let before = ok("read", diamond::versions_body(id, &hash).await);
+        assert_eq!(before, None, "the defect: the body the row names is not here");
+
+        // 2. The door the page calls, with the runner's bytes: it puts them down.
+        let put = ok("put", diamond::versions_put_body(id, &hash, body).await);
+        assert!(put, "the body was put down");
+        let after = ok("read", diamond::versions_body(id, &hash).await);
+        assert_eq!(after.as_deref(), Some(&body[..]), "the bytes are the runner's, byte for byte");
+
+        // Idempotent: the same body again is not written again, and is not an error.
+        let again = ok("put again", diamond::versions_put_body(id, &hash, body).await);
+        assert!(!again, "a body already held is not put down twice");
+
+        // 3. THE HASH IS CHECKED, NOT TRUSTED: bytes under a name they are not are refused,
+        //    because a body stored under the wrong name restores the wrong file for ever after.
+        let wrong = diamond::versions_put_body(id, &hash, b"something else").await;
+        assert!(wrong.is_err(), "bytes that do not hash to the name are refused");
+        let still = ok("read", diamond::versions_body(id, &hash).await);
+        assert_eq!(still.as_deref(), Some(&body[..]), "a refused put leaves the right body alone");
+
+        // A name that is not a hash at all is refused rather than written as a path.
+        assert!(diamond::versions_put_body(id, "../escape", body).await.is_err(),
+            "a name that is not a hash is refused");
+    }).await;
+    closed();
+}
+
+#[tokio::test]
+async fn carry_a_runner_turns_bodies_reach_the_asker_mem() {
+    over(Over::Mem);
+    carry_a_runner_turns_bodies_reach_the_asker().await
+}
+
+#[tokio::test]
+async fn carry_a_runner_turns_bodies_reach_the_asker_ozone() {
+    over(Over::Ozone);
+    carry_a_runner_turns_bodies_reach_the_asker().await
+}

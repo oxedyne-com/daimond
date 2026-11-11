@@ -2703,6 +2703,25 @@ impl DaimondApp {
         versions_said(ok!(diamond::versions_record_carried(&id, &json).await.map_err(to_js_err)))
     }
 
+    /// Put one of a carried turn's file bodies down for `id` (CARRY-DIAMOND), from the bytes the
+    /// page fetched out of the runner's chunk manifest and unsealed.
+    ///
+    /// The page calls this once per row that carries a `carry` manifest, BEFORE it calls
+    /// [`Self::versions_record_carried`], so the version that door writes names bodies this device
+    /// already holds.  Answers `true` where it put one down, `false` where it was here already.
+    /// The bytes are checked against `hash` and refused rather than stored under a name they are
+    /// not: see [`diamond::versions_put_body`].
+    ///
+    /// # Arguments
+    /// * `id`    - the keeper the version is recorded under (`versions_record_carried`'s `id`).
+    /// * `hash`  - the body's name, as the runner's row gave it.
+    /// * `bytes` - the body.
+    pub async fn versions_put_body(&self, id: String, hash: String, bytes: Vec<u8>)
+        -> Result<bool, JsValue>
+    {
+        Ok(ok!(diamond::versions_put_body(&id, &hash, &bytes).await.map_err(to_js_err)))
+    }
+
     /// The tail note a turn's session takes where it changed files, the Here turn's
     /// ([`versions::tail_note`]), as a page message: the runner's session gets the same one from
     /// the version [`Self::versions_record_carried`] wrote (RT-C, invariant 8).  `{}` where

@@ -1150,6 +1150,41 @@
 		} catch (e) { /* the mark is lost with the page; the runner still answers */ }
 	}
 
+	/// Put down the file bodies a runner's turn carried (CARRY-DIAMOND).
+	///
+	/// A runner's row names its body by hash and gives a `carry` manifest — the same v2 shape
+	/// `chunks.js offloadBytes` makes — for the bytes, which the runner sealed under the account
+	/// key and put through its own chunk door. Without this the version recorded below names
+	/// bodies no device holds: the panel falls back to the Diamond's seed and the Diamond opens
+	/// with Files 0, which is the defect this closes.
+	///
+	/// ONE BODY AT A TIME, and each let go once it is down: a Diamond is not held whole here.
+	/// A body that will not come back is left out and the row stands as it always did (a History
+	/// row to read, not one to act on), so a chunk the gateway has swept costs a restore and
+	/// never the whole turn.
+	async function putCarried(a, keeper, rec) {
+		var files = rec && Array.isArray(rec.files) ? rec.files : [];
+		var put = 0, why = '';
+		for (var i = 0; i < files.length; i++) {
+			var row = files[i], man = row && row.carry;
+			if (!man || !row.hash || !row.path) continue;
+			if (!window.DaimondChunks || typeof DaimondChunks.materialiseBytes !== 'function') {
+				why = why || 'no chunk reader'; continue;
+			}
+			if (typeof a.versions_put_body !== 'function') { why = why || 'no body door'; continue; }
+			var bytes = null;
+			try { bytes = await DaimondChunks.materialiseBytes(man); }
+			catch (e) { bytes = null; }
+			if (!bytes || !bytes.length) { why = why || 'a body did not come back'; continue; }
+			try {
+				if (await a.versions_put_body(String(keeper), String(row.hash), bytes)) put++;
+			} catch (e) { why = why || ('the body door refused: ' + (e && e.message ? e.message : e)); }
+			bytes = null;
+		}
+		if (why) log('carried bodies: ' + why);
+		return put;
+	}
+
 	/// Record a settling report's turn rows as one version of the keeper. Once per run
 	/// on this page (the engine is idempotent by run as well). Answers what the engine said,
 	/// `{version, files, note}` (`note` the tail note a Here session takes, as a page message),
@@ -1162,6 +1197,11 @@
 		if (!a || typeof a.versions_record_carried !== 'function') return null;
 		_carried.push(run);
 		if (_carried.length > UNDO_MAX) _carried.shift();
+		// THE BODIES FIRST: the version recorded below names them, so a device that has the row
+		// and not the bytes is a Diamond that opens empty (CARRY-DIAMOND).
+		var keeper = String(rec.keeper);
+		try { rec.carried = await putCarried(a, keeper, rec); }
+		catch (e) { rec.carried = 0; }
 		var got;
 		try { got = await a.versions_record_carried(String(rec.keeper), JSON.stringify(rec)); }
 		catch (e) { _carried.splice(_carried.indexOf(run), 1); return null; }

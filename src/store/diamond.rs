@@ -6293,9 +6293,17 @@ pub async fn versions_record_undone(id: &str, json: &str)
 }
 
 /// Write one version of a turn another device ran ([`versions_record_carried`],
-/// [`versions_record_undone`]): no bodies -- the bytes are on the runner -- so nothing is put down
-/// and nothing this device's own turn put down is taken back.  Nothing where `rows` and `away.net`
-/// are both empty, or a version already carries `away.run`.
+/// [`versions_record_undone`]): no bodies are written HERE, so nothing this device's own turn put
+/// down is taken back.  Nothing where `rows` and `away.net` are both empty, or a version already
+/// carries `away.run`.
+///
+/// **Where the bodies are** (CARRY-DIAMOND).  A runner's row names a body this door does not put
+/// down, which used to leave it naming one no device would ever hold.  The runner now carries the
+/// bytes in its record (`carry`, a v2 chunk manifest) and the page puts each one down through
+/// [`versions_put_body`] before it calls this, so the version this writes names bodies that are
+/// here.  The door is not called from this function because the bytes are the page's to fetch and
+/// unseal, and a store call that waited on the chunk door would hold the mailbox lock across a
+/// network round trip.
 async fn record_away(
     key:  &str,
     cause: Cause,
@@ -6386,6 +6394,39 @@ pub async fn versions_body(id: &str, hash: &str) -> Outcome<Option<Vec<u8>>> {
         Ok(b)  => Ok(Some(b)),
         Err(_) => Ok(None),
     }
+}
+
+/// Put `bytes` down as the body named `hash` for `id` (CARRY-DIAMOND), so a carried turn's row can
+/// be restored, opened and drawn on this device as one of its own turns' can.
+///
+/// The window a runner's report used to open is closed here.  `record_away` says "the bytes are on
+/// the runner" and writes no body, which was true only while the runner kept them and no one could
+/// fetch one by hash: the asking device got a row naming a body it would never hold, the panel fell
+/// back to the Diamond's seed, and the Diamond opened with Files 0.  The runner now carries the
+/// bytes, and this door is where the asker puts them down before the row that names them is
+/// recorded.
+///
+/// **The hash is checked, not trusted.**  A body whose bytes do not hash to `hash` is refused
+/// rather than stored under a name it is not, which would make every later restore from that body
+/// quiet and wrong.  Idempotent: a body already held is not written again and answers `false`.
+pub async fn versions_put_body(id: &str, hash: &str, bytes: &[u8]) -> Outcome<bool> {
+    // The same key `versions_record_carried` records under ([`carried_keeper`]), so the body the
+    // page puts down is the body the version it is about to write names.
+    let key = res!(carried_keeper(id, ""));
+    if !versions::is_hash(hash) {
+        return Err(not_a_body(hash));
+    }
+    if versions::hash_of(bytes) != hash {
+        return Err(err!("The bytes offered as body '{}' of {} do not hash to it, so they were not \
+            put down: a body stored under a name it is not would restore the wrong file.", hash, key;
+            Invalid, Data));
+    }
+    let to = body_path(&key, hash);
+    if res!(own::exists(&to).await) {
+        return Ok(false);
+    }
+    res!(own::write_file(&to, bytes).await);
+    Ok(true)
 }
 
 /// The manifest JSON `version` recorded for `id`, as stored, or `None` where there is none.
