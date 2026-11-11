@@ -88,9 +88,17 @@ const WORDS = '\n### [m1] 2026-10-25\n> u2 first "quoted" é\n\n### 2026-10-25\n
 	try { none = P.buildDispatch(small, Object.assign({}, o, { session: sess, words: null })).errand(0).seed; } catch (e) { none = null; }
 	check('(a) no words given, none sent', !!none && !('words' in none) && !!none.session);
 	const fit = lift(PEER_SRC, 'sealFittingErrand') || '';
-	const rung = fit.slice(fit.indexOf('if (p.fields.seed && p.fields.seed.session)'));
-	check('(a) the reference rung drops the words with the session', /o1\.session\s*=\s*null;[\s\S]{0,200}o1\.words\s*=\s*null;/.test(rung.slice(0, 600))
-		|| /o1\.words\s*=\s*null;[\s\S]{0,200}o1\.session\s*=\s*null;/.test(rung.slice(0, 600)));
+	// LONGCHAT (11 Nov 2026): the reference rung is no longer entered by `if (p.fields.seed &&
+	// p.fields.seed.session)` alone -- a rung that fits only by CUTTING the thread goes by
+	// reference too, so a bare runner gets every message -- so this anchors on the seal itself,
+	// which is what carries the words, and not on the old guard.
+	const at = fit.indexOf('sessionByChunks(');
+	const rung = at < 0 ? '' : fit.slice(at);
+	check('(a) the reference rung drops the words with the session', /o1\.session\s*=\s*null;[\s\S]{0,200}o1\.words\s*=\s*null;/.test(rung.slice(0, 700))
+		|| /o1\.words\s*=\s*null;[\s\S]{0,200}o1\.session\s*=\s*null;/.test(rung.slice(0, 700)));
+	// Dropped from the SEED, kept in the chunks: the log rides the session it was folded beside.
+	check('(a) and the words go into the chunk store with it, not lost',
+		/sessionByChunks\([\s\S]{0,300}\.words\)/.test(fit), at < 0 ? 'no sessionByChunks in sealFittingErrand' : '');
 }
 
 // (b) makeReport writes `words` last, only when there are any, as the runner's codec does.

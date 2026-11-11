@@ -2095,6 +2095,16 @@
 		// readiness is `holdsThread`, so it never runs a truncated thread (S-HAND #3).
 		var cMax0   = Math.min(SEED_MAX_CHARS, Math.floor(lim * 3 / 4) - prompt.length - String(o.pre == null ? '' : o.pre).length - 4096);
 		var budgets = [cMax0, Math.floor(cMax0 / 2), Math.floor(cMax0 / 4)];
+		// A RUNG THAT FITS BY CUTTING THE THREAD IS NOT A FIT (LONGCHAT, 11 Nov). It used to be
+		// -- the ladder's whole point -- and on a peer that had already synced the chat the runner
+		// grafted the missing rows back from its own copy, so nobody saw the cost. A NATIVE runner
+		// keeps no copy of the chat and nothing syncs it (`thread_lack`), so a clipped seed arrived
+		// short of messages and the turn was handed back for its thread on EVERY wait: the chat
+		// locked out for good, and the message that hit the wall was the last one its user saw. So
+		// a rung that fits only by dropping rows (or by leaving the engine session behind) falls
+		// through to the reference below, which carries the WHOLE conversation in the chunk store.
+		var cutOnly = false;
+		var fallback = null;		// the first rung that fit at all, cut or not
 		for (var b = 0; b < budgets.length; b++) {
 			if (budgets[b] <= 0) break;
 			var o2 = {}; if (opts) Object.keys(opts).forEach(function (k) { o2[k] = opts[k]; });
@@ -2104,8 +2114,21 @@
 			var pc   = buildDispatch(chat, o2);
 			var bc   = await sealForSelf(pc.errand(0));
 			tries++;
-			if (fits(String((bc && bc.envelope) || '').length)) return answer(pc, bc, false, tries);
+			if (!fits(String((bc && bc.envelope) || '').length)) continue;
+			var ps = pc.fields && pc.fields.seed;
+			// The whole thread on the seed's rows, and -- where the errand had the engine session --
+			// still an engine session to carry it. Either missing and the rung is a cut one.
+			if (ps && (ps.msgs || []).length >= threadN
+				&& (!(p.fields.seed && p.fields.seed.session) || ps.session)) {
+				return answer(pc, bc, false, tries);
+			}
+			cutOnly = true;
+			if (!fallback) fallback = { plan: pc, body: bc };
 		}
+		// `cutOnly`: a rung fitted by leaving part of the conversation behind, so the reference below
+		// is the way to send it whole -- and where there is no chunk store to put the reference in,
+		// or the put fails, the cut rung is still better than no errand at all (a page without
+		// chunks.js, which no shipped page is).
 		// AN OVER-DOOR SESSION GOES AS A REFERENCE (KT-4b), `{chat, sig, upto}`, once no rung above
 		// fits with it whole: never cut, since a cut session orphans a tool call or loses a fold. The
 		// seed then goes down the sessionless ladder, the reference on every rung, so a runner holding
@@ -2118,12 +2141,28 @@
 		// that cannot read chunks hands back `thread`, as it did the bare reference. With no chunk
 		// store to put it in, or a put that fails, the turn ends "not run" here and nothing is
 		// posted (`notRun`, the cause the dispatcher ends it with); never for its size.
-		if (p.fields.seed && p.fields.seed.session) {
+		// The whole conversation the reference must carry: the plan's own engine session where it has
+		// one, and otherwise the thread's rows as the CHAT holds them, unbounded -- a caller that sent
+		// no session at all, whose seed is the prose rows alone.
+		function hasConv(s) { return !!(s && ((s.msgs && s.msgs.length) || (s.tail && s.tail.length))); }
+		function wholeSession() {
+			var own = p.fields.seed && p.fields.seed.session;
+			if (hasConv(own)) return own;
+			var ws = seedFrom(chat, p.fields.turnId, 1e9, 1e9);
+			var rows = (ws && ws.msgs) || [];
+			return rows.length ? { v: 1, msgs: [], upto: '', uptoTs: 0, marks: {}, tail: rows } : null;
+		}
+		// ONE REFERENCE PER TURN: the re-seal below comes back through here with no session and the
+		// reference already on its errand, and must not seal the same conversation into the chunks
+		// again (that recursion never ends, and it is the one that hung a page).
+		var byRef = !!o.__byRef;
+		var s0 = (!byRef && (cutOnly || hasConv(p.fields.seed && p.fields.seed.session))) ? wholeSession() : null;
+		if (s0) {
 			var o1 = {}; if (opts) Object.keys(opts).forEach(function (k) { o1[k] = opts[k]; });
-			var s0 = p.fields.seed.session;
 			var carried = await sessionByChunks(p.fields.chatId, (p.fields.thread && p.fields.thread.sig) || 0,
 				String(s0.upto || ''), s0, p.fields.seed.words);
 			if (carried.notRun) {
+				if (fallback) return answer(fallback.plan, fallback.body, false, tries);
 				return { plan: p, body: null, notRun: carried.notRun, why: carried.why, tries: tries,
 					seedDropped: false, seedClipped: false, sealedLen: 0 };
 			}
@@ -2132,12 +2171,14 @@
 			o1.sessionRef = carried.ref;
 			o1.eid     = p.fields.eid;
 			o1.thread  = p.fields.thread;	// the thread the reference names
+			o1.__byRef = true;			// the re-seal carries this reference and makes no other
 			var bare = await sealFittingErrand(chat, o1, null, cap);
 			bare.tries     += tries;
 			bare.sessionRef = o1.sessionRef;	// the dispatcher's mark, for the hand-back's own words
 			return bare;
 		}
-		// Seedless.
+		// Seedless -- or the cut rung, where there is no session to send and one fitted.
+		if (fallback) return answer(fallback.plan, fallback.body, false, tries);
 		var o3 = {}; if (opts) Object.keys(opts).forEach(function (k) { o3[k] = opts[k]; });
 		o3.seed = false;
 		o3.eid  = p.fields.eid;

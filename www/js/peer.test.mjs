@@ -1142,6 +1142,49 @@ async function main() {
 		return { session: b.session, size: body.length, body: b };
 	}
 	const refHead = (r) => r ? JSON.stringify({ chat: r.chat, sig: r.sig, upto: r.upto }) : '';
+
+	// ── LONGCHAT: a long chat is never sent short ──
+	// A native runner keeps no copy of the chat and nothing syncs it, so a seed the ladder CLIPPED
+	// -- or one whose engine session it dropped to fit -- leaves it with a fraction of the
+	// conversation, and it hands the turn back for its thread on every wait: the chat locks out
+	// for good, and the message that hit the wall is the last one the user ever sees. So whatever
+	// the ladder decides about SIZE, the errand must still hand a bare runner the WHOLE
+	// conversation: on the seed, or in the chunk store its reference names.
+	{
+		const P = phone.DaimondPeer;
+		const longChat = { id: 'chat-long', provider: 'openrouter', model: 'test/m', holds: [], messages: [] };
+		for (let i = 0; i < 24; i++) {
+			longChat.messages.push({ role: i % 2 ? 'assistant' : 'user', content: (i % 2 ? 'a' : 'q').repeat(3000),
+				mid: 'L' + i, ts: T0 + i });
+		}
+		longChat.messages.push({ role: 'user', content: 'the long-chat turn', mid: 'TURN-LONG', ts: T0 + 100 });
+		const lOpts = { turnId: 'TURN-LONG', prompt: 'the long-chat turn', dispatchedBy: 'devPHONE', now: T0 + 100 };
+		// A chat with nothing folded yet: the conversation is the ROWS, so a seed that clips them
+		// has lost the chat and nothing on the seed says so. (A folded chat keeps its rows in the
+		// session, and then the session's own size sends it by reference already.)
+		const longSess = { v: 1, msgs: [], upto: '', uptoTs: 0, marks: {}, tail: [] };
+		const wantRows = longChat.messages.slice(0, 24);
+		const wholeS = wantRows.map((m) => m.mid);
+		const out = await P.sealFittingErrand(longChat, Object.assign({}, lOpts, { session: longSess }));
+		const er = out.plan.errand(0);
+		const onSeed = !!(out.plan.fields.seed && out.plan.fields.seed.msgs
+			&& wholeS.every((m) => out.plan.fields.seed.msgs.map((x) => x.mid).includes(m)));
+		const ref = out.sessionRef ? await openRef(Object.assign({}, er, { sessionRef: out.sessionRef })) : { why: 'none' };
+		// What a runner that holds no copy of the chat actually receives: the rows on the seed, or
+		// the rows in the reference's sealed session -- by `mid`, which is what `thread.ids` name.
+		const mids = (rows) => (rows || []).map((m) => m.mid);
+		const want = mids(wantRows);
+		const holds = (rows) => { const h = mids(rows); return want.every((m) => h.includes(m)); };
+		const onRef = !!ref.session && (holds(ref.session.tail) || holds(ref.session.msgs));
+		check('LONGCHAT-1: a long chat goes WHOLE to a runner that holds no copy of it (on the seed or by reference)',
+			onSeed || onRef,
+			JSON.stringify({ onSeed: onSeed, ref: ref.why || 'ok', dropped: out.seedDropped, clipped: out.seedClipped,
+				len: out.body.envelope.length, onSeedRows: out.plan.fields.seed ? mids(out.plan.fields.seed.msgs) : [],
+				refRows: ref.session ? mids(ref.session.tail || ref.session.msgs) : [], want: want }));
+		check('LONGCHAT-2: and the errand still fits the relay',
+			phone.DaimondPost.fitsRelay(out.body.envelope.length) === true, 'len=' + out.body.envelope.length);
+	}
+
 	console.log('\nKT-4 — the seed carries the session; focus and today ride the errand');
 	{
 		const P = phone.DaimondPeer;
@@ -1238,10 +1281,17 @@ async function main() {
 		const tOpen = await laptop.DaimondPeer.openEnvelope(tiny.body.envelope);
 		check('K4b-1: the seedless rung keeps the reference', tiny.seedDropped === true
 			&& refHead(tOpen.sessionRef) === wantRef, JSON.stringify([tiny.seedDropped, tOpen.sessionRef]));
-		const fit = await P.sealFittingErrand(big, Object.assign({}, rOpts,
-			{ session: { v: 1, msgs: [], upto: '', uptoTs: 0, marks: {}, tail: [] } }));
-		check('K4b-1: a session that fits sends no reference',
-			!('sessionRef' in (await laptop.DaimondPeer.openEnvelope(fit.body.envelope))));
+		// A chat whose whole errand fits the door rides its seed and needs no reference at all
+		// (LONGCHAT: the reference is the cure for a rung that would fit only by CUTTING, never a
+		// toll on a turn that already travels whole).
+		const shortChat = { id: 'chat-k4b2', provider: 'openrouter', model: 'test/m', holds: [], messages: [
+			{ role: 'user', content: 'q1', mid: 's1', ts: T0 }, { role: 'user', content: 'the short prompt', mid: 'TURN-SHORT', ts: T0 + 1 }] };
+		const fit = await P.sealFittingErrand(shortChat,
+			{ turnId: 'TURN-SHORT', prompt: 'the short prompt', dispatchedBy: 'devPHONE', now: T0 + 1 },
+			null, 24 * 1024);
+		check('K4b-1: a chat whose whole errand fits sends no reference',
+			!('sessionRef' in (await laptop.DaimondPeer.openEnvelope(fit.body.envelope))),
+			JSON.stringify(fit.sessionRef));
 		check('K4b-3: the seal marks the reference for the dispatcher', refHead(over.sessionRef) === wantRef
 			&& !fit.sessionRef, JSON.stringify([over.sessionRef, fit.sessionRef]));
 		// Addendum 1: at every door, an over-door session is sealed whole, as the reference, or not
