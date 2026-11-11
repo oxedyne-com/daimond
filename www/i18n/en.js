@@ -5357,6 +5357,8 @@
 	'versions.on_machine':     'On this computer',
 	'versions.machine_note':   'Only what the daimon wrote here',
 	'versions.not_here':       'Not on this device',
+	'versions.not_recorded_head': 'A turn\u2019s files were not recorded',
+	'versions.not_recorded_body': 'The files this turn left are not in History, so no other device can see them: {why}.',
 	'versions.link':           'Link to {target}',
 	'versions.link_here':      'A link; put back on the machine that has it',
 	'versions.snapshot':       'snapshot',

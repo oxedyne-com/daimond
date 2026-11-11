@@ -4140,6 +4140,8 @@
 	'versions.on_machine': 'Sur cet ordinateur',
 	'versions.machine_note': 'Seulement ce que le daimon a \u00e9crit ici',
 	'versions.not_here': 'Pas sur cet appareil',
+	'versions.not_recorded_head': 'Les fichiers d\u2019un tour n\u2019ont pas \u00e9t\u00e9 enregistr\u00e9s',
+	'versions.not_recorded_body': 'Les fichiers que ce tour a laiss\u00e9s ne sont pas dans l\u2019historique : aucun autre appareil ne peut les voir ({why}).',
 	'versions.link': 'Lien vers {target}',
 	'versions.link_here': 'Un lien ; \u00e0 restaurer sur la machine qui l\u2019a',
 	'versions.snapshot': 'instantané',

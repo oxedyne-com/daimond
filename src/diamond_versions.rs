@@ -2437,6 +2437,141 @@ pub fn carried_rows(rec: &str) -> Vec<Change> {
 	meter_rows(&ran)
 }
 
+/// How many file rows a runner's turn record names, whether or not any of them can be used:
+/// each object of its `files` array, which [`carried_rows`] reads one at a time.
+///
+/// # Arguments
+/// * `rec` - The `turnRec` object, as the report carried it.
+pub fn carried_named(rec: &str) -> usize {
+	objects_in(array_inside(rec, "files").unwrap_or("")).len()
+}
+
+/// [`carried_rows`], and what it left out: each row of `rec`'s `files` the record cannot use is
+/// said in one sentence naming the row and why, so a turn that reached no device says so rather
+/// than recording nothing in silence.
+///
+/// A row whose path is relative is resolved against the record's own workspace -- `root`, `cwd`
+/// or `workspace`, whichever it names and absolute -- rather than dropped, because a runner that
+/// names its files as its file tools wrote them still names them.  A relative path the record
+/// gives no absolute workspace for is still dropped, and is said, as is a hash that is not one,
+/// a path that is not plain, and a row past [`MADE_SENT_MAX`].
+///
+/// # Arguments
+/// * `rec` - The `turnRec` object, as the report carried it.
+pub fn carried_rows_said(rec: &str) -> (Vec<Change>, Vec<String>) {
+	let mut kept = carried_rows(rec);
+	let root = carried_root(rec);
+	let mut why: Vec<String> = Vec::new();
+	for (i, obj) in objects_in(array_inside(rec, "files").unwrap_or("")).into_iter().enumerate() {
+		let n = i + 1;
+		// The row's own keys, read with its author taken out: an author's keys are not a row's.
+		let own = without(obj, "by");
+		let path = match extract_json_string(&own, "path") {
+			Some(p) if !p.is_empty()	=> p,
+			_				=> {
+				why.push(fmt!("row {} names no path", n));
+				continue;
+			},
+		};
+		let hash = match extract_json_string(&own, "hash") {
+			Some(h)	=> h,
+			_	=> {
+				why.push(fmt!("row {} ({}) names no hash", n, path));
+				continue;
+			},
+		};
+		if !is_hash(&hash) {
+			why.push(fmt!("row {} ({}): its hash is not the sha256 this module could have \
+				written, so no body can be addressed by it", n, path));
+			continue;
+		}
+		if path.len() > MADE_PATH_SENT_MAX {
+			why.push(fmt!("row {}: its path is longer than the {} bytes a turn may carry", n,
+				MADE_PATH_SENT_MAX));
+			continue;
+		}
+		let full = match plain_abs(&path) {
+			true	=> path.clone(),
+			false	=> match (root.as_deref(), plain_rel(&path)) {
+				(Some(r), true)	=> fmt!("{}/{}", r.trim_end_matches('/'), path),
+				(Some(_), false)	=> {
+					why.push(fmt!("row {}: \"{}\" is neither absolute nor a plain relative \
+						path, so it names no file", n, path));
+					continue;
+				},
+				(None, _)	=> {
+					why.push(fmt!("row {}: \"{}\" is relative and the record names no \
+						absolute workspace to resolve it against", n, path));
+					continue;
+				},
+			},
+		};
+		// A row `carried_rows` kept is already in hand, whichever shape its path was in.
+		if kept.iter().any(|c| c.path == full || c.path == path) {
+			continue;
+		}
+		if kept.len() >= MADE_SENT_MAX {
+			why.push(fmt!("row {} ({}): the record already names the {} files a turn may \
+				carry, the most there are", n, full, MADE_SENT_MAX));
+			continue;
+		}
+		let created = extract_json_bool(&own, "created").unwrap_or(false);
+		let by = object_inside(obj, "by");
+		let author = Author {
+			role: by.and_then(|b| extract_json_string(b, "agent"))
+				.filter(|a| !a.is_empty())
+				.unwrap_or_else(|| "daimon".to_string()),
+			// The runner's own credit: a command's, else its file tool's, as Here (RT-D2).
+			via:  match by.and_then(|b| extract_json_string(b, "via")).as_deref() {
+				Some(VIA_COMMAND)	=> VIA_COMMAND.to_string(),
+				_			=> String::new(),
+			},
+			..Default::default()
+		};
+		kept.push(Change {
+			path:    full,
+			after:   Body::Large(BodyRef { hash, len: 0 }),
+			mark:    true,
+			refused: Some(MADE_BY_COMMAND.to_string()),
+			found:   if created { Found::Nothing } else { Found::Unread },
+			by:      Some(author),
+			..Change::gone("")
+		});
+	}
+	(kept, why)
+}
+
+/// The workspace a runner's turn record names for its own file rows -- `root`, `cwd` or
+/// `workspace`, the first that is absolute and plain -- off its top level, its file and network
+/// rows taken out first so no row's key is read as the record's.
+fn carried_root(rec: &str) -> Option<String> {
+	let head = carried_head(rec);
+	for key in ["root", "cwd", "workspace"] {
+		if let Some(r) = extract_json_string(&head, key) {
+			// A workspace is written with or without its last `/`; both name the same place.
+			let r = r.trim_end_matches('/');
+			if plain_abs(r) {
+				return Some(r.to_string());
+			}
+		}
+	}
+	None
+}
+
+/// Is `p` a plain absolute path, which a manifest may name: from the root, with no empty, `.` or
+/// `..` component and no NUL.
+fn plain_abs(p: &str) -> bool {
+	p.starts_with('/') && !p.contains('\0')
+		&& p.split('/').skip(1).all(|c| !c.is_empty() && c != "." && c != "..")
+}
+
+/// Is `p` a plain relative path: no empty, `.` or `..` component, so joining it to a workspace
+/// cannot reach out of that workspace.
+fn plain_rel(p: &str) -> bool {
+	!p.is_empty() && !p.contains('\0') && !p.starts_with('/')
+		&& p.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
+}
+
 /// The [`Away`] a runner's turn record names: `{on, onName, run, since, until, more}` off its top
 /// level, with its `net` rows and `netMore` (U8h), its file rows taken out first so no row's key is read as the record's.  `None` where it names
 /// no run.

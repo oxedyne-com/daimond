@@ -4132,6 +4132,8 @@
 	'versions.on_machine': 'Auf diesem Computer',
 	'versions.machine_note': 'Nur was der Daimon hier schrieb',
 	'versions.not_here': 'Nicht auf diesem Ger\u00e4t',
+	'versions.not_recorded_head': 'Die Dateien eines Zugs wurden nicht aufgezeichnet',
+	'versions.not_recorded_body': 'Die Dateien, die dieser Zug hinterlassen hat, stehen nicht im Verlauf, deshalb kann sie kein anderes Ger\u00e4t sehen: {why}.',
 	'versions.link': 'Verkn\u00fcpfung zu {target}',
 	'versions.link_here': 'Eine Verkn\u00fcpfung; auf dem Rechner wiederherstellen, der sie hat',
 	'versions.snapshot': 'Snapshot',

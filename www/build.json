@@ -1,1 +1,1 @@
-{"build":"52a756713e7e","note":"A long chat no longer locks itself out: the whole conversation goes to argonaut by reference"}
+{"build":"68e35d888bbd","note":"Files a daimon writes in a Diamond are recorded as a version, so they reach every device"}

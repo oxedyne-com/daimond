@@ -1189,6 +1189,14 @@
 	/// on this page (the engine is idempotent by run as well). Answers what the engine said,
 	/// `{version, files, note}` (`note` the tail note a Here session takes, as a page message),
 	/// or `{}` where it recorded nothing; null where it was not asked or failed.
+	///
+	/// A FAILURE HERE IS SAID, NOT SWALLOWED (12 Nov 2026). It used to be swallowed whole --
+	/// `catch (e) { _carried.splice(...); return null; }` -- and a carried turn that recorded
+	/// nothing therefore left no trace on any device: Neil's Divergence on 11 Nov had file
+	/// bodies in its store and no manifest, no `claims.json` row and `crystal_version` 0, so
+	/// sync had nothing to send and his Tasks view never appeared on the phone. The engine
+	/// now raises on a record whose every row it had to drop, and the reason reaches the
+	/// Pending panel here, because a failure the person cannot see is a failure nobody fixes.
 	async function recordCarried(rec) {
 		if (!rec || typeof rec !== 'object' || !rec.keeper || !rec.run) return null;
 		var run = String(rec.run);
@@ -1204,10 +1212,16 @@
 		catch (e) { rec.carried = 0; }
 		var got;
 		try { got = await a.versions_record_carried(String(rec.keeper), JSON.stringify(rec)); }
-		catch (e) { _carried.splice(_carried.indexOf(run), 1); return null; }
+		catch (e) { _carried.splice(_carried.indexOf(run), 1); notRecorded(rec, (e && e.message) || String(e)); return null; }
 		var said = {};
 		try { said = JSON.parse(got) || {}; } catch (e) { said = {}; }
-		if (!(said.version > 0) || !Array.isArray(said.files) || !said.files.length) return said;
+		// `{}` is the engine saying the turn left nothing to record, or recorded it already.
+		// Not a fault, but worth a line for whoever has to work out why a device saw no row.
+		if (!(said.version > 0)) {
+			sayDebug('run ' + run + ' of ' + String(rec.keeper) + ' recorded nothing: ' + got);
+			return said;
+		}
+		if (!Array.isArray(said.files) || !said.files.length) return said;
 		if (typeof a.versions_tail_note === 'function') {
 			try {
 				var note = JSON.parse(a.versions_tail_note(said.version, JSON.stringify(said.files)));
@@ -1215,6 +1229,27 @@
 			} catch (e) { /* the row is still made; a chat keeper's needs no note */ }
 		}
 		return said;
+	}
+
+	/// Say that a turned-in turn's files were not recorded, where the person will see it: the
+	/// Pending panel (`alerts.js` `note`, under the page's own `turn-failed` key, so it stands
+	/// outside the model's twenty and cannot be cleared by it), and the console for whoever
+	/// reads a trace. Both are best-effort: a failure to say so is not worth another failure.
+	function notRecorded(rec, why) {
+		sayWarn('run ' + String(rec.run) + ' of ' + String(rec.keeper) + ' was not recorded: ' + why);
+		try {
+			if (window.DaimondAlerts && DaimondAlerts.note)
+				DaimondAlerts.note(String(rec.keeper), 'turn-failed',
+					tOr('versions.not_recorded_head', "A turn's files were not recorded", null),
+					tOr('versions.not_recorded_body', 'The files this turn left are not in History, so no ' +
+						'other device can see them: {why}.', { why: why }));
+		} catch (e) { /* the console line above stands */ }
+	}
+	function sayWarn(s) {
+		try { if (window.console && console.warn) console.warn('DaimondVersions: ' + s); } catch (e) {}
+	}
+	function sayDebug(s) {
+		try { if (window.console && console.debug) console.debug('DaimondVersions: ' + s); } catch (e) {}
 	}
 
 	/// The mark kept for `run`, or null.

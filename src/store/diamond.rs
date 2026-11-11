@@ -6249,15 +6249,19 @@ pub async fn versions_record_carried(id: &str, json: &str)
         "A carried turn names no run, so it could not be undone or told from another: not \
         recorded."; Invalid, Input)));
     let key = res!(carried_keeper(id, &head));
-    let rows: Vec<Entry> = versions::carried_rows(json).into_iter()
-        .map(versions::carried_entry)
-        .collect();
+    let (rows, dropped) = versions::carried_rows_said(json);
+    let named = versions::carried_named(json);
+    if !dropped.is_empty() {
+        console_log(&fmt!("A carried turn of '{}' left {} of {} rows out: {}.", key,
+            dropped.len(), named, dropped.join("; ")));
+    }
+    let rows: Vec<Entry> = rows.into_iter().map(versions::carried_entry).collect();
     let turn = extract_json_string(&head, "turnId").unwrap_or_default();
     let ts = match crate::llm::extract_json_number(&head, "ts") {
         Some(t) if t > 0 => t,
         _                => now_ms() as u64,
     };
-    record_away(&key, Cause::Turn, &turn, rows, away, ts).await
+    record_away(&key, Cause::Turn, &turn, rows, away, ts, named, &dropped).await
 }
 
 /// Record what a runner's undo of a carried turn did (RUN-HIST S2): one [`Cause::Restore`] version,
@@ -6289,7 +6293,7 @@ pub async fn versions_record_undone(id: &str, json: &str)
         }
         turn = m.turn;
     }
-    record_away(&key, Cause::Restore, &turn, rows, undo, now_ms() as u64).await
+    record_away(&key, Cause::Restore, &turn, rows, undo, now_ms() as u64, 0, &[]).await
 }
 
 /// Write one version of a turn another device ran ([`versions_record_carried`],
@@ -6304,27 +6308,41 @@ pub async fn versions_record_undone(id: &str, json: &str)
 /// here.  The door is not called from this function because the bytes are the page's to fetch and
 /// unseal, and a store call that waited on the chunk door would hold the mailbox lock across a
 /// network round trip.
+///
+/// **A record that used none of its rows.**  A record that DID name file rows (`named`) and left
+/// every one of them out (`dropped`) is not the same thing as a turn that left nothing: it is a
+/// turn whose files reached no device, and answering `Ok(None)` for it said so nowhere.  It is a
+/// fault, with each dropped row's reason in its sentence.  The repost is judged first, so a turn
+/// already recorded answers `Ok(None)` however its rows now read.
 async fn record_away(
-    key:  &str,
-    cause: Cause,
-    turn: &str,
-    rows: Vec<Entry>,
-    away: versions::Away,
-    ts:   u64,
+    key:     &str,
+    cause:   Cause,
+    turn:    &str,
+    rows:    Vec<Entry>,
+    away:    versions::Away,
+    ts:      u64,
+    named:   usize,
+    dropped: &[String],
 )
     -> Outcome<Option<(u64, Vec<String>)>>
 {
-    if rows.is_empty() && away.net.is_empty() {
-        return Ok(None);
-    }
     let hold = res!(hold_versions(key).await);
     let held = versions_manifests(key).await;
     if held.iter().any(|(_, m)| m.away.as_ref().is_some_and(|a| a.run == away.run)) {
         return Ok(None);
     }
+    if rows.is_empty() && away.net.is_empty() {
+        // Rows it named and could not use: nothing was recorded and this device must say why.
+        if named > 0 && !dropped.is_empty() {
+            return Err(err!("The carried turn named {} file(s) and none could be recorded, so \
+                nothing reached this device's History: {}.", named, dropped.join("; ");
+                Invalid, Input));
+        }
+        return Ok(None);
+    }
     let mut manifest = Manifest::new(cause, ts, turn, "", rows);
     manifest.away = Some(away);
-    let named: Vec<String> = manifest.files.iter().map(|e| e.path.clone()).collect();
+    let paths: Vec<String> = manifest.files.iter().map(|e| e.path.clone()).collect();
     let version = match holds_diamond(key) {
         false => mint_chat_version(key, &held),
         true  => res!(mint_files_version(&hold, key, ts).await),
@@ -6352,7 +6370,7 @@ async fn record_away(
     if let Err(e) = prune_held(&hold, key, "carried").await {
         console_log(&fmt!("Diamond '{}': the version store could not be pruned ({}).", key, e));
     }
-    Ok(Some((version, named)))
+    Ok(Some((version, paths)))
 }
 
 /// What the version store weighs against what it is allowed to weigh.

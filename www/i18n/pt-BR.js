@@ -4124,6 +4124,8 @@
 	'versions.on_machine': 'Neste computador',
 	'versions.machine_note': 'S\u00f3 o que o daimon escreveu aqui',
 	'versions.not_here': 'N\u00e3o est\u00e1 neste aparelho',
+	'versions.not_recorded_head': 'Os arquivos de um turno n\u00e3o foram registrados',
+	'versions.not_recorded_body': 'Os arquivos que este turno deixou n\u00e3o est\u00e3o no Hist\u00f3rico, ent\u00e3o nenhum outro aparelho pode v\u00ea-los: {why}.',
 	'versions.link': 'Link para {target}',
 	'versions.link_here': 'Um link; restaure no computador que o tem',
 	'versions.snapshot': 'instantâneo',

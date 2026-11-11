@@ -4125,6 +4125,8 @@
 	'versions.on_machine': 'En este ordenador',
 	'versions.machine_note': 'S\u00f3lo lo que el daimon escribi\u00f3 aqu\u00ed',
 	'versions.not_here': 'No est\u00e1 en este dispositivo',
+	'versions.not_recorded_head': 'Los archivos de un turno no se registraron',
+	'versions.not_recorded_body': 'Los archivos que dej\u00f3 este turno no est\u00e1n en el Historial, as\u00ed que ning\u00fan otro dispositivo puede verlos: {why}.',
 	'versions.link': 'Enlace a {target}',
 	'versions.link_here': 'Un enlace; se restaura en el equipo que lo tiene',
 	'versions.snapshot': 'instantánea',

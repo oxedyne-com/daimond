@@ -836,6 +836,61 @@ async fn histnet_a_a_net_only_turn_is_recorded() {
     closed();
 }
 
+/// **A carried turn whose every row was dropped records nothing and SAYS SO (12 Nov 2026).** Neil's
+/// Diamond had the turn's bodies in `versions/`, no manifest, `claims.json` `[]` and
+/// `crystal_version` 0: `record_away` answered `Ok(None)` for a record that named files and could
+/// use none of them, which is indistinguishable from a turn that left nothing, so sync was never
+/// told there was anything to send. It is now an error naming the row and the reason, and the
+/// store is left exactly as it was.
+async fn a_carried_turn_that_drops_every_row_says_why() {
+    fresh();
+    let id = "rh9";
+    env("p", id).scope(async {
+        diamond_at(id).await;
+        // A row whose path is relative and whose record names no workspace: it names no place
+        // any device can find.
+        let rec = fmt!("{{\"v\":1,\"files\":[{{\"path\":\"crystal.json\",\"hash\":\"{}\",\
+            \"created\":true}}],\"keeper\":\"{}\",\"turnId\":\"t9\",\"run\":\"e-9\",\
+            \"on\":\"dev-argo\",\"onName\":\"argonaut\",\"since\":1000,\"until\":2000,\
+            \"ts\":1500}}", "a".repeat(64), id);
+        let got = diamond::versions_record_carried(id, &rec).await;
+        let e = match got {
+            Ok(v)  => panic!("a record it could use nothing of answered {:?}", v),
+            Err(e) => e,
+        };
+        let said = e.to_string();
+        assert!(said.contains("crystal.json"), "the reason names the path: {}", said);
+        assert!(said.contains("relative"), "and what is wrong with it: {}", said);
+        assert!(diamond::versions_manifests(id).await.is_empty(), "nothing was written");
+        assert_eq!(at_version(id).await, 0, "and nothing was claimed");
+    }).await;
+    closed();
+}
+
+/// **The same row, with the record naming its workspace, is recorded at the absolute path.** The
+/// runner writes its rows as its file tools name them; the asker now resolves them rather than
+/// throwing them away, which is what puts a carried turn in History at all.
+async fn a_relative_carried_row_is_resolved_and_recorded() {
+    fresh();
+    let id = "rh10";
+    env("p", id).scope(async {
+        diamond_at(id).await;
+        let root = "/home/jason/diamonds/rh10";
+        let rec = fmt!("{{\"v\":1,\"files\":[{{\"path\":\"crystal.json\",\"hash\":\"{}\",\
+            \"created\":true}}],\"root\":\"{}\",\"keeper\":\"{}\",\"turnId\":\"ta\",\
+            \"run\":\"e-a\",\"on\":\"dev-argo\",\"onName\":\"argonaut\",\"since\":1000,\
+            \"until\":2000,\"ts\":1500}}", "c".repeat(64), root, id);
+        let (_, files) = match ok("carried", diamond::versions_record_carried(id, &rec).await) {
+            Some(g) => g,
+            None    => panic!("the carried turn recorded nothing"),
+        };
+        assert_eq!(files, vec![fmt!("{}/crystal.json", root)]);
+        // And a repost of it is still nothing, not the error above.
+        assert_eq!(ok("again", diamond::versions_record_carried(id, &rec).await), None);
+    }).await;
+    closed();
+}
+
 // ── (e) pend and unpend ──────────────────────────────────────────────────────────────────────
 
 /// Every note in `id`'s pending directory, as text.
@@ -1478,6 +1533,30 @@ async fn runhist_a_runner_turn_is_recorded_once_with_its_away_mem() {
 async fn runhist_a_runner_turn_is_recorded_once_with_its_away_ozone() {
     over(Over::Ozone);
     runhist_a_runner_turn_is_recorded_once_with_its_away().await
+}
+
+#[tokio::test]
+async fn a_carried_turn_that_drops_every_row_says_why_mem() {
+    over(Over::Mem);
+    a_carried_turn_that_drops_every_row_says_why().await
+}
+
+#[tokio::test]
+async fn a_carried_turn_that_drops_every_row_says_why_ozone() {
+    over(Over::Ozone);
+    a_carried_turn_that_drops_every_row_says_why().await
+}
+
+#[tokio::test]
+async fn a_relative_carried_row_is_resolved_and_recorded_mem() {
+    over(Over::Mem);
+    a_relative_carried_row_is_resolved_and_recorded().await
+}
+
+#[tokio::test]
+async fn a_relative_carried_row_is_resolved_and_recorded_ozone() {
+    over(Over::Ozone);
+    a_relative_carried_row_is_resolved_and_recorded().await
 }
 
 #[tokio::test]
