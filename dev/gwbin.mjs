@@ -411,6 +411,21 @@ export function netEnv() {
 	return env;
 }
 
+/// An own gateway's `keys` in its working directory `work`. On a net (net.env names one) it is a link to the
+/// key root, as the net guard requires (gateway/src/net.rs: `./keys` a link to `DAIMOND_KEY_ROOT`); with no
+/// net, a directory of links to the tree's own keys `names`, as before.
+export function ownGatewayKeys(work, names) {
+	const net = netEnv(), dst = path.join(work, 'keys');
+	const root = net.DAIMOND_NETWORK && (process.env.DAIMOND_KEY_ROOT || net.DAIMOND_KEY_ROOT);
+	fs.mkdirSync(work, { recursive: true });
+	if (root) { fs.symlinkSync(root, dst); return; }
+	fs.mkdirSync(dst, { recursive: true });
+	for (const k of names) {
+		const from = path.join(GWDIR, 'keys', k);
+		if (fs.existsSync(from)) fs.symlinkSync(from, path.join(dst, k));
+	}
+}
+
 /// The `net` a dev Stripe event names in its metadata. The gateway tags every session it opens
 /// with its net (checkout.rs `metadata[net]`) and a test-net gateway refuses a grant event that
 /// names none (net.rs `admits`), so a synthetic event says the dev gateway's net, read from the

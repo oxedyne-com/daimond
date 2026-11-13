@@ -24,8 +24,9 @@ import os   from 'node:os';
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { gateNow } from './rig/gateclock.mjs';
 import { requireFreshGateway, GWBIN, GWDIR, openBeta, procLog, gatewayEnv,
-	stopGatewayCleanly } from './gwbin.mjs';
+	stopGatewayCleanly, ownGatewayKeys } from './gwbin.mjs';
 
 const HERE     = path.dirname(fileURLToPath(import.meta.url));
 const ROOT     = path.join(HERE, '..');
@@ -37,7 +38,7 @@ const GW_URL   = `http://127.0.0.1:${GW_PORT}`;
 const SCRATCH  = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
 const WORK     = path.join(SCRATCH, 'verify_lens_shot');
 const GWWORK   = path.join(WORK, 'gw');
-const TRACES   = path.join(WORK, 'traces');	// the gateway's debug-trace directory
+const TRACES   = path.join(GWWORK, 'traces');	// the gateway's debug-trace directory, inside its cwd (net guard)
 const LENS     = path.join(WORK, 'lens');		// the Lens's own home
 const PROFILE  = path.join(WORK, 'profile-own');
 const GW_LOG   = procLog('verify_lens_shot');
@@ -108,13 +109,9 @@ for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { cleanup(); proc
 
 function buildWork() {
 	fs.rmSync(WORK, { recursive: true, force: true });
-	fs.mkdirSync(path.join(GWWORK, 'keys'), { recursive: true });
+	ownGatewayKeys(GWWORK, ['licence', 'stripe', 'openrouter']);
 	fs.mkdirSync(TRACES, { recursive: true });
 	fs.mkdirSync(LENS, { recursive: true });
-	for (const k of ['licence', 'stripe', 'openrouter']) {
-		const from = path.join(GWDIR, 'keys', k);
-		if (fs.existsSync(from)) fs.symlinkSync(from, path.join(GWWORK, 'keys', k));
-	}
 	let cfg = fs.readFileSync(path.join(GWDIR, 'app.jdat'), 'utf8')
 		.replace(/"listen_port":\s*\(u16\|\d+\)/, `"listen_port": (u16|${GW_PORT})`);
 	if (!cfg.includes(`(u16|${GW_PORT})`)) {
@@ -291,12 +288,22 @@ async function pageShare(page, file, rect) {
 
 		// ── 4. on ────────────────────────────────────────────────────────
 		console.log('\n4. on: a toast, and a picture holding the Diamond page');
-		if (dA.item) {
-			// The drawer was redrawn by B's checks only on B; A's item is still live.
-			await dA.item.click({ force: true }).catch(() => {});
+		// Reached as a person reaches it: Settings home (the app's own call, since #user-row toggles and
+		// could close a drawer left open), then the "you" door, since Settings home shows doors and keeps
+		// each group's rows in a hidden holder (settingsgroups.js) until its door is opened.
+		await A.page.evaluate(() => { if (window.DaimondAdmin) DaimondAdmin.home(); });
+		const lsItem = A.page.locator('[data-lensshot]:visible').first();
+		let clickWhy = '';
+		await A.page.waitForTimeout(500);
+		if (!(await lsItem.isVisible())) {
+			await A.page.locator('[data-sgroup="you"]:visible').first().click({ timeout: 10000 })
+				.catch((e) => { clickWhy = 'no shown "you" door: ' + String(e.message || e).split('\n')[0]; });
 		}
+		if (!clickWhy) await lsItem.waitFor({ state: 'visible', timeout: 10000 })
+			.then(() => lsItem.click())
+			.catch((e) => { clickWhy = 'no shown [data-lensshot] item: ' + String(e.message || e).split('\n')[0]; });
 		const on = await A.page.evaluate(() => !!(window.DaimondLensShot && DaimondLensShot.enabled()));
-		check('the Settings item turns it on', on);
+		check('the Settings item turns it on', on, clickWhy);
 		const made = await makePageDiamond(A.page);
 		const did = made.id;
 		check('a Diamond with a one-colour page exists', !!did, made.why);
@@ -360,8 +367,9 @@ async function pageShare(page, file, rect) {
 		// ── 6. 7-day expiry ──────────────────────────────────────────────
 		console.log('\n6. kept seven days');
 		const st = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-		const old = `${st(Date.now() - 8 * 86400000)}.acct.${a.dev.slice(0, 16)}.Lold.png`;
-		const young = `${st(Date.now() - 6 * 86400000)}.acct.${a.dev.slice(0, 16)}.Lyoung.png`;
+		// Aged on the run's clock, which the gateway and the Lens's cut both read.
+		const old = `${st(gateNow() - 8 * 86400000)}.acct.${a.dev.slice(0, 16)}.Lold.png`;
+		const young = `${st(gateNow() - 6 * 86400000)}.acct.${a.dev.slice(0, 16)}.Lyoung.png`;
 		const mirror = path.join(LENS, 'traces', 'shots'), arch = path.join(LENS, 'archive', 'shots');
 		// Its own directories, so this section stands whether or not 4 archived anything.
 		for (const d of [mirror, arch]) fs.mkdirSync(d, { recursive: true });
