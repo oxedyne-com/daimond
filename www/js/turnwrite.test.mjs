@@ -1,6 +1,7 @@
 // The chat log's writing side on the tab (P2.3b, page/turnwrite.js), through the real engine
 // codec: a Here turn's rows reach the log on send, rows written offline wait under their turn
 // id and go once the gateway answers, a 409 `ended` stops the turn's writing, and a 413 halves.
+// A turn's rows carry the wipe epoch known when it began (`opt.epoch`, `opt.learn`: sync.js's).
 import { readPage } from '../../dev/pagesrc.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +17,7 @@ const skip = !existsSync(join(PKG, 'oxedyne_daimond_bg.wasm')) && 'no www/pkg wa
 // `share` is another tab's `{gw, key}`: a second device of the account, its own writer
 // (a module instance of its own) on the same log.
 let tabs = 0;
-async function rig(share) {
+async function rig(share, opt) {
 	const m = await import(join(PKG, 'oxedyne_daimond.js'));
 	m.initSync({ module: readPage(join(PKG, 'oxedyne_daimond_bg.wasm')) });
 	const tl = await import(join(HERE, 'page', 'turnwrite.js') + '?tab=' + (++tabs));
@@ -42,11 +43,14 @@ async function rig(share) {
 	// 409 for rows after an end, and an end for an open turn under a number already held
 	// lands after the turn's last row.
 	const gw = share ? share.gw
-		: { up: true, rows: [], ended: {}, moved: {}, posts: 0, rowMax: 16384, batchMax: 262144, refuseBatchOver: Infinity, refuseRowOver: Infinity, flushMs: 1, batches: [] };
-	const append = async (chat, rows) => {
+		: { up: true, rows: [], ended: {}, moved: {}, posts: 0, rowMax: 16384, batchMax: 262144, refuseBatchOver: Infinity, refuseRowOver: Infinity, flushMs: 1, batches: [], epochs: [] };
+	const append = async (chat, rows, epoch) => {
 		gw.posts++;
+		gw.epochs.push(epoch);
 		if (!gw.up) return { status: 0 };
 		const meta = { row_max: gw.rowMax, batch_max: gw.batchMax, flush_ms: gw.flushMs };
+		const refused = gw.refuse && gw.refuse(chat, rows, epoch);
+		if (refused) return { ...refused, json: { ...refused.json, ...meta } };
 		gw.batches.push(rows.length);
 		if (rows.length > gw.refuseBatchOver) return { status: 413, json: meta };
 		if (rows.some(r => String(r.body || '').length > gw.refuseRowOver)) return { status: 413, json: meta };
@@ -75,7 +79,7 @@ async function rig(share) {
 	};
 	let kept = [];
 	const ends = [], landed = [], faults = [];
-	tl.configureTurnLog({ bridge, wrap, append,
+	tl.configureTurnLog({ bridge, wrap, append, epoch: opt && opt.epoch, learn: opt && opt.learn,
 		onFault: (chat, turn, why) => faults.push([chat, turn, why]),
 		store: { load: () => kept, save: (r) => { kept = JSON.parse(JSON.stringify(r)); } },
 		onEnded: (chat, turn) => ends.push(turn),
@@ -143,6 +147,71 @@ test("a 409 'ended' stops the turn's writing and drops its rows", { skip }, asyn
 	assert.equal(tl.turnLogPending(), 0);
 	assert.equal(await tl.logTurn('c1', 'u3', tl.turnMessages(msgs, 'u3'), { status: 'done' }), false,
 		'a turn the log ended takes no more rows');
+});
+
+// The account was wiped since this device last named its epoch (sync.js sends it): every row
+// it holds was written before it knew, so none goes, in any chat, and each turn stops.
+test("a 409 'wiped' drops the whole outbox and ends its turns", { skip }, async () => {
+	const { tl, gw, ends } = await rig();
+	gw.up = false;
+	await tl.logTurn('c1', 'w1', tl.turnMessages([{ mid: 'w1', role: 'user', content: 'before the wipe' }], 'w1'));
+	await tl.logTurn('c2', 'w2', tl.turnMessages([{ mid: 'w2', role: 'user', content: 'a new chat, before' }], 'w2'));
+	gw.up = true;
+	let once = true;
+	gw.refuse = () => once && !(once = false) && { status: 409, json: { ok: false, why: 'wiped', epoch: 1 } };
+	await tl.flushTurnLog();
+	assert.equal(gw.rows.length, 0, 'a row from before the wipe reached the log');
+	assert.equal(tl.turnLogPending(), 0);
+	assert.deepEqual(ends.slice().sort(), ['w1', 'w2'], 'a wiped turn was read as one ended turn');
+	assert.ok(tl.turnLogEnded('w1') && tl.turnLogEnded('w2'));
+});
+
+// WL1 exam fault 1: the epoch a row goes under is the one its turn began at, not the one this
+// device learnt after. A turn written offline before a wipe stays refused once the page has
+// learnt the new epoch, and a turn begun after it is not dropped with it.
+test('a row goes under the epoch its turn began at, not the one learnt since', { skip }, async () => {
+	let known = 0;
+	const { tl, gw, ends, kept } = await rig(null, { epoch: () => known });
+	gw.up = false;
+	await tl.logTurn('c1', 'e1', tl.turnMessages([{ mid: 'e1', role: 'user', content: 'before the wipe' }], 'e1'));
+	assert.ok(kept().length && kept().every(q => q.epoch === 0), 'a kept row lost its epoch: ' + JSON.stringify(kept()));
+	known = 1;	// the account is wiped elsewhere; a read or the sync GET teaches it
+	await tl.logTurn('c2', 'e2', tl.turnMessages([{ mid: 'e2', role: 'user', content: 'after the wipe' }], 'e2'));
+	gw.up = true;
+	gw.refuse = (chat, rows, epoch) => epoch !== 1 && { status: 409, json: { ok: false, why: 'wiped', epoch: 1 } };
+	await tl.flushTurnLog();
+	assert.equal(gw.epochs[0], 0, 'the row from before the wipe went under a later epoch');
+	assert.deepEqual([...new Set(gw.rows.map(r => r.turn))], ['e2'], 'a row from before the wipe reached the log, or one after it did not');
+	assert.deepEqual(ends, ['e1']);
+	assert.ok(tl.turnLogEnded('e1') && !tl.turnLogEnded('e2'));
+	assert.equal(tl.turnLogPending(), 0);
+});
+
+// A device that knows no epoch yet asks the sync GET once before a turn's first row.
+test('a turn begun with no epoch known learns one from the sync GET first', { skip }, async () => {
+	let known = null, asked = 0;
+	const { tl, gw } = await rig(null, { epoch: () => known, learn: async () => { asked++; known = 2; } });
+	await tl.logTurn('c1', 'l1', tl.turnMessages([{ mid: 'l1', role: 'user', content: 'first use' }], 'l1'));
+	await tl.logTurn('c1', 'l2', tl.turnMessages([{ mid: 'l2', role: 'user', content: 'second' }], 'l2'));
+	assert.equal(asked, 1, 'the sync GET was asked ' + asked + ' times');
+	assert.ok(gw.epochs.length && gw.epochs.every(e => e === 2), 'posted under ' + JSON.stringify(gw.epochs));
+});
+
+// A wipe or a delete buried the chat (410 `deleted`): its rows go nowhere, other chats' still go.
+test("a 410 'deleted' drops that chat's rows and ends its turns, other chats unharmed", { skip }, async () => {
+	const { tl, gw, ends } = await rig();
+	gw.up = false;
+	await tl.logTurn('c1', 'd1', tl.turnMessages([{ mid: 'd1', role: 'user', content: 'in a buried chat' }], 'd1'));
+	await tl.logTurn('c2', 'd2', tl.turnMessages([{ mid: 'd2', role: 'user', content: 'in a live chat' }], 'd2'));
+	gw.up = true;
+	gw.refuse = (chat) => chat === 'c1' && { status: 410, json: { ok: false, why: 'deleted', epoch: 1 } };
+	await tl.flushTurnLog();
+	assert.deepEqual(gw.rows.map(r => r.turn), ['d2']);
+	assert.equal(tl.turnLogPending(), 0);
+	assert.deepEqual(ends, ['d1']);
+	assert.ok(tl.turnLogEnded('d1') && !tl.turnLogEnded('d2'));
+	assert.equal(await tl.logTurn('c1', 'd1', tl.turnMessages([{ mid: 'd1', role: 'user', content: 'again' }], 'd1')), false,
+		'a turn of a buried chat takes no more rows');
 });
 
 test('a 413 halves the batch and the rows still arrive in order', { skip }, async () => {

@@ -9,6 +9,11 @@
 // `(turn, n)` once, so a row sent twice is one row. A turn run offline therefore reaches the
 // other devices through the log, not by parcel alone.
 //
+// A TURN'S ROWS CARRY THE WIPE EPOCH KNOWN WHEN THE TURN BEGAN (WL1 exam, fault 1), learnt from
+// the sync GET before the first row, never the epoch known when a row is sent: a row written
+// before a wipe is refused (409 `wiped`) and dropped, whatever this device learnt since. A row
+// bound to none goes with none, which the gateway takes only from a space never wiped.
+//
 // A 409 `ended` STOPS THE TURN'S WRITING [F4]: another device has ended it (usually the
 // dead-writer detector, `interrupted`), and first end wins, so the turn's rows still queued are
 // dropped and `onEnded` tells the running turn to stop. A 413 halves the batch, and a lone row
@@ -20,8 +25,8 @@
 var OUTBOX_KEY = 'daimond.chatlog.outbox';	// fixed: the outbox's local storage key
 
 var _deps     = null;	// set by `configureTurnLog`; window's otherwise
-var _turns    = {};		// turn id -> { chat, writer, n, ended }
-var _queue    = [];		// rows not yet taken, in order: { chat, turn, head, body, wire, tried }
+var _turns    = {};		// turn id -> { chat, epoch, writer, n, ended }
+var _queue    = [];		// rows not yet taken, in order: { chat, turn, epoch, head, body, wire, tried }
 var _limits   = { rowMax: 0, batchMax: 0, flushMs: 0 };	// as the door last said; 0 unknown
 var _sealOver = -1;		// a sealed body's bytes over its plaintext, measured once
 var _timer    = null;
@@ -38,7 +43,9 @@ function deps() {
 	return {
 		bridge:  w.DaimondSeal,
 		wrap:    function (plain, aad) { return w.DaimondIdentity.wrapBytesAad(plain, aad); },
-		append:  function (chat, rows) { return w.DaimondSync.appendLog(chat, rows); },
+		append:  function (chat, rows, epoch) { return w.DaimondSync.appendLog(chat, rows, epoch); },
+		epoch:   function () { return w.DaimondSync && w.DaimondSync.logEpoch ? w.DaimondSync.logEpoch() : null; },
+		learn:   function () { return w.DaimondSync && w.DaimondSync.pull ? w.DaimondSync.pull(true) : null; },
 		store:   {
 			load: function () { try { return JSON.parse(w.localStorage.getItem(OUTBOX_KEY) || '[]'); } catch (e) { return []; } },
 			save: function (rows) { try { w.localStorage.setItem(OUTBOX_KEY, JSON.stringify(rows)); } catch (e) { /* the rows stay in memory */ } },
@@ -63,7 +70,7 @@ function deps() {
 export function configureTurnLog(d) {
 	_deps = d || null;
 	_turns = {}; _queue = []; _faulted = {}; _limits = { rowMax: 0, batchMax: 0, flushMs: 0 };
-	_foreign = {};
+	_foreign = {}; _learnt = false;
 	_sealOver = -1; _loaded = false; _flushing = null; _serial = Promise.resolve();
 	if (_timer) { clearTimeout(_timer); _timer = null; }
 }
@@ -78,7 +85,7 @@ function b64(bytes) {
 function saveQueue() {
 	var d = deps();
 	if (!d.store) return;
-	d.store.save(_queue.map(function (q) { return { chat: q.chat, turn: q.turn, head: q.head, wire: q.wire, tried: true }; }));
+	d.store.save(_queue.map(function (q) { return { chat: q.chat, turn: q.turn, epoch: q.epoch, head: q.head, wire: q.wire, tried: true }; }));
 }
 
 function loadQueue() {
@@ -86,7 +93,9 @@ function loadQueue() {
 	_loaded = true;
 	var d = deps();
 	var kept = d.store ? (d.store.load() || []) : [];
-	// A row kept across a reload may already be in the log: it goes as it is.
+	// A row kept across a reload may already be in the log: it goes as it is, under its own
+	// epoch (none for a row kept before rows carried one).
+	kept.forEach(function (q) { if (typeof q.epoch !== 'number') q.epoch = null; });
 	_queue = kept.concat(_queue);
 }
 
@@ -116,7 +125,7 @@ async function queueChanges(t, turn, changes) {
 		t.n += rows.length;
 		for (var j = 0; j < rows.length; j++) {
 			var r = await sealRow(rows[j].head, rows[j].body);
-			_queue.push({ chat: t.chat, turn: turn, head: r.head, body: r.body, wire: r.wire, tried: false });
+			_queue.push({ chat: t.chat, turn: turn, epoch: t.epoch, head: r.head, body: r.body, wire: r.wire, tried: false });
 		}
 	}
 }
@@ -159,7 +168,11 @@ export async function logTurn(chat, turn, msgs, end, daimon) {
 	chat = String(chat || ''); turn = String(turn || '');
 	if (!chat || !turn) return false;
 	loadQueue();
-	var t = _turns[turn] || (_turns[turn] = { chat: chat, daimon: daimon || '', writer: {}, n: 1, ended: false, msgs: [], due: false, looked: false });
+	if (!_turns[turn]) {
+		var ep = await knownEpoch();
+		if (!_turns[turn]) _turns[turn] = { chat: chat, epoch: ep, daimon: daimon || '', writer: {}, n: 1, ended: false, msgs: [], due: false, looked: false };
+	}
+	var t = _turns[turn];
 	if (t.ended || (t.writer && t.writer.ended)) return false;
 	if (msgs) t.msgs = msgs;	// none: the turn's latest stand
 	t.due = true;
@@ -171,6 +184,21 @@ export async function logTurn(chat, turn, msgs, end, daimon) {
 		arm();
 	}
 	return !t.ended;
+}
+
+var _learnt = false;	// the one sync GET asked for while the epoch was unknown
+
+/// The wipe epoch a new turn's rows are bound to: the one known, or, when none is yet, what one
+/// sync GET names (once a page; offline it names none).
+async function knownEpoch() {
+	var d = deps();
+	var e = d.epoch ? d.epoch() : null;
+	if (e === null && !_learnt && d.learn) {
+		_learnt = true;
+		try { await d.learn(); } catch (x) { /* none learnt: the rows name none */ }
+		e = d.epoch();
+	}
+	return typeof e === 'number' ? e : null;
 }
 
 /// The writer's look at turn `turn`'s latest messages: the rows of what changed, queued.
@@ -298,9 +326,25 @@ function dropTurn(turn) {
 	if (t) { t.ended = true; t.due = false; }
 }
 
+/// Drop every queued row of `chat`, each turn stopped as ended.
+function dropChat(chat) {
+	dropWhere(function (q) { return q.chat === chat; });
+}
+
+/// Drop every queued row `hit` names, and the rest of its turn, each turn stopped as ended.
+function dropWhere(hit) {
+	var turns = {};
+	_queue.forEach(function (q) { if (hit(q)) turns[q.turn] = q.chat; });
+	for (var turn in turns) {
+		dropTurn(turn);
+		try { deps().onEnded(turns[turn], turn); } catch (e) { /* the turn stops itself */ }
+		landed(turns[turn], [turn], 0);
+	}
+}
+
 /// Look at every turn with messages not yet looked at, then post the outbox in order: runs of
-/// one chat's rows, greedy within the batch ceiling (one row while it is unknown). Stops at the
-/// first unanswered post and keeps the rest for the next.
+/// one chat's rows under one epoch, greedy within the batch ceiling (one row while it is
+/// unknown). Stops at the first unanswered post and keeps the rest for the next.
 export async function flushTurnLog() {
 	if (_flushing) return _flushing;
 	_flushing = (async function () {
@@ -310,15 +354,15 @@ export async function flushTurnLog() {
 		}
 		var cap = Infinity;
 		while (_queue.length) {
-			var chat = _queue[0].chat;
+			var chat = _queue[0].chat, ep = _queue[0].epoch;
 			var k = 0, size = 0;
-			for (var i = 0; i < _queue.length && _queue[i].chat === chat; i++) {
+			for (var i = 0; i < _queue.length && _queue[i].chat === chat && _queue[i].epoch === ep; i++) {
 				var len = String(_queue[i].wire.body || '').length;
 				if (k >= cap || (k > 0 && (!_limits.batchMax || size + len > _limits.batchMax))) break;
 				size += len; k++;
 			}
 			var batch = _queue.slice(0, k);
-			var res = await deps().append(chat, batch.map(function (q) { return q.wire; }));
+			var res = await deps().append(chat, batch.map(function (q) { return q.wire; }), ep);
 			var j = (res && res.json) || {};
 			if (j.row_max)   _limits.rowMax   = j.row_max;
 			if (j.batch_max) _limits.batchMax = j.batch_max;
@@ -328,6 +372,14 @@ export async function flushTurnLog() {
 				_queue.splice(0, k);
 				landed(chat, batch.map(function (q) { return q.turn; }), j.head);
 				cap = Infinity;
+			} else if (st === 409 && j.why === 'wiped') {
+				// The account was wiped since these rows were written: every row bound to
+				// another epoch, or to none, was written before this device knew, in whichever
+				// chat, so none goes. A turn begun at the epoch the gateway names goes on.
+				var now = typeof j.epoch === 'number' && j.epoch !== ep ? j.epoch : -1;	// none named: all go
+				dropWhere(function (q) { return q.epoch !== now; });
+			} else if (st === 410) {
+				dropChat(chat);	// a wipe or a delete buried the chat
 			} else if (st === 409) {
 				var ended = String(j.turn || batch[0].turn);
 				dropTurn(ended);
@@ -345,7 +397,7 @@ export async function flushTurnLog() {
 				}
 			} else if (st === 0 || st >= 500 || st === 401 || st === 429) {
 				batch.forEach(function (q) { q.tried = true; });
-				break;	// unreachable or busy: the rows wait for the next flush
+				break;	// unreachable, busy or a wipe being finished (503): the rows wait for the next flush
 			} else {
 				_queue.splice(0, k);	// a refusal no retry changes
 			}
@@ -381,7 +433,7 @@ async function recutFront() {
 	var front = [];
 	for (var k = 0; k < rows.length; k++) {
 		var s = await sealRow(rows[k].head, rows[k].body);
-		front.push({ chat: f.chat, turn: f.turn, head: s.head, body: s.body, wire: s.wire, tried: false });
+		front.push({ chat: f.chat, turn: f.turn, epoch: f.epoch, head: s.head, body: s.body, wire: s.wire, tried: false });
 	}
 	_queue = front.concat(later);
 	return true;

@@ -312,6 +312,7 @@
 	// `oldAt` (below): the cursor this device stood at when it last loaded this build over a cursor the
 	// build before wrote, shared by its tabs.
 	var K_OLD     = 'daimond-sync-old';
+	var K_LOG_EPOCH = 'daimond-sync-log-epoch';	// The chat log's wipe epoch, as the gateway last named it.
 
 	// ── State ──────────────────────────────────────────────────
 	var serverVersion = 0;		// The version this device last saw on the server.
@@ -2259,6 +2260,7 @@
 		readSince = 0;					// the outage is over: the next failed read opens a new window
 		ladderTries.read = ladderTries.readpast = 0;	// and climbs from the bottom (LOW-6); wire, conflict: paid() only
 		var j = res.json;
+		noteLogEpoch(j, false);		// learnt before this device writes a log row
 		// The round-trip and the sealed parcel size -- bytes only, no content. A slow
 		// GET or a large parcel is the first thing the "sync is slow" question asks.
 		diag('pull GET', (Date.now() - tGet) + 'ms present=' + (j.present ? 'Y' : 'N')
@@ -4018,11 +4020,49 @@
 	/// Append wire rows to a chat's log (P2.3, design §2): `{status, json}`, or `{status: 0}`
 	/// when the gateway could not be reached or the session cannot write, so the writer keeps
 	/// its rows and sends them again. 200 `{first, head, row_max, batch_max, flush_ms}`, 409
-	/// `ended`, 413 over a ceiling (the writer halves).
-	async function appendLog(chat, rows) {
+	/// `ended`, 409 `wiped` when the account was wiped since the epoch this device named (the
+	/// writer drops its outbox), 410 `deleted` for a chat a wipe or delete buried, 413 over a
+	/// ceiling (the writer halves), 503 `wiping` while a wipe is finished (the writer keeps them).
+	///
+	/// `epoch` is the one the rows were bound to when they were written (`logEpochNow` then),
+	/// never the one known at sending: a row written before a wipe must not go under the
+	/// epoch learnt after it. Null names none, which the gateway takes only from a space
+	/// never wiped.
+	async function appendLog(chat, rows, epoch) {
 		if (!ready() || !entitled || sessionGone || rekeyBehind) return { status: 0 };
-		try { return await call('POST', { rows: rows, w: WAKE_ID }, '?log=' + encodeURIComponent(String(chat))); }
+		var body = { rows: rows, w: WAKE_ID };
+		if (typeof epoch === 'number' && epoch >= 0) body.epoch = epoch;
+		var res;
+		try { res = await call('POST', body, '?log=' + encodeURIComponent(String(chat))); }
 		catch (e) { return { status: 0 }; }
+		if (res && res.json) noteLogEpoch(res.json, res.status === 409);
+		return res;
+	}
+
+	/// The account's wipe epoch as the gateway last named it (sync GET, log read or write),
+	/// which the log writer binds to a turn's rows when it writes them. Null until an answer
+	/// names one, and kept across a reload, as the outbox is.
+	var logEpoch = null;
+
+	function logEpochNow() {
+		if (logEpoch !== null) return logEpoch;
+		try {
+			var v = parseInt(localStorage.getItem(K_LOG_EPOCH) || '', 10);
+			if (v >= 0) logEpoch = v;
+		} catch (e) { /* unknown: the append names none */ }
+		return logEpoch;
+	}
+
+	/// Adopt the epoch an answer names. Epochs only rise, so an answer that left before a wipe
+	/// and lands after it does not move the epoch back; a 409 `wiped` (`refused`) names the
+	/// space's own and is taken as it is.
+	function noteLogEpoch(json, refused) {
+		var e = json.epoch;
+		if (typeof e !== 'number' || !(e >= 0)) return;
+		var known = logEpochNow();
+		if (known === e || (!refused && known !== null && e < known)) return;
+		logEpoch = e;
+		try { localStorage.setItem(K_LOG_EPOCH, String(e)); } catch (err) { /* held for this load */ }
 	}
 
 	/// PUT one frame of `turnId`'s transcript tail. Answers
@@ -4115,13 +4155,18 @@
 	var wakeLogAt = '';
 
 	/// GET the rows of `chat` above `since`: the door's answer (`{rows, head, low, more}` or
-	/// `{gap, low}`), or null when the read failed. Never throws.
+	/// `{gap, low}`), `{gone, rows: []}` for a chat a wipe or delete buried (410 `deleted`:
+	/// nothing to fold, and nothing to read again), or null when the read failed. Never throws.
 	async function readLog(chat, since) {
 		if (!ready() || !entitled || sessionGone || !chat) return null;
 		var q = '?log=' + encodeURIComponent(String(chat)) + '&since=' + Math.max(0, +since || 0);
 		var res;
 		try { res = await call('GET', undefined, q, { timeoutMs: PULL_TIMEOUT_MS }); }
 		catch (e) { return null; }
+		if (res && res.json) noteLogEpoch(res.json, false);
+		if (res && res.status === 410 && res.json && res.json.why === 'deleted') {
+			return { ok: true, gone: true, rows: [], more: false };
+		}
 		if (!res || res.status !== 200 || !res.json || !res.json.ok) return null;
 		return res.json;
 	}
@@ -5415,8 +5460,10 @@
 		/// and this tail is the whole of it, so a watcher can show the finished answer
 		/// without the account parcel.
 		pushProgressFrame: pushProgressFrame,
-		/// The chat log's append door (`appendLog(chat, rows)`), the writing side of P2.3.
+		/// The chat log's append door (`appendLog(chat, rows, epoch)`), the writing side of P2.3.
 		appendLog:         appendLog,
+		/// The wipe epoch the log writer binds to a turn's rows (null unknown).
+		logEpoch:          logEpochNow,
 		progressWeight:    progressWeight,
 		progressBudget:    { chars: PROGRESS_TAIL_MAX, bytes: PROGRESS_SEAL_MAX },
 		readLog:           readLog,
