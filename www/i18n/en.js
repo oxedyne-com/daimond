@@ -2843,6 +2843,7 @@
 	'crystal.empty_paren':    '(empty)',
 	'crystal.save_failed':    'Could not save the crystal',
 	'crystal.unproven':    'This page did not pass the load check. Nothing was put back; History has earlier pages.',
+	'crystal.page_refused': 'This crystal tried to run a script the app does not allow.',
 	'crystal.back':           'Back',
 	'crystal.back_to_form':   'Back to form',
 	'crystal.memory':         'Memory',

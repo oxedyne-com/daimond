@@ -40,6 +40,7 @@
    Run:  node www/js/crystalprobe.test.mjs
    ============================================================ */
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { deflateSync, inflateSync } from 'node:zlib';
@@ -325,36 +326,11 @@ async function main() {
 	nf.send(probe(1, '.tile'));
 	check('with no nonce given none is sent', nf.posted.length === 1 && !('nonce' in nf.posted[0].m));
 
-	// ---- (g) C: the policy goes in ahead of everything the page holds ----
-	check('armour is exposed to the test', typeof C._armour === 'function');
-	if (typeof C._armour === 'function') {
-		const META = '<meta http-equiv="Content-Security-Policy"';
-		const SHIM = '<script>/*shim*/</script>';
-		const arm = (h) => C._armour(h, SHIM);
-		const firstOwn = (h, re) => h.search(re);
-		let o = arm('<!-- <head> -->\n<!doctype html><html><head><title>t</title></head><body>b</body></html>');
-		check('a leading comment that holds <head> does not swallow the policy or the shim',
-			o.html.indexOf(META) > o.html.indexOf('-->') && o.html.indexOf(META) < o.html.indexOf('<html') && o.html.indexOf(SHIM) > o.html.indexOf(META)
-			&& o.html.indexOf(META) > o.html.indexOf('<!doctype'), o.html.slice(0, 120));
-		check('and the doctype stays first, so standards mode is kept', o.html.indexOf('<!doctype') < o.html.indexOf(META) && o.at === 'doctype', o.at);
-		o = arm('<!-- <head><html> --><p>x</p>');
-		check('a comment holding <head> and <html>, with no doctype: the policy follows the comment',
-			o.html.indexOf(META) === '<!-- <head><html> -->'.length && o.html.indexOf(SHIM) > o.html.indexOf(META) && o.html.indexOf(META) < o.html.indexOf('<p>'), o.html.slice(0, 100));
-		o = arm('<!doctype html><html><body><script>var s = "<head>";</script></body></html>');
-		check('a <head> inside a script string is not where the policy goes', o.html.indexOf(META) < o.html.indexOf('<html') && o.html.indexOf(META) < firstOwn(o.html, /<script>var/), o.html.slice(0, 100));
-		o = arm('<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>');
-		check('an honest page gets the policy and the shim ahead of its own head, after its doctype',
-			o.html.indexOf(META) === '<!doctype html>'.length && o.html.indexOf(SHIM) > o.html.indexOf(META) && o.html.indexOf(SHIM) < o.html.indexOf('<html'), o.html.slice(0, 60));
-		o = arm('<html><head></head><body></body></html>');
-		check('a page with no doctype and no comment gets the policy at the very start', o.html.startsWith(META) && o.at === 'start');
-		o = arm('  \n<!-- a -->\n  <!-- b --> \n<!DOCTYPE html>\n<html><body></body></html>');
-		check('whitespace, several comments and an upper-case doctype are all stepped over',
-			o.html.indexOf(META) === '  \n<!-- a -->\n  <!-- b --> \n<!DOCTYPE html>'.length, JSON.stringify(o.html.slice(0, 60)));
-		o = arm('<!-- <head> unclosed <html><body>');
-		check('a comment that never closes is not stepped into: the policy goes first', o.html.startsWith(META));
-		check('the policy is carried through, and `carried` reports a policy the page already had',
-			C._armour('<!doctype html><meta http-equiv="Content-Security-Policy" content="x"><p>', '').carried === true && o.carried === false);
-	}
+	// ---- (g) C: the policy's hashes, made at once. Where `armour` puts the policy and the guards needs a parser, which
+	// Node has not, so that half is driven in Chrome ----
+	check('the hash is exposed to the test', typeof C._sha256 === 'function');
+	if (typeof C._sha256 === 'function') for (const s of ['', 'abc', 'a'.repeat(55), 'a'.repeat(56), 'x'.repeat(70000), '\u00e9\ud800z', '<\\/script>'])
+		check(`sha256 of ${s.length} characters is node's`, C._sha256(s) === createHash('sha256').update(new TextEncoder().encode(s)).digest('base64'));
 
 	// ---- (e) a reply becomes the answer ----
 	const good = C.probeResult(a, '.tile', true);
@@ -628,8 +604,8 @@ async function main() {
 		}
 		if (tw.DaimondTime && tw.DaimondTime.setCalendar) tw.DaimondTime.setCalendar(cal);
 		load('crystal.js', tw);
-		const html = tw.DaimondCrystal._armour('<!doctype html><html><body><script>window.out = '
-			+ '(typeof DaimondTime === "object") ? DaimondTime.calendar() + "|" + DaimondTime.fmtDate("2026-10-09") + "|" + DaimondTime.fmtIso("2026-09-15T13:12:47") : "none";</script></body></html>', '').html;
+		const html = tw.DaimondTime.frameTag() + ('<!doctype html><html><body><script>window.out = '
+			+ '(typeof DaimondTime === "object") ? DaimondTime.calendar() + "|" + DaimondTime.fmtDate("2026-10-09") + "|" + DaimondTime.fmtIso("2026-09-15T13:12:47") : "none";</script></body></html>');
 		// Run the armoured document's scripts in order, as the frame would, in a window of their own.
 		const fw = {};
 		const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
@@ -637,7 +613,6 @@ async function main() {
 		const y = cal === 'he' ? '12026' : '2026';
 		const want = cal + '|' + y + '-10-09|' + y + '-09-15 13:12:47';
 		check(`a page reads DaimondTime in its frame on the ${cal === 'he' ? 'Holocene' : 'Common Era'} calendar`, fw.out === want, String(fw.out));
-		check('and the clock goes in after the policy, before the page', html.indexOf('Content-Security-Policy') < html.indexOf('DaimondTime') && html.indexOf('DaimondTime') < html.indexOf('<html'));
 	}
 
 	// ---- (m) crystal_look: the targets the model names, measured as a person sees them ----

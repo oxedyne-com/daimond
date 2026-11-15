@@ -1940,6 +1940,7 @@
 	'crystal.empty_paren':    '(비어 있음)',
 	'crystal.save_failed':    '결정체를 저장하지 못했어요',
 	'crystal.unproven':    '이 페이지는 로드 확인을 통과하지 못했어요. 아무것도 되돌리지 않았어요. 이전 페이지는 기록에 있어요.',
+	'crystal.page_refused': '이 결정체가 앱이 허용하지 않는 스크립트를 실행하려고 했어요.',
 	'crystal.back': '뒤로',
 	'crystal.back_to_form': '양식으로 돌아가기',
 	'crystal.memory_help': '이 diamond가 기억하는 것',

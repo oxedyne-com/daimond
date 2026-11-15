@@ -779,31 +779,95 @@
 	// the rest of the policy is buying; leaving `font-src` out would have banned an
 	// inlined typeface while allowing an inlined picture, which is an accident rather
 	// than a rule.
-	var PAGE_CSP = 'default-src \'none\'; script-src \'unsafe-inline\'; '
-		+ 'style-src \'unsafe-inline\'; img-src data:; font-src data:';
+	// `script-src-elem` and `script-src-attr` are written for each page by `armour`: the hashes of the page's guarded scripts,
+	// and its handlers as written, since a capp may make its buttons with `innerHTML` or `setAttribute('onclick', …)`.
+	var PAGE_CSP = 'default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; font-src data:';
 
 	var PAGE_TYPE = 'text/html;charset=utf-8';
 
-	var CSP_META = '<meta http-equiv="Content-Security-Policy" content="' + PAGE_CSP + '">';
+	// WebRTC is the network no policy covers: Chrome sends a STUN packet to any address a page names and does not honour
+	// `webrtc 'block'` (MR2). A frame the page makes inside its own (srcdoc) has globals of its own, so every script and
+	// handler the page holds starts by deleting the constructors where it runs, and the policy runs nothing else. A
+	// handler's scope holds the document's named elements, so it reaches its global object by `this`, never by a name.
+	var UNSAID = 'for(const k of [\'RTCPeerConnection\',\'webkitRTCPeerConnection\'])delete window[k]';
+	var UNSAID_ACT = '(function(){for(const k of[\'RTCPeerConnection\',\'webkitRTCPeerConnection\'])delete this[k]})();';
+	// The page's first script: a script element the policy refuses is said above the frame (`refused`), once. Only that:
+	// `eval` was refused before this policy, silently, and libraries probe for it in a try.
+	var REFUSAL = 'addEventListener(\'securitypolicyviolation\',function f(e){if(e.effectiveDirective===\'script-src-elem\'){'
+		+ 'removeEventListener(\'securitypolicyviolation\',f);parent.postMessage({dc:1,v:1,cmd:\'refused\'},\'*\')}})';
+	// The `type` of a script the browser runs (HTML's JavaScript MIME types, and module); any other is data, left alone.
+	var JS_TYPE = /^(module|(text|application)\/(x-)?(java|ecma)script|text\/javascript1\.[0-5]|text\/(jscript|livescript))?$/i;
+	// What may stand before a script's first statement and run nothing: whitespace, comments and a `'use strict'`,
+	// which the guard goes after, so a strict script stays strict.
+	var PROLOGUE = /^(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\/)*(?:(['"])use strict\1)?/;
 
-	/// Whether a page already declares a policy of its own. Only reported, never
-	/// acted on: ours goes in either way and the two intersect.
-	var CSP_HAS = /<meta[^>]+http-equiv\s*=\s*["']?\s*content-security-policy/i;
-
-	/// A page with the policy in it, and where it had to go. `extra` follows the policy
-	/// at the same place: the face prelude, under a skin that carries faces, else ''.
+	/// The page under the policy, with the app's clock and `extra` (the face prelude, a shim) first in its head. The page
+	/// is parsed, never run: every script in it, in templates too, and every handler starts with the guard, and the policy
+	/// lets only those scripts run, by hash, so a frame the page makes inside its own runs no script element but the page's.
+	/// Handlers run as written: this window has lost WebRTC before any runs, and a handler in a frame the page makes is the
+	/// one way left (OA1b). An `on…` attribute that is no handler (a custom element's `only`) is data, left as written.
 	function armour(html, extra) {
-		var s = String(html);
-		var add = CSP_META + timeTag() + (extra || '');
-		var carried = CSP_HAS.test(s);
-		// After the leading whitespace, comments and doctype, which are all a document may hold before its
-		// first element, and nowhere else: never after a `<head>` or `<html>` found by searching, since a
-		// comment or a script string can hold either and would swallow the policy and the shim with it.
-		// A `<meta>` there is read in the parser's "before html" mode, which makes the head, and the page's
-		// own `<html>` and `<head>` tags then merge into it or are ignored; the doctype is still first,
-		// so standards mode is kept. The tail is all optional, so the match never backtracks.
-		var m = /^(?:\s*<!--[\s\S]*?-->)*\s*(<!doctype\b[^>]*>)?/i.exec(s);
-		return insertCsp(s, m[0].length, m[1] ? 'doctype' : 'start', carried, add);
+		var P = new DOMParser(), doc = P.parseFromString(String(html), 'text/html');
+		var carried = !!doc.querySelector('meta[http-equiv="content-security-policy" i]');
+		var lead = P.parseFromString('<head><script>' + REFUSAL + '</script>' + timeTag() + (extra || ''), 'text/html');
+		doc.head.prepend.apply(doc.head, [].slice.call(lead.head.childNodes).concat([].slice.call(lead.body.childNodes)));
+		var hashes = [];
+		(function walk(root) {
+			[].forEach.call(root.querySelectorAll('*'), function (e) {
+				if (e.localName === 'script' && !e.hasAttribute('src') && JS_TYPE.test((e.getAttribute('type') || '').trim())) {
+					var t = e.textContent, at = PROLOGUE.exec(t)[0].length;
+					hashes.push(sha256(e.textContent = t.slice(0, at) + ';' + UNSAID + ';' + t.slice(at)));
+				}
+				[].forEach.call(e.attributes, function (a) {
+					if (/^on/i.test(a.name) && a.name.toLowerCase() in e) a.value = UNSAID_ACT + a.value;
+				});
+				if (e.localName === 'template') walk(e.content);
+			});
+		})(doc);
+		var src = hashes.filter(function (h, i) { return hashes.indexOf(h) === i; }).map(function (h) { return '\'sha256-' + h + '\''; });
+		var meta = doc.createElement('meta');
+		meta.httpEquiv = 'Content-Security-Policy';
+		meta.content = 'script-src-elem ' + (src.length ? src.join(' ') : '\'none\'') + '; script-src-attr \'unsafe-inline\'; ' + PAGE_CSP;
+		doc.head.prepend(meta);
+		return {
+			html:     [].map.call(doc.childNodes, function (n) { return n.outerHTML || new XMLSerializer().serializeToString(n); }).join(''),
+			injected: true,
+			carried:  carried,
+			at:       'head',
+		};
+	}
+
+	// SHA-256 in base64, at once, so `makeFrame` stays synchronous: the policy's hash of each script.
+	var SHA_K = [], SHA_H = [];
+	(function () {
+		function frac(x) { return (x - Math.floor(x)) * 4294967296 | 0; }
+		for (var p = 2, n = 0; n < 64; p++) {
+			for (var d = 2; d * d <= p && p % d; d++);
+			if (d * d > p) { if (n < 8) SHA_H[n] = frac(Math.sqrt(p)); SHA_K[n++] = frac(Math.cbrt(p)); }
+		}
+	})();
+	function ror(x, n) { return (x >>> n) | (x << (32 - n)); }
+	function sha256(s) {
+		var b = new TextEncoder().encode(s), n = b.length, end = ((n + 8) >> 6 << 4) + 16, w = [], h = SHA_H.slice(), i, j;
+		for (i = 0; i < end; i++) w[i] = 0;
+		for (i = 0; i < n; i++) w[i >> 2] |= b[i] << (24 - (i & 3) * 8);
+		w[n >> 2] |= 0x80 << (24 - (n & 3) * 8);
+		w[end - 1] = n * 8;
+		for (i = 0; i < end; i += 16) {
+			var v = h.slice(), x = w.slice(i, i + 16);
+			for (j = 0; j < 64; j++) {
+				if (j > 15) x[j] = (x[j - 16] + (ror(x[j - 15], 7) ^ ror(x[j - 15], 18) ^ (x[j - 15] >>> 3)) + x[j - 7]
+					+ (ror(x[j - 2], 17) ^ ror(x[j - 2], 19) ^ (x[j - 2] >>> 10))) | 0;
+				var e = v[4], a = v[0];
+				var t1 = v[7] + (ror(e, 6) ^ ror(e, 11) ^ ror(e, 25)) + ((e & v[5]) ^ (~e & v[6])) + SHA_K[j] + x[j];
+				var t2 = (ror(a, 2) ^ ror(a, 13) ^ ror(a, 22)) + ((a & v[1]) ^ (a & v[2]) ^ (v[1] & v[2]));
+				v = [(t1 + t2) | 0, a, v[1], v[2], (v[3] + t1) | 0, e, v[5], v[6]];
+			}
+			for (j = 0; j < 8; j++) h[j] = (h[j] + v[j]) | 0;
+		}
+		var out = '';
+		for (j = 0; j < 32; j++) out += String.fromCharCode(h[j >> 2] >>> (24 - (j & 3) * 8) & 255);
+		return btoa(out);
 	}
 
 	/// The app's clock for the page, on the account's calendar (D-20261006-34): a page draws a
@@ -815,16 +879,6 @@
 		var body = tag.replace(/^<script>/, '').replace(/<\/script>$/, '');
 		return /<\/script|<!--/i.test(body) ? '' : tag;
 	}
-
-	function insertCsp(s, at, where, carried, add) {
-		return {
-			html:     s.slice(0, at) + add + s.slice(at),
-			injected: true,
-			carried:  carried,
-			at:       where,
-		};
-	}
-
 
 	/// A sandboxed frame for a page, under the policy, with its blob URL. The ONE place a crystal
 	/// frame is made: the on-screen view and the off-screen render both come here, so they cannot
@@ -2072,6 +2126,7 @@
 			case 'height':   onHeight(m); break;
 			case 'open':     onOpen(m); break;
 			case 'dirty':    live.spoke = true; live.dirty = !!m.on; break;
+			case 'refused':  onRefused(); break;
 			default: break;   // an unknown verb is a page from a later Daimond; ignore it
 		}
 	}
@@ -2417,6 +2472,17 @@
 		if (live.opts && typeof live.opts.onFallback === 'function') {
 			try { live.opts.onFallback('undrawn', miss.slice()); } catch (e) { /* the app's problem */ }
 		}
+	}
+
+	/// A script the policy refused, said once above the frame.
+	function onRefused() {
+		var wrap = live.frame.parentNode;
+		if (live.refused || !wrap) return;
+		live.refused = true;
+		var note = document.createElement('div');
+		note.className = 'crystal-fallback-note crystal-refused';
+		note.textContent = tr(live.opts, 'crystal.page_refused', 'This crystal tried to run a script the app does not allow.', {});
+		wrap.insertBefore(note, live.frame);
 	}
 
 	/// The page's own height, so the frame is at least as tall as its content
@@ -3469,12 +3535,13 @@
 		probeSight:   probeSight,
 		_shim:        shim,
 		_armour:      armour,
+		_sha256:      sha256,
 		/// The policy every page is served under, so a verifier can assert the exact
 		/// string rather than keeping a copy of it that can drift.
 		PAGE_CSP:     PAGE_CSP,
 		/// What is on screen, for a verifier: whether the page or the built-in view
 		/// is up, why, which keys the page claimed, and where the policy was put in
-		/// the page — `'doctype'` (after the doctype) or `'start'` (ahead of the page), with `carried`
+		/// the page — `'head'`, its first child, with `carried`
 		/// saying whether the author had already declared one. Never used by the app.
 		_state: function () {
 			if (!live) {

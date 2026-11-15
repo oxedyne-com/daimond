@@ -1907,6 +1907,7 @@
 	'crystal.empty_paren': '(leer)',
 	'crystal.save_failed': 'Der Kristall ließ sich nicht speichern',
 	'crystal.unproven': 'Diese Seite hat die Ladeprüfung nicht bestanden. Nichts wurde zurückgesetzt; frühere Seiten sind im Verlauf.',
+	'crystal.page_refused': 'Dieser Kristall wollte ein Skript ausführen, das die App nicht erlaubt.',
 	'crystal.back': 'Zurück',
 	'crystal.back_to_form': 'Zurück zum Formular',
 	'crystal.memory_help': 'Was dieses Diamond sich merkt',

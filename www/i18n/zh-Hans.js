@@ -1934,6 +1934,7 @@
 	'crystal.empty_paren':    '（空）',
 	'crystal.save_failed':    '无法保存晶体',
 	'crystal.unproven':    '此页面未通过加载检查。未恢复任何内容；之前的页面在历史记录中。',
+	'crystal.page_refused': '此晶体试图运行应用不允许的脚本。',
 	'crystal.back': '返回',
 	'crystal.back_to_form': '返回表单',
 	'crystal.memory_help': '这个 diamond 记住的内容',

@@ -1914,6 +1914,7 @@
 	'crystal.empty_paren': '(vide)',
 	'crystal.save_failed': 'Impossible d’enregistrer le cristal',
 	'crystal.unproven': 'Cette page n’a pas passé la vérification de chargement. Rien n’a été rétabli ; les pages précédentes sont dans l’historique.',
+	'crystal.page_refused': 'Ce cristal a tenté d’exécuter un script que l’app n’autorise pas.',
 	'crystal.back': 'Retour',
 	'crystal.back_to_form': 'Retour au formulaire',
 	'crystal.memory_help': 'Ce que ce diamond retient',

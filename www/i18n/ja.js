@@ -1941,6 +1941,7 @@
 	'crystal.empty_paren':    '（空）',
 	'crystal.save_failed':    '結晶を保存できませんでした',
 	'crystal.unproven':    'このページは読み込みチェックに通りませんでした。何も元に戻していません。以前のページは履歴にあります。',
+	'crystal.page_refused': 'この結晶は、アプリが許可していないスクリプトを実行しようとしました。',
 	'crystal.back': '戻る',
 	'crystal.back_to_form': 'フォームに戻る',
 	'crystal.memory_help': 'この diamond が覚えていること',

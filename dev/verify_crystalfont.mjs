@@ -28,6 +28,7 @@
 // name, not those the page names itself: Sofia Sans Condensed (the shipped heads) is then
 // never registered and the heads draw in the fallback. The Condensed checks must go red.
 import { open, shot } from './harness.mjs';
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -42,8 +43,8 @@ const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebK
 
 // The policy and the sandbox as they were before this change, written out rather than read
 // from the build, so a widened policy cannot pass by agreeing with itself.
-const CSP_WAS = 'default-src \'none\'; script-src \'unsafe-inline\'; '
-	+ 'style-src \'unsafe-inline\'; img-src data:; font-src data:';
+// OA1 (15 Nov 2026): `script-src` left the base; `armour` writes `script-src-elem` (hashes) and `script-src-attr` per page.
+const CSP_WAS = 'default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; font-src data:';
 const SANDBOX_WAS = 'allow-scripts';
 
 let ok = 0, bad = 0;
@@ -237,18 +238,66 @@ async function frameAttrs() {
 	});
 }
 
-// The last page that went into a blob, and what the old armour would have made of it.
-async function lastBlob() {
-	return page.evaluate(async () => {
+// What OA1's `armour` does to a page, written out rather than read from the build: the guard each script starts with
+// after its prologue, the one each handler starts with, and the refusal script that goes first in the head.
+const UNSAID     = "for(const k of ['RTCPeerConnection','webkitRTCPeerConnection'])delete window[k]";
+const UNSAID_ACT = "(function(){for(const k of['RTCPeerConnection','webkitRTCPeerConnection'])delete this[k]})();";
+const REFUSAL    = "addEventListener('securitypolicyviolation',function f(e){if(e.effectiveDirective==='script-src-elem'){"
+	+ "removeEventListener('securitypolicyviolation',f);parent.postMessage({dc:1,v:1,cmd:'refused'},'*')}})";
+const PROLOGUE   = /^(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\/)*(?:(['"])use strict\1)?/;
+const JS_TYPE    = /^(module|(text|application)\/(x-)?(java|ecma)script|text\/javascript1\.[0-5]|text\/(jscript|livescript))?$/i;
+const GUARD      = ';' + UNSAID + ';';
+
+// The last page that went into a blob, read apart in the frame's parser: its first meta, its scripts in document order
+// (templates too), the head's first n scripts, and the page with those taken out and every guard taken off, beside
+// the shipped page as the same parser reads it.
+async function lastBlob(n = 3) {	// n: the scripts armour puts first (refusal, clock, prelude)
+	return page.evaluate(async ({ guard, act, n }) => {
 		const b = window.__blobs[window.__blobs.length - 1];
 		const text = b ? await b.text() : '';
-		const P = DaimondCrystal.DEFAULT_PAGE;
-		const meta = '<meta http-equiv="Content-Security-Policy" content="' + DaimondCrystal.PAGE_CSP + '">';
-		// QA's fix C (0f0e4d1e): the policy goes after the leading comments and doctype, ahead of everything else, not after a searched-for <head>.
-		const m = /^(?:\s*<!--[\s\S]*?-->)*\s*(<!doctype\b[^>]*>)?/i.exec(P);
-		const was = P.slice(0, m[0].length) + meta + P.slice(m[0].length);
-		return { text, was, meta };
-	});
+		const P = new DOMParser(), doc = P.parseFromString(text, 'text/html');
+		const first = doc.head.firstElementChild;
+		const scripts = [];
+		(function walk(root) {
+			root.querySelectorAll('*').forEach((e) => {
+				if (e.localName === 'script') scripts.push({ text: e.textContent, type: (e.getAttribute('type') || '').trim(), src: e.hasAttribute('src') });
+				if (e.localName === 'template') walk(e.content);
+			});
+		})(doc);
+		const lead = [...doc.head.children].slice(1, 1 + n);
+		const html = (d) => [...d.childNodes].map((n) => n.outerHTML || new XMLSerializer().serializeToString(n)).join('');
+		first && first.remove(); lead.forEach((e) => e.remove());
+		(function bare(root) {
+			root.querySelectorAll('*').forEach((e) => {
+				if (e.localName === 'script') e.textContent = e.textContent.replace(guard, '');
+				[...e.attributes].forEach((a) => { if (a.value.startsWith(act)) a.value = a.value.slice(act.length); });
+				if (e.localName === 'template') bare(e.content);
+			});
+		})(doc);
+		const clock = String(window.DaimondTime.frameTag()).replace(/^<script>/, '').replace(/<\/script>$/, '');
+		return {
+			text, scripts, clock,
+			meta:  first && first.localName === 'meta' ? first.getAttribute('content') : null,
+			lead:  lead.map((e) => e.localName === 'script' ? e.textContent : '<' + e.localName + '>'),
+			page:  html(doc),
+			was:   html(P.parseFromString(DaimondCrystal.DEFAULT_PAGE, 'text/html')),
+		};
+	}, { guard: GUARD, act: UNSAID_ACT, n });
+}
+
+// Is the blob the shipped page under OA1's armour, with the faces prelude, and nothing else? A list of what is not.
+function asWritten(b) {
+	const run = b.scripts.filter((s) => !s.src && JS_TYPE.test(s.type));
+	const hashes = [...new Set(run.map((s) => createHash('sha256').update(s.text, 'utf8').digest('base64')))];
+	const want = `script-src-elem ${hashes.map((h) => `'sha256-${h}'`).join(' ')}; script-src-attr 'unsafe-inline'; ${CSP_WAS}`;
+	const off = [];
+	if (b.meta !== want) off.push(`first meta ${JSON.stringify(b.meta)}`);
+	run.forEach((s, i) => { if (!s.text.startsWith(PROLOGUE.exec(s.text)[0] + GUARD)) off.push(`script ${i} unguarded`); });
+	if (b.lead[0] !== GUARD + REFUSAL) off.push('the refusal script is not first');
+	if (b.lead[1] !== GUARD + b.clock) off.push('the clock is not second');
+	if (!(b.lead[2] || '').startsWith(GUARD + '(function(){var got={};') || !b.lead[2].includes('new FontFace')) off.push('the faces prelude is not third');
+	if (b.page !== b.was) off.push(`the page differs from the shipped page (${b.page.length} vs ${b.was.length})`);
+	return off;
 }
 
 const near = (a, b) => Math.abs(a - b) < 0.5;
@@ -261,9 +310,9 @@ const skin0 = await page.evaluate(() => document.documentElement.getAttribute('d
 check('the skin is Daylight', skin0 === 'daylight', skin0);
 
 const blobDl = await lastBlob();
-check('DAYLIGHT: the page went in as the armoured page (policy ahead of the content) plus the prelude, and nothing else',
-	blobDl.text.length > blobDl.was.length
-	&& blobDl.text.replace(/<script>\(function\(\)\{var got=\{\};[\s\S]*?<\/script>/, '') === blobDl.was);
+const offDl = asWritten(blobDl);
+check('DAYLIGHT: the page went in as the shipped page under the policy, the refusal, the clock and the prelude, each script guarded, and nothing else',
+	offDl.length === 0, offDl.join('; '));
 
 for (const pal of ['porcelain', 'obsidian']) {
 	await page.evaluate((p) => DaimondTheme.set(p), pal);
@@ -317,7 +366,8 @@ check('no allow= and no csp= attribute on the frame', fa && !fa.allow && !fa.csp
 check('referrerpolicy is still no-referrer', fa && fa.referrer === 'no-referrer');
 check('PAGE_CSP is the old policy, byte for byte', fa && fa.policy === CSP_WAS);
 check('the mounted page records that policy', fa && fa.state.csp && fa.state.csp.policy === CSP_WAS);
-check('the first policy in the frame is ours and unchanged', g0 && g0.metas[0] === CSP_WAS, g0 && g0.metas[0]);
+check('the first policy in the frame is ours: the scripts by hash, handlers, then the base', g0
+	&& /^script-src-elem ('sha256-[A-Za-z0-9+/]+=*' ?)+; script-src-attr 'unsafe-inline'; /.test(g0.metas[0]) && g0.metas[0].endsWith(CSP_WAS), g0 && g0.metas[0]);
 check('the frame is still an opaque origin', g0 && g0.origin === 'null', g0 && g0.origin);
 check('the frame still cannot open storage', g0 && g0.storage === 'refused');
 check('THE FRAME STILL CANNOT FETCH — not even the font file it now draws with', await netRefused());
@@ -332,13 +382,13 @@ for (const sk of ['sharp', 'warm']) {
 	await page.evaluate((k) => DaimondSkin.set(k), sk);
 	await page.waitForTimeout(500);
 	st = await reopen();
-	const b = await lastBlob();
+	const b = await lastBlob(2);
 	const g = await glyphs();
 	console.log(`\n--- ${sk}`);
 	check(`${sk}: the page is up`, st && st.mode === 'frame', st && st.mode);
 	check(`${sk}: mounted without the prelude`, st && st.faces === false);
-	check(`${sk}: THE PAGE WENT IN BYTE FOR BYTE AS THE OLD ARMOUR MADE IT`, b.text === b.was,
-		b.text === b.was ? '' : `${b.text.length} vs ${b.was.length}`);
+	const offS = asWritten(b).filter((x) => x !== 'the faces prelude is not third');
+	check(`${sk}: THE PAGE WENT IN AS THE SHIPPED PAGE UNDER THE POLICY, WITH NO PRELUDE`, offS.length === 0 && !b.text.includes('var got={}'), offS.join('; '));
 	check(`${sk}: no face is registered in the frame`, g && g.faces.length === 0, g && JSON.stringify(g.faces));
 	// What the wire carries now: a `data` reply caught inside the frame.
 	const fr = await frameOf();

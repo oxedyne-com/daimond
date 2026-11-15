@@ -587,7 +587,8 @@ for (let i = 0; i < (HAVE_STORE ? 40 : 0); i++) {
 }
 const vis = await page.evaluate(() => { const f = document.querySelector('iframe.crystal-frame'); return f ? { attr: f.getAttribute('sandbox'), n: f.sandbox.length } : null; });
 needsStore('the on-screen frame\'s sandbox is exactly allow-scripts', !!vis && vis.attr === 'allow-scripts' && vis.n === 1, JSON.stringify(vis));
-check('the policy every page runs under is the one it was', (await page.evaluate(() => DaimondCrystal.PAGE_CSP)) === "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:");
+// OA1: `script-src-elem` (the page's guarded scripts, by hash) and `script-src-attr` are written per page by `armour`.
+check('the policy every page runs under is the one it is', (await page.evaluate(() => DaimondCrystal.PAGE_CSP)) === "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:");
 
 console.log(`\n${ok} ok, ${bad} FAIL${BREAK ? '  (--break ' + BREAK + ')' : ''}  [${process.env.DAIMOND_BROWSER || 'chromium'}]`);
 await s.browser?.close?.().catch(() => {});

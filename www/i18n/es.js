@@ -1903,6 +1903,7 @@
 	'crystal.empty_paren': '(vacío)',
 	'crystal.save_failed': 'No se pudo guardar el cristal',
 	'crystal.unproven': 'Esta página no pasó la comprobación de carga. No se restauró nada; las páginas anteriores están en el historial.',
+	'crystal.page_refused': 'Este cristal intentó ejecutar un script que la app no permite.',
 	'crystal.back': 'Atrás',
 	'crystal.back_to_form': 'Volver al formulario',
 	'crystal.memory_help': 'Lo que este diamond recuerda',
