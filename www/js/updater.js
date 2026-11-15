@@ -102,6 +102,7 @@
 
 	var booted   = null;           // the build id this tab is running
 	var pending  = null;           // a newer build id, once seen
+	var aimed    = false;          // `pending` is a build the stamp served, not ours: a reload is aimed at it
 	var note     = '';             // a one-line "what changed", if the stamp carries one
 	var stale    = false;          // the gateway has declared this tab too old to serve
 	var applying = false;
@@ -629,11 +630,7 @@
 		applying = true;
 		disarm();
 		try { sessionStorage.setItem(KEY, pending); } catch (e) {}
-		// The build we are reloading AWAY from. If the next boot comes back on this
-		// same id, the controlling worker served stale and the reload did not advance
-		// -- the stuck-worker signal `init` reads. Session-scoped, so it is about THIS
-		// reload only.
-		try { if (booted) sessionStorage.setItem(PREV_KEY, booted); } catch (e) {}
+		noteLeaving();
 		try { if (window.DaimondJournal) DaimondJournal.flush(); } catch (e) {}
 		// What is in the boxes goes down BEFORE the reload, not on the settle timer
 		// or `pagehide` alone: the draft is what lets a reload land over unsent
@@ -641,6 +638,19 @@
 		// event the reload may outrun.
 		try { if (window.DaimondDrafts) DaimondDrafts.flush(); } catch (e) {}
 		doReload(false);
+	}
+
+	/// The build a reload is leaving, for `init` to compare: coming back on the same
+	/// id means the controlling worker served stale -- the stuck-worker signal. Only a
+	/// reload AIMED at a newer build the stamp served is evidence of that: at the 426
+	/// floor, with nothing newer out, a reload lands on the same build by rights, and
+	/// counting it marked the tab stuck and swallowed the next-is-here path (OA2).
+	/// Session-scoped, so it is about THIS reload only.
+	function noteLeaving() {
+		try {
+			if (booted && aimed) sessionStorage.setItem(PREV_KEY, booted);
+			else sessionStorage.removeItem(PREV_KEY);
+		} catch (e) {}
 	}
 
 	// ── The one door ────────────────────────────────────────────────────────
@@ -964,16 +974,18 @@
 		// but still refuses to interrupt a running turn. Stale goes through `force`
 		// for its loop guard. Stuck goes through `repair`, which clears the shell
 		// caches before its ONE guarded reload -- the only reload with a chance of
-		// shifting a worker that keeps serving stale, and itself loop-guarded so a
-		// stuck device cannot reload-storm. Neither can lose work in flight.
+		// shifting a worker that keeps serving stale. Neither can lose work in flight.
+		// The loop guard does not stand in front of a tap: it stops reloads nobody
+		// asked for, and each tap is one reload he asked for (OA2, 16 Nov: at the 426
+		// floor the guard was spent, and his tap on "next is here" did nothing).
 		go.addEventListener('click', function () {
 			if (notice) {   // Reload now, notice or not, but never over work in flight
 				var n = notice;
 				if (stillIdle(n.door, n.go, n.ok, n.again, true)) fire(n.door, n.go, n.names);
 				return;
 			}
-			if (stuck) { repair('stuck worker: cache clear + reload'); return; }
-			if (stale) { force(); return; }
+			if (stuck) { repair('stuck worker: cache clear + reload', true); return; }
+			if (stale) { force(true); return; }
 			if (counting()) stopCount();
 			apply(true);
 		});
@@ -1119,6 +1131,7 @@
 	function onFound(j) {
 		if (!j || !looksLikeBuild(j.build) || j.build === booted || j.build === pending) return;
 		pending = j.build;
+		aimed   = true;
 		note = typeof j.note === 'string' ? j.note : '';
 		// A NEW build starts the patience over: whatever made the tab unsafe for
 		// half an hour, this is a different update and deserves its own half hour --
@@ -1216,11 +1229,12 @@
 		try { if (booted) sessionStorage.setItem(FKEY, booted); } catch (e) {}
 	}
 
-	/// The one door a forced reload goes through. Both callers -- the gateway
-	/// refusing this tab, and a turn ending while it is already refused -- come
-	/// here, so neither can reload past the guard.
-	function force() {
-		if (!mayForce()) {
+	/// The one door a forced reload goes through. Both automatic callers -- the
+	/// gateway refusing this tab, and a turn ending while it is already refused --
+	/// come here, so neither can reload past the guard. `person` is his tap on the
+	/// banner: no guard and no typing grace, and still never over work in flight.
+	function force(person) {
+		if (!person && !mayForce()) {
 			trail('forced reload REFUSED', 'loop guard held');
 			setChip('stale');
 			return false;
@@ -1230,7 +1244,7 @@
 		// stays refused (the red chip says so) but the reload lands at the next
 		// natural break, not the middle of a sentence. A running turn is handled by
 		// apply(true), which defers until daimond:idle.
-		if (composerHasText() && quietFor() < GRACE_MS) {
+		if (!person && composerHasText() && quietFor() < GRACE_MS) {
 			if (graceTimer) clearTimeout(graceTimer);
 			graceTimer = setTimeout(force, GRACE_MS - quietFor() + 100);
 			return false;
@@ -1239,6 +1253,7 @@
 		// Through the door, which holds it over a turn or a hand run and asks again
 		// at idle (`force` itself, so the typing grace above applies at that moment
 		// too). The guard is spent in `forceGo`, when the reload really starts.
+		if (person) return reloadWhenIdle('forced', forceGo, true);
 		return reloadWhenIdle('forced', forceGo, true, mayForce, force);
 	}
 
@@ -1263,8 +1278,9 @@
 	///
 	/// The caches go first. A reload that kept them would be served the same stale glue
 	/// and fail again, which is a loop rather than a repair.
-	function repair(why) {
-		if (!mayForce()) { trail('repair reload REFUSED', 'loop guard held'); return false; }
+	/// `person` is his tap on the stuck banner, which the loop guard does not refuse (see `force`).
+	function repair(why, person) {
+		if (!person && !mayForce()) { trail('repair reload REFUSED', 'loop guard held'); return false; }
 		// At boot this runs before `DaimondCore` and the hand exist, so the door finds
 		// nothing busy and goes straight through: it can neither crash nor hold a boot.
 		return reloadWhenIdle('repair', function () {
@@ -1273,9 +1289,9 @@
 			// Record the build we are leaving, so if this reload ALSO fails to advance
 			// (a worker that will not let go), the next boot counts it toward the stuck
 			// prompt rather than losing the evidence -- repair does not go through apply().
-			try { if (booted) sessionStorage.setItem(PREV_KEY, booted); } catch (e) {}
+			noteLeaving();
 			doReload(true);
-		}, true, mayForce);
+		}, true, person ? null : mayForce);
 	}
 
 	/// A reload that WORKED clears the counter. Called from `init` when the build
@@ -1293,7 +1309,9 @@
 		stale = true;
 		reflect();
 		readStamp().then(function (j) {
-			pending = (j && j.build) || pending || (booted ? booted + '!' : 'stale');
+			// At the floor the stamp is often still ours: nothing newer to aim at yet.
+			if (j && j.build) { pending = j.build; aimed = j.build !== booted; }
+			else if (!pending) { pending = booted ? booted + '!' : 'stale'; aimed = false; }
 			if (j && typeof j.note === 'string') note = j.note;
 			reflect();
 			force();

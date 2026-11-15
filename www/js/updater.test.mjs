@@ -176,7 +176,8 @@ function makeTab(cfg) {
 		Date: clock.Date,
 		addEventListener: winEv.addEventListener,
 		location: { reload() { reloads.n++; } },
-		navigator: {},
+		// `cfg.controlled`: a service worker controls the page, which is what the stuck count asks.
+		navigator: cfg.controlled ? { serviceWorker: { controller: {} } } : {},
 		localStorage: mkStore(local),
 		sessionStorage: mkStore(session),
 		DaimondI18n: { t: (k, v) => k + (v ? ':' + Object.keys(v).map((n) => v[n]).join(':') : '') },
@@ -1324,6 +1325,74 @@ async function main() {
 		const src = readFileSync(join(HERE, 'updater.js'), 'utf8');
 		check('the poll interval carries jitter', /POLL_MS \+ Math\.floor\(Math\.random\(\)/.test(src));
 		check('a reconnection triggers a check', /addEventListener\('online', poll\)/.test(src));
+	}
+
+	console.log('\nupdater: at the 426 floor his tap is never refused, and a reload to our own build is not "stuck" (OA2)');
+	{
+		// RED on the live tree (16 Nov, see_reload R2): the floor's forced reload came
+		// back on its own build, the next boot counted that toward "stuck", and once the
+		// guard was spent the banner's button called a guarded reload that did nothing.
+		const t1 = await boot({ stamps: [BOOTED], controlled: true, state: {} });
+		t1.fireWin('daimond:stale');
+		await t1.clock.advance(4000);
+		check('at the floor the tab takes one forced reload', t1.reloads.n === 1);
+		const t2 = await boot({ stamps: [BOOTED], controlled: true, session: t1.session, store: t1.local, state: {} });
+		check('a reload to our own build at the floor counts nothing toward stuck',
+			!t2.local.has('daimond-stuck-n') && !t2.U().stuck());
+		t2.fireWin('daimond:stale');
+		await t2.clock.advance(4000);
+		check('the guard holds the second forced reload', t2.reloads.n === 0 && t2.chip.dataset.state === 'stale');
+		check('and the banner offers the button', !!t2.banner() && !t2.banner().hidden && !t2.banner().children[1].hidden);
+		t2.banner().children[1].click();
+		await t2.clock.advance(4000);
+		check('his tap reloads past the spent guard', t2.reloads.n === 1);
+		const row = t2.events.filter((e) => e.kind === 'update' && e.payload.at === 'reload').pop();
+		check('through the forced door', !!row && row.payload.door === 'forced');
+		const t3 = await boot({ stamps: [BOOTED], controlled: true, session: t2.session, store: t2.local, state: {} });
+		check('still not stuck after his tap lands on our own build', !t3.U().stuck());
+	}
+	{
+		// Next lands while the guard is spent: the stamp now serves a newer build.
+		const t1 = await boot({ stamps: [BOOTED], controlled: true, state: {} });
+		t1.fireWin('daimond:stale');
+		await t1.clock.advance(4000);
+		const t2 = await boot({ stamps: [BOOTED, NEWER], controlled: true, session: t1.session, store: t1.local, state: {} });
+		t2.fireWin('daimond:stale');
+		await t2.clock.advance(4000);
+		check('next is here: the refused tab names it', t2.U().pending() === NEWER.build && t2.chip.dataset.state === 'stale');
+		check('the guard holds it without his tap', t2.reloads.n === 0);
+		t2.state.busy = true;
+		t2.banner().children[1].click();
+		await t2.clock.advance(4000);
+		check('his tap is held over a running turn', t2.reloads.n === 0);
+		t2.state.busy = false;
+		t2.fireWin('daimond:idle');
+		await t2.clock.advance(8000);
+		check('and lands once the turn ends, once', t2.reloads.n === 1);
+		const t3 = await boot({ stamps: [NEWER], controlled: true, session: t2.session, store: t2.local, state: {} });
+		check('next is reached, and the forced count is forgotten', t3.U().booted() === NEWER.build
+			&& !t3.U().stuck() && !t3.local.has('daimond-forced-n'));
+	}
+	{
+		// A worker that truly will not let go is still caught: reloads AIMED at a
+		// newer build that come back on ours. Its button, too, answers his tap.
+		let session = new Map(), store = new Map(), tab = null;
+		for (let i = 0; i < 3; i++) {
+			tab = await boot({ stamps: [BOOTED, NEWER], controlled: true, session, store, state: {} });
+			if (i === 2) break;
+			await learn(tab);
+			tab.chip.click();
+			await tab.clock.advance(4000);
+			check('reload ' + (i + 1) + ' toward the newer build goes', tab.reloads.n === 1);
+		}
+		check('two aimed reloads that come back on ours: stuck', tab.U().stuck() && tab.chip.dataset.state === 'stuck');
+		session.set('daimond-forced-from', BOOTED.build);
+		check('the automatic repair is refused by the spent guard', tab.U().repair('x') === false && tab.reloads.n === 0);
+		tab.banner().children[1].click();
+		await tab.clock.advance(4000);
+		check('his tap on the stuck banner reloads past it', tab.reloads.n === 1);
+		const row = tab.events.filter((e) => e.kind === 'update' && e.payload.at === 'reload').pop();
+		check('through the repair door', !!row && row.payload.door === 'repair');
 	}
 
 	console.log('');
